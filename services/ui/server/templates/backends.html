@@ -1,0 +1,20 @@
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    {{range .Backends}}
+    <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
+        <div class="flex items-center justify-between">
+            <div>
+                <p class="text-sm font-medium text-white">{{.Name}}</p>
+                <p class="text-xs text-slate-400 truncate">{{.Address}}</p>
+            </div>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
+                {{if eq .Status "ok"}}bg-emerald-500/20 text-emerald-400
+                {{else}}bg-red-500/20 text-red-400{{end}}">
+                {{if eq .Status "ok"}}Online{{else}}Offline{{end}}
+            </span>
+        </div>
+        {{if eq .Status "ok"}}
+        <p class="text-xs text-slate-500 mt-2">Uptime: {{.Uptime}}</p>
+        {{end}}
+    </div>
+    {{end}}
+</div>

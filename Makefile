@@ -1,7 +1,8 @@
 .PHONY: build run clean help proto \
-	build-signaling build-rtpmanager build-all build-linux \
+	build-signaling build-rtpmanager build-ui build-all build-linux \
 	deploy deploy-signaling deploy-rtpmanager \
-	test-register test-multi test-api test-deregister
+	test-register test-multi test-api test-deregister \
+	run-ui
 
 # Configuration
 UTM_VM_IP ?= 192.168.50.181
@@ -15,20 +16,22 @@ help:
 	@echo "BUILD:"
 	@echo "  make build-signaling  - Build signaling server (macOS)"
 	@echo "  make build-rtpmanager - Build RTP Manager (macOS)"
+	@echo "  make build-ui         - Build UI server (macOS)"
 	@echo "  make build-all        - Build all binaries (macOS)"
 	@echo "  make build            - Build all binaries (Linux AMD64)"
 	@echo "  make clean            - Clean build artifacts"
 	@echo ""
 	@echo "RUN:"
-	@echo "  make run              - Build and run both services locally"
+	@echo "  make run              - Build and run all services locally"
 	@echo "  make run-signaling    - Run signaling server only"
 	@echo "  make run-rtpmanager   - Run RTP Manager only"
+	@echo "  make run-ui           - Run UI server only"
 	@echo ""
 	@echo "PROTO:"
 	@echo "  make proto            - Regenerate gRPC code from proto files"
 	@echo ""
 	@echo "DEPLOY (UTM VM):"
-	@echo "  make deploy           - Build and deploy both services to UTM VM"
+	@echo "  make deploy           - Build and deploy all services to UTM VM"
 	@echo "  make ssh              - SSH into UTM VM"
 	@echo ""
 	@echo "TESTING:"
@@ -45,7 +48,11 @@ build-rtpmanager:
 	@echo "Building RTP Manager..."
 	@go build -o switchboard-rtpmanager ./cmd/rtpmanager/
 
-build-all: build-signaling build-rtpmanager
+build-ui:
+	@echo "Building UI server..."
+	@go build -o switchboard-ui ./cmd/ui/
+
+build-all: build-signaling build-rtpmanager build-ui
 	@echo "All binaries built"
 
 # Build targets (Linux)
@@ -55,15 +62,19 @@ build-linux:
 	@echo "Building for Linux AMD64..."
 	@GOOS=linux GOARCH=amd64 go build -o switchboard-signaling-linux ./cmd/signaling/
 	@GOOS=linux GOARCH=amd64 go build -o switchboard-rtpmanager-linux ./cmd/rtpmanager/
-	@echo "Built: switchboard-signaling-linux, switchboard-rtpmanager-linux"
+	@GOOS=linux GOARCH=amd64 go build -o switchboard-ui-linux ./cmd/ui/
+	@echo "Built: switchboard-signaling-linux, switchboard-rtpmanager-linux, switchboard-ui-linux"
 
 # Run targets
 run: build-all
 	@echo "Starting RTP Manager on :9090..."
 	@./switchboard-rtpmanager --grpc-port 9090 &
 	@sleep 1
-	@echo "Starting Signaling Server on :5060..."
-	@./switchboard-signaling --rtpmanager localhost:9090
+	@echo "Starting Signaling Server on :5060 (API on :8080)..."
+	@./switchboard-signaling --rtpmanager localhost:9090 &
+	@sleep 1
+	@echo "Starting UI Server on :3000..."
+	@./switchboard-ui --backends http://localhost:8080
 	@echo "Use 'pkill switchboard' to stop"
 
 run-signaling: build-signaling
@@ -71,6 +82,9 @@ run-signaling: build-signaling
 
 run-rtpmanager: build-rtpmanager
 	@./switchboard-rtpmanager --grpc-port 9090
+
+run-ui: build-ui
+	@./switchboard-ui --backends http://localhost:8080
 
 # Proto generation
 proto:
@@ -80,8 +94,8 @@ proto:
 
 # Clean
 clean:
-	@rm -f switchboard-signaling switchboard-rtpmanager
-	@rm -f switchboard-signaling-linux switchboard-rtpmanager-linux
+	@rm -f switchboard-signaling switchboard-rtpmanager switchboard-ui
+	@rm -f switchboard-signaling-linux switchboard-rtpmanager-linux switchboard-ui-linux
 	@echo "Cleaned build artifacts"
 
 # UTM Deployment
@@ -91,6 +105,7 @@ deploy: build-linux
 	@ssh $(UTM_VM_USER)@$(UTM_VM_IP) 'pkill switchboard || true'
 	@scp switchboard-signaling-linux $(UTM_VM_USER)@$(UTM_VM_IP):/opt/switchboard/switchboard-signaling
 	@scp switchboard-rtpmanager-linux $(UTM_VM_USER)@$(UTM_VM_IP):/opt/switchboard/switchboard-rtpmanager
+	@scp switchboard-ui-linux $(UTM_VM_USER)@$(UTM_VM_IP):/opt/switchboard/switchboard-ui
 	@echo "Deployed to /opt/switchboard/"
 
 ssh:

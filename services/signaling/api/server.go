@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -14,7 +13,7 @@ import (
 	"github.com/sebas/switchboard/services/signaling/registration"
 )
 
-// Server provides HTTP API for the SIP proxy
+// Server provides HTTP API for the SIP proxy (headless, API only)
 type Server struct {
 	addr            string
 	httpServer      *http.Server
@@ -23,7 +22,6 @@ type Server struct {
 	sessionsMu      sync.RWMutex
 	sessions        map[string]*SessionRecord
 	startTime       time.Time
-	templates       *Templates
 }
 
 // SessionRecord tracks an active RTP session
@@ -36,7 +34,7 @@ type SessionRecord struct {
 	StartTime  time.Time
 }
 
-// NewServer creates a new API server
+// NewServer creates a new API server (headless, API only - no UI)
 func NewServer(addr string, registrationMgr *registration.Handler, dialogMgr dialog.DialogStore) *Server {
 	s := &Server{
 		addr:            addr,
@@ -46,22 +44,7 @@ func NewServer(addr string, registrationMgr *registration.Handler, dialogMgr dia
 		startTime:       time.Now(),
 	}
 
-	// Initialize templates
-	var err error
-	s.templates, err = NewTemplates()
-	if err != nil {
-		slog.Error("[API] Failed to load templates", "error", err)
-		// Continue without templates - admin UI will not work but API will
-	}
-
 	mux := http.NewServeMux()
-
-	// Admin UI routes
-	mux.HandleFunc("/", s.handleDashboard)
-	mux.HandleFunc("/admin/partials/stats", s.handleStatsPartial)
-	mux.HandleFunc("/admin/partials/registrations", s.handleRegistrationsPartial)
-	mux.HandleFunc("/admin/partials/dialogs", s.handleDialogsPartial)
-	mux.HandleFunc("/admin/partials/sessions", s.handleSessionsPartial)
 
 	// Health and stats
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
@@ -353,209 +336,3 @@ func (s *Server) writeJSON(w http.ResponseWriter, v interface{}) {
 	}
 }
 
-// --- Admin UI Handlers ---
-
-// handleDashboard renders the main admin dashboard
-func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	// Only handle exact "/" path - let other routes handle their own paths
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-
-	if s.templates == nil {
-		http.Error(w, "Templates not loaded", http.StatusInternalServerError)
-		return
-	}
-
-	data := s.buildTemplateData()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderDashboard(w, data); err != nil {
-		slog.Error("[API] Failed to render dashboard", "error", err)
-		http.Error(w, "Failed to render template", http.StatusInternalServerError)
-	}
-}
-
-// handleStatsPartial renders the stats cards partial for HTMX
-func (s *Server) handleStatsPartial(w http.ResponseWriter, r *http.Request) {
-	if s.templates == nil {
-		http.Error(w, "Templates not loaded", http.StatusInternalServerError)
-		return
-	}
-
-	data := s.buildTemplateData()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderStats(w, data); err != nil {
-		slog.Error("[API] Failed to render stats partial", "error", err)
-		http.Error(w, "Failed to render template", http.StatusInternalServerError)
-	}
-}
-
-// handleRegistrationsPartial renders the registrations table partial for HTMX
-func (s *Server) handleRegistrationsPartial(w http.ResponseWriter, r *http.Request) {
-	if s.templates == nil {
-		http.Error(w, "Templates not loaded", http.StatusInternalServerError)
-		return
-	}
-
-	data := s.buildTemplateData()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderRegistrations(w, data); err != nil {
-		slog.Error("[API] Failed to render registrations partial", "error", err)
-		http.Error(w, "Failed to render template", http.StatusInternalServerError)
-	}
-}
-
-// handleDialogsPartial renders the dialogs table partial for HTMX
-func (s *Server) handleDialogsPartial(w http.ResponseWriter, r *http.Request) {
-	if s.templates == nil {
-		http.Error(w, "Templates not loaded", http.StatusInternalServerError)
-		return
-	}
-
-	data := s.buildTemplateData()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderDialogs(w, data); err != nil {
-		slog.Error("[API] Failed to render dialogs partial", "error", err)
-		http.Error(w, "Failed to render template", http.StatusInternalServerError)
-	}
-}
-
-// handleSessionsPartial renders the sessions table partial for HTMX
-func (s *Server) handleSessionsPartial(w http.ResponseWriter, r *http.Request) {
-	if s.templates == nil {
-		http.Error(w, "Templates not loaded", http.StatusInternalServerError)
-		return
-	}
-
-	data := s.buildTemplateData()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderSessions(w, data); err != nil {
-		slog.Error("[API] Failed to render sessions partial", "error", err)
-		http.Error(w, "Failed to render template", http.StatusInternalServerError)
-	}
-}
-
-// buildTemplateData constructs the data structure for templates
-func (s *Server) buildTemplateData() TemplateData {
-	uptime := time.Since(s.startTime)
-
-	// Format uptime nicely
-	uptimeStr := formatUptime(uptime)
-
-	// Get stats
-	s.sessionsMu.RLock()
-	activeSessions := len(s.sessions)
-	sessions := make([]SessionData, 0, len(s.sessions))
-	for _, sess := range s.sessions {
-		duration := time.Since(sess.StartTime)
-		sessions = append(sessions, SessionData{
-			CallID:     sess.CallID,
-			ClientAddr: sess.ClientAddr,
-			ClientPort: sess.ClientPort,
-			ServerAddr: sess.ServerAddr,
-			ServerPort: sess.ServerPort,
-			Duration:   formatDuration(int(duration.Seconds())),
-			Status:     "active",
-		})
-	}
-	s.sessionsMu.RUnlock()
-
-	// Get registrations
-	registrations := s.registrationMgr.GetAllRegistrations()
-	totalBindings := 0
-	regData := make([]RegistrationData, 0)
-	for _, bindings := range registrations {
-		totalBindings += len(bindings)
-		for _, b := range bindings {
-			ttl := time.Until(b.ExpiresAt)
-			ttlStr := "expired"
-			if ttl > 0 {
-				ttlStr = formatDuration(int(ttl.Seconds()))
-			}
-			regData = append(regData, RegistrationData{
-				AOR:          b.AOR,
-				ContactURI:   b.ContactURI,
-				Transport:    b.Transport,
-				ReceivedIP:   b.ReceivedIP,
-				ReceivedPort: b.ReceivedPort,
-				Expires:      b.Expires,
-				TTL:          ttlStr,
-				UserAgent:    b.UserAgent,
-				RegisteredAt: b.RegisteredAt.Format("15:04:05"),
-			})
-		}
-	}
-
-	// Get dialogs
-	dialogCount := 0
-	dialogData := make([]DialogData, 0)
-	if s.dialogMgr != nil {
-		dialogCount = s.dialogMgr.Count()
-		dialogs := s.dialogMgr.List()
-		for _, dlg := range dialogs {
-			info := dlg.ToInfo()
-			dialogData = append(dialogData, DialogData{
-				CallID:          info.CallID,
-				State:           info.State,
-				LocalURI:        info.LocalURI,
-				RemoteURI:       info.RemoteURI,
-				RemoteAddr:      info.RemoteAddr,
-				RemotePort:      info.RemotePort,
-				Duration:        formatDuration(info.Duration),
-				CreatedAt:       info.CreatedAt,
-				TerminateReason: info.TerminateReason,
-			})
-		}
-	}
-
-	return TemplateData{
-		Title: "Switchboard Admin",
-		Health: HealthData{
-			Status: "ok",
-			Uptime: uptimeStr,
-		},
-		Stats: StatsData{
-			ActiveSessions:     activeSessions,
-			TotalRegistrations: len(registrations),
-			TotalBindings:      totalBindings,
-			ActiveDialogs:      dialogCount,
-		},
-		Registrations: regData,
-		Dialogs:       dialogData,
-		Sessions:      sessions,
-	}
-}
-
-// formatUptime formats a duration for display
-func formatUptime(d time.Duration) string {
-	days := int(d.Hours()) / 24
-	hours := int(d.Hours()) % 24
-	mins := int(d.Minutes()) % 60
-	secs := int(d.Seconds()) % 60
-
-	if days > 0 {
-		return fmt.Sprintf("%dd %dh %dm", days, hours, mins)
-	}
-	if hours > 0 {
-		return fmt.Sprintf("%dh %dm %ds", hours, mins, secs)
-	}
-	if mins > 0 {
-		return fmt.Sprintf("%dm %ds", mins, secs)
-	}
-	return fmt.Sprintf("%ds", secs)
-}
-
-// formatDuration formats seconds for display
-func formatDuration(seconds int) string {
-	if seconds < 60 {
-		return fmt.Sprintf("%ds", seconds)
-	}
-	if seconds < 3600 {
-		return fmt.Sprintf("%dm %ds", seconds/60, seconds%60)
-	}
-	hours := seconds / 3600
-	mins := (seconds % 3600) / 60
-	secs := seconds % 60
-	return fmt.Sprintf("%dh %dm %ds", hours, mins, secs)
-}
