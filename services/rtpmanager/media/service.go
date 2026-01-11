@@ -65,6 +65,9 @@ func (s *LocalService) Play(ctx context.Context, req PlayRequest) error {
 
 		if err := s.streamAudio(playCtx, req, codecCfg); err != nil {
 			slog.Error("[Media] Playback failed", "call_id", req.CallID, "error", err)
+			if req.OnError != nil {
+				req.OnError(req.CallID, err)
+			}
 		}
 	}()
 
@@ -93,7 +96,12 @@ func (s *LocalService) Ready() bool {
 
 // streamAudio handles the actual RTP streaming to the client
 func (s *LocalService) streamAudio(ctx context.Context, req PlayRequest, codecCfg *CodecConfig) error {
-	slog.Info("[Media] Starting playback", "call_id", req.CallID, "file", req.File, "codec", req.Codec, "endpoint", req.Endpoint+":"+fmt.Sprintf("%d", req.Port))
+	slog.Info("[Media] Starting playback",
+		"call_id", req.CallID,
+		"file", req.File,
+		"codec", req.Codec,
+		"local", fmt.Sprintf("%s:%d", req.LocalAddr, req.LocalPort),
+		"remote", fmt.Sprintf("%s:%d", req.Endpoint, req.Port))
 
 	// Read and parse WAV file
 	audioFile, err := ReadWAVFile(req.File)
@@ -107,17 +115,24 @@ func (s *LocalService) streamAudio(ctx context.Context, req PlayRequest, codecCf
 		return fmt.Errorf("failed to encode audio: %w", err)
 	}
 
-	// Connect to client's RTP endpoint
-	clientAddr := net.UDPAddr{
+	// Bind to local RTP port (the one advertised in SDP)
+	// Use 0.0.0.0 to bind to all interfaces, but use the specific port
+	localAddr := &net.UDPAddr{
+		Port: req.LocalPort,
+		IP:   net.IPv4zero,
+	}
+
+	conn, err := net.ListenUDP("udp", localAddr)
+	if err != nil {
+		return fmt.Errorf("failed to bind to local RTP port %d: %w", req.LocalPort, err)
+	}
+	defer conn.Close()
+
+	// Remote client's RTP endpoint
+	clientAddr := &net.UDPAddr{
 		Port: req.Port,
 		IP:   net.ParseIP(req.Endpoint),
 	}
-
-	conn, err := net.DialUDP("udp", nil, &clientAddr)
-	if err != nil {
-		return fmt.Errorf("failed to connect to client RTP endpoint %s:%d: %w", req.Endpoint, req.Port, err)
-	}
-	defer conn.Close()
 
 	// Calculate frame parameters
 	// PCMU uses 8 bits per sample (µ-law encoded), so 160 samples = 160 bytes
@@ -163,8 +178,8 @@ func (s *LocalService) streamAudio(ctx context.Context, req PlayRequest, codecCf
 			return fmt.Errorf("failed to marshal RTP packet: %w", err)
 		}
 
-		if _, err := conn.Write(data); err != nil {
-			return fmt.Errorf("failed to send RTP packet: %w", err)
+		if _, err := conn.WriteToUDP(data, clientAddr); err != nil {
+			return fmt.Errorf("failed to send RTP packet to %s:%d: %w", req.Endpoint, req.Port, err)
 		}
 
 		framesSent++

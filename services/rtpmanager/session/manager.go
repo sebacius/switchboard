@@ -176,11 +176,13 @@ func (m *Manager) PlayAudio(sessionID, filePath string, eventCh chan<- *rtpv1.Pl
 
 	// Create play request
 	playReq := media.PlayRequest{
-		CallID:   sess.CallID,
-		File:     filePath,
-		Codec:    sess.Codec,
-		Endpoint: sess.RemoteAddr,
-		Port:     sess.RemotePort,
+		CallID:    sess.CallID,
+		File:      filePath,
+		Codec:     sess.Codec,
+		LocalAddr: sess.LocalAddr,
+		LocalPort: sess.LocalPort,
+		Endpoint:  sess.RemoteAddr,
+		Port:      sess.RemotePort,
 		OnComplete: func(callID string, data interface{}) error {
 			// Send completion event
 			eventCh <- &rtpv1.PlaybackEvent{
@@ -193,6 +195,19 @@ func (m *Manager) PlayAudio(sessionID, filePath string, eventCh chan<- *rtpv1.Pl
 			}
 			close(eventCh)
 			return nil
+		},
+		OnError: func(callID string, err error) {
+			// Send error event and close channel
+			eventCh <- &rtpv1.PlaybackEvent{
+				SessionId: sessionID,
+				Event: &rtpv1.PlaybackEvent_Error{
+					Error: &rtpv1.PlaybackError{
+						Code:    "PLAYBACK_FAILED",
+						Message: err.Error(),
+					},
+				},
+			}
+			close(eventCh)
 		},
 	}
 

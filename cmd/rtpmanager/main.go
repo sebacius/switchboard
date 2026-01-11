@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/peer"
 
 	"github.com/sebas/switchboard/internal/logger"
 	"github.com/sebas/switchboard/services/rtpmanager/config"
@@ -48,8 +52,19 @@ func main() {
 	}
 	defer rtpSrv.Close()
 
-	// Create gRPC server
-	grpcServer := grpc.NewServer()
+	// Create gRPC server with logging interceptors and keepalive settings
+	grpcServer := grpc.NewServer(
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    30 * time.Second, // Ping client if idle for 30s
+			Timeout: 10 * time.Second, // Wait 10s for ping ack
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             10 * time.Second, // Minimum time between client pings
+			PermitWithoutStream: true,             // Allow pings even without active streams
+		}),
+		grpc.UnaryInterceptor(loggingUnaryInterceptor),
+		grpc.StreamInterceptor(loggingStreamInterceptor),
+	)
 	rtpv1.RegisterRTPManagerServiceServer(grpcServer, rtpSrv)
 
 	// Start listening
@@ -78,4 +93,24 @@ func main() {
 	// Graceful shutdown
 	grpcServer.GracefulStop()
 	slog.Info("RTP Manager stopped")
+}
+
+// loggingUnaryInterceptor logs incoming unary RPC calls with peer info
+func loggingUnaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	peerAddr := "unknown"
+	if p, ok := peer.FromContext(ctx); ok {
+		peerAddr = p.Addr.String()
+	}
+	slog.Debug("[gRPC] Incoming request", "method", info.FullMethod, "peer", peerAddr)
+	return handler(ctx, req)
+}
+
+// loggingStreamInterceptor logs incoming streaming RPC calls with peer info
+func loggingStreamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	peerAddr := "unknown"
+	if p, ok := peer.FromContext(ss.Context()); ok {
+		peerAddr = p.Addr.String()
+	}
+	slog.Debug("[gRPC] Incoming stream", "method", info.FullMethod, "peer", peerAddr)
+	return handler(srv, ss)
 }

@@ -9,14 +9,25 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sebas/switchboard/services/signaling/store"
+)
+
+// Dialog TTL constants
+const (
+	// ActiveDialogTTL is the TTL for active dialogs (4 hours)
+	ActiveDialogTTL = 4 * time.Hour
+	// TerminatedDialogTTL is the TTL for terminated dialogs (for retransmissions, RFC 3261 Timer B)
+	TerminatedDialogTTL = 32 * time.Second
+	// DialogCleanupInterval is how often the cleanup loop runs
+	DialogCleanupInterval = 10 * time.Second
 )
 
 // Manager is the central registry for all active dialogs
 type Manager struct {
 	mu sync.RWMutex
 
-	// Dialog storage by Call-ID (primary key for our use case)
-	dialogs map[string]*Dialog
+	// Dialog storage by Call-ID using TTLStore for automatic cleanup
+	dialogs *store.TTLStore[string, *Dialog]
 
 	// SIP components for sending requests
 	sipClient *sipgo.Client
@@ -32,13 +43,20 @@ type Manager struct {
 
 // NewManager creates a new dialog manager
 func NewManager(client *sipgo.Client, dialogUA *sipgo.DialogUA) *Manager {
-	return &Manager{
-		dialogs:       make(map[string]*Dialog),
+	m := &Manager{
+		dialogs:       store.NewTTLStore[string, *Dialog](DialogCleanupInterval),
 		sipClient:     client,
 		dialogUA:      dialogUA,
 		ackTimeout:    32 * time.Second, // RFC 3261 Timer B
 		cancelTimeout: 5 * time.Second,
 	}
+
+	// Set eviction callback to log when dialogs are automatically removed
+	m.dialogs.SetOnEvict(func(callID string, d *Dialog) {
+		slog.Debug("[Dialog] Evicted from cache", "call_id", callID, "state", d.GetState())
+	})
+
+	return m
 }
 
 // SetOnTerminated sets the callback called when a dialog terminates
@@ -58,11 +76,8 @@ func (m *Manager) CreateFromInvite(req *sip.Request, tx sip.ServerTransaction) (
 		return nil, fmt.Errorf("INVITE missing Call-ID")
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	// Check for duplicate
-	if existing, exists := m.dialogs[callID]; exists {
+	if existing, exists := m.dialogs.Get(callID); exists {
 		// Could be a retransmission or re-INVITE
 		if existing.GetState() != StateTerminated {
 			slog.Warn("[Dialog] Duplicate INVITE received", "call_id", callID, "state", existing.GetState())
@@ -71,9 +86,9 @@ func (m *Manager) CreateFromInvite(req *sip.Request, tx sip.ServerTransaction) (
 		// Previous dialog terminated, allow new one
 	}
 
-	// Create new dialog
+	// Create new dialog with active TTL
 	dlg := NewDialog(req, tx)
-	m.dialogs[callID] = dlg
+	m.dialogs.Set(callID, dlg, ActiveDialogTTL)
 
 	slog.Info("[Dialog] Created", "call_id", callID)
 	return dlg, nil
@@ -307,7 +322,7 @@ func (m *Manager) sendBYE(d *Dialog) error {
 	return nil
 }
 
-// terminate marks dialog as terminated and schedules cleanup
+// terminate marks dialog as terminated and updates TTL for cleanup
 func (m *Manager) terminate(d *Dialog, reason TerminateReason) {
 	d.mu.Lock()
 	d.TerminateReason = reason
@@ -331,14 +346,10 @@ func (m *Manager) terminate(d *Dialog, reason TerminateReason) {
 		go callback(d)
 	}
 
-	// Schedule removal from map (keep briefly for retransmissions)
-	go func() {
-		time.Sleep(32 * time.Second)
-		m.mu.Lock()
-		delete(m.dialogs, d.CallID)
-		m.mu.Unlock()
-		slog.Debug("[Dialog] Removed from cache", "call_id", d.CallID)
-	}()
+	// Update TTL to short duration for terminated dialogs (handles retransmissions per RFC 3261)
+	// TTLStore's cleanup loop will automatically remove it after TerminatedDialogTTL
+	m.dialogs.Set(d.CallID, d, TerminatedDialogTTL)
+	slog.Debug("[Dialog] Scheduled for cleanup", "call_id", d.CallID, "ttl", TerminatedDialogTTL)
 }
 
 // watchACKTimeout watches for ACK timeout
@@ -358,39 +369,32 @@ func (m *Manager) watchACKTimeout(d *Dialog) {
 
 // Get retrieves a dialog by Call-ID
 func (m *Manager) Get(callID string) (*Dialog, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	d, ok := m.dialogs[callID]
-	return d, ok
+	return m.dialogs.Get(callID)
 }
 
-// List returns all active dialogs
+// List returns all dialogs (including terminated ones pending cleanup)
 func (m *Manager) List() []*Dialog {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make([]*Dialog, 0, len(m.dialogs))
-	for _, d := range m.dialogs {
+	all := m.dialogs.All()
+	result := make([]*Dialog, 0, len(all))
+	for _, d := range all {
 		result = append(result, d)
 	}
 	return result
 }
 
-// Count returns the number of active dialogs
+// Count returns the number of dialogs
 func (m *Manager) Count() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.dialogs)
+	return m.dialogs.Len()
 }
 
 // ForEach iterates over all dialogs, stopping if fn returns false
 func (m *Manager) ForEach(fn func(*Dialog) bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.dialogs.ForEach(func(_ string, d *Dialog) bool {
+		return fn(d)
+	})
+}
 
-	for _, d := range m.dialogs {
-		if !fn(d) {
-			break
-		}
-	}
+// Close stops the TTLStore cleanup goroutine and releases resources
+func (m *Manager) Close() {
+	m.dialogs.Close()
 }

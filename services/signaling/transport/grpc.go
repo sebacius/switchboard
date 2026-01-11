@@ -68,8 +68,28 @@ func NewGRPCTransport(cfg GRPCConfig) (*GRPCTransport, error) {
 		callToSession: make(map[string]string),
 	}
 
+	// Start connection state monitor for keepalive visibility
+	go t.monitorConnectionState(cfg.Address)
+
 	slog.Info("[gRPC] Connected to RTP Manager", "address", cfg.Address)
 	return t, nil
+}
+
+// monitorConnectionState logs gRPC connection state changes (including keepalive activity)
+func (t *GRPCTransport) monitorConnectionState(address string) {
+	for {
+		currentState := t.conn.GetState()
+		slog.Debug("[gRPC] Connection state", "address", address, "state", currentState.String())
+
+		// Wait for state change (this blocks until state changes or conn is closed)
+		if !t.conn.WaitForStateChange(context.Background(), currentState) {
+			slog.Info("[gRPC] Connection closed", "address", address)
+			return
+		}
+
+		newState := t.conn.GetState()
+		slog.Info("[gRPC] Connection state changed", "address", address, "from", currentState.String(), "to", newState.String())
+	}
 }
 
 // CreateSession implements Transport.CreateSession

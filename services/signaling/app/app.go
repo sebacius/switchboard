@@ -11,6 +11,7 @@ import (
 	"github.com/sebas/switchboard/services/signaling/api"
 	"github.com/sebas/switchboard/services/signaling/config"
 	"github.com/sebas/switchboard/services/signaling/dialog"
+	"github.com/sebas/switchboard/services/signaling/location"
 	"github.com/sebas/switchboard/services/signaling/registration"
 	"github.com/sebas/switchboard/services/signaling/routing"
 	"github.com/sebas/switchboard/services/signaling/transport"
@@ -22,9 +23,10 @@ type SwitchBoard struct {
 	client          *sipgo.Client
 	config          *config.Config
 	apiServer       *api.Server
+	locationStore   location.LocationStore
 	registrationMgr *registration.Handler
 	inviteHandler   *routing.InviteHandler
-	dialogMgr       *dialog.Manager
+	dialogMgr       dialog.DialogStore
 	transport       transport.Transport
 }
 
@@ -45,9 +47,16 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
-	// Create registration handler
-	regStore := registration.NewStore()
-	regHandler := registration.NewHandler(regStore)
+	// Create location store with TTL support
+	locStoreCfg := location.DefaultStoreConfig()
+	locStore := location.NewStore(locStoreCfg)
+
+	// Create registration handler with location store
+	realm := cfg.AdvertiseAddr
+	if realm == "" {
+		realm = "switchboard.local"
+	}
+	regHandler := registration.NewHandler(locStore, realm)
 
 	// Create DialogUA for sipgo dialog management
 	contact := sip.ContactHeader{
@@ -77,6 +86,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	mediaTransport, err := transport.NewPool(poolCfg)
 	if err != nil {
 		ua.Close()
+		locStore.Close()
 		return nil, fmt.Errorf("failed to create RTP Manager pool: %w", err)
 	}
 
@@ -92,14 +102,15 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		dialogMgr,
 	)
 
-	// Create API server
-	apiServer := api.NewServer(":8080", regHandler)
+	// Create API server with registration handler and dialog manager
+	apiServer := api.NewServer(":8080", regHandler, dialogMgr)
 
 	proxy := &SwitchBoard{
 		ua:              ua,
 		srv:             uas,
 		client:          uac,
 		config:          cfg,
+		locationStore:   locStore,
 		registrationMgr: regHandler,
 		apiServer:       apiServer,
 		inviteHandler:   inviteHandler,
@@ -135,7 +146,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	uas.OnRequest(sip.CANCEL, proxy.handleCANCEL)
 
 	slog.Info("SIP handlers registered", "methods", "REGISTER, INVITE, BYE, ACK, CANCEL")
-	slog.Info("Configuration", "port", cfg.Port, "bind", cfg.BindAddr)
+	slog.Info("Configuration", "port", cfg.Port, "bind", cfg.BindAddr, "realm", realm)
 
 	return proxy, nil
 }
@@ -199,9 +210,19 @@ func (p *SwitchBoard) Close() error {
 		}
 	}
 
+	// Close dialog manager (stops TTLStore cleanup goroutine)
+	if p.dialogMgr != nil {
+		p.dialogMgr.Close()
+	}
+
 	// Close transport
 	if p.transport != nil {
 		p.transport.Close()
+	}
+
+	// Close location store
+	if p.locationStore != nil {
+		p.locationStore.Close()
 	}
 
 	if p.apiServer != nil {
