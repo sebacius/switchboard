@@ -17,6 +17,9 @@ type Config struct {
 	AdvertiseAddr string // Address to advertise in SIP headers
 	LogLevel      string
 
+	// Dialplan settings
+	DialplanPath string // Path to dialplan.json config file
+
 	// RTP Manager pool settings
 	RTPManagerAddrs       []string // Multiple RTP managers for load balancing
 	GRPCConnectTimeout    time.Duration
@@ -37,6 +40,7 @@ func Load() *Config {
 	flag.StringVar(&cfg.BindAddr, "bind", "0.0.0.0", "SIP bind address")
 	flag.StringVar(&cfg.AdvertiseAddr, "advertise", "", "Address to advertise in SIP headers (auto-detected if not set)")
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error)")
+	flag.StringVar(&cfg.DialplanPath, "dialplan", "dialplan.json", "Path to dialplan configuration file")
 
 	var rtpManagerAddrs string
 	flag.StringVar(&rtpManagerAddrs, "rtpmanager", "localhost:9090", "RTP Manager gRPC addresses (comma-separated for multiple)")
@@ -65,6 +69,9 @@ func Load() *Config {
 	}
 	if rtpmanager := os.Getenv("RTPMANAGER_ADDRS"); rtpmanager != "" {
 		cfg.RTPManagerAddrs = parseAddressList(rtpmanager)
+	}
+	if dialplanPath := os.Getenv("DIALPLAN_PATH"); dialplanPath != "" {
+		cfg.DialplanPath = dialplanPath
 	}
 
 	return cfg

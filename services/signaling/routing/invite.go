@@ -2,13 +2,17 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
 	psdp "github.com/pion/sdp/v3"
+	"github.com/sebas/switchboard/services/signaling/dialplan"
 	"github.com/sebas/switchboard/services/signaling/dialog"
+	"github.com/sebas/switchboard/services/signaling/location"
 	"github.com/sebas/switchboard/services/signaling/transport"
 )
 
@@ -22,9 +26,10 @@ type InviteHandler struct {
 	transport       transport.Transport
 	advertiseAddr   string
 	port            int
-	audioFile       string
 	dialogMgr       *dialog.Manager
 	sessionRecorder SessionRecorder
+	executor        *dialplan.Executor
+	locStore        location.LocationStore
 }
 
 // NewInviteHandler creates a new INVITE handler
@@ -32,17 +37,19 @@ func NewInviteHandler(
 	transport transport.Transport,
 	advertiseAddr string,
 	port int,
-	audioFile string,
 	dialogMgr *dialog.Manager,
 	sessionRecorder SessionRecorder,
+	executor *dialplan.Executor,
+	locStore location.LocationStore,
 ) *InviteHandler {
 	return &InviteHandler{
 		transport:       transport,
 		advertiseAddr:   advertiseAddr,
 		port:            port,
-		audioFile:       audioFile,
 		dialogMgr:       dialogMgr,
 		sessionRecorder: sessionRecorder,
+		executor:        executor,
+		locStore:        locStore,
 	}
 }
 
@@ -117,8 +124,11 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 
 	slog.Info("Sent 200 OK", "call_id", dlg.CallID)
 
-	// Start audio streaming
-	go h.streamAudio(dlg)
+	// Extract destination for dialplan matching
+	destination := h.extractDestination(req)
+
+	// Execute dialplan
+	go h.executeDialplan(dlg, destination)
 }
 
 // extractSDPInfo parses SDP to get client endpoint and offered codecs
@@ -160,38 +170,67 @@ func (h *InviteHandler) extractSDPInfo(req *sip.Request) (clientAddr string, cli
 	return clientAddr, clientPort, codecs, nil
 }
 
-// streamAudio starts audio playback and handles completion
-func (h *InviteHandler) streamAudio(dlg *dialog.Dialog) {
-	sessionID := dlg.GetSessionID()
+// extractDestination extracts the destination from the To header.
+func (h *InviteHandler) extractDestination(req *sip.Request) string {
+	to := req.To()
+	if to == nil {
+		return ""
+	}
+	// Extract user part from To URI
+	user := to.Address.User
+	if user == "" {
+		// Fallback to host if no user
+		return to.Address.Host
+	}
+	return user
+}
 
-	playReq := transport.PlayRequest{
-		SessionID: sessionID,
-		AudioFile: h.audioFile,
-		OnComplete: func(sid string) {
-			// After playback, terminate dialog (sends BYE)
-			slog.Info("[Routing] Playback complete, terminating dialog", "call_id", dlg.CallID, "session_id", sid)
-			h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
-		},
+// extractCallerID extracts the caller ID from the From header.
+func (h *InviteHandler) extractCallerID(req *sip.Request) string {
+	from := req.From()
+	if from == nil {
+		return ""
+	}
+	// Prefer display name, fallback to user part
+	if from.DisplayName != "" {
+		return strings.Trim(from.DisplayName, "\"")
+	}
+	return from.Address.User
+}
+
+// executeDialplan runs the dialplan for the call.
+func (h *InviteHandler) executeDialplan(dlg *dialog.Dialog, destination string) {
+	callerID := ""
+	if dlg.InviteRequest != nil {
+		callerID = h.extractCallerID(dlg.InviteRequest)
 	}
 
-	// Play audio using dialog's context (cancelled on BYE)
-	statusCh, err := h.transport.PlayAudio(dlg.Context(), playReq)
+	// Create call session for dialplan execution
+	session := dialplan.NewSession(dialplan.SessionConfig{
+		Dialog:      dlg,
+		Transport:   h.transport,
+		DialogMgr:   h.dialogMgr,
+		LocStore:    h.locStore,
+		Logger:      slog.Default(),
+		Destination: destination,
+		CallerID:    callerID,
+	})
+
+	// Execute dialplan
+	err := h.executor.Execute(dlg.Context(), session)
 	if err != nil {
-		slog.Error("[Routing] Failed to start playback", "call_id", dlg.CallID, "error", err)
-		return
+		if !errors.Is(err, context.Canceled) {
+			slog.Error("[Routing] Dialplan execution failed",
+				"call_id", dlg.CallID,
+				"destination", destination,
+				"error", err,
+			)
+		}
 	}
 
-	// Monitor playback status
-	for status := range statusCh {
-		switch status.State {
-		case transport.PlayStateStarted:
-			slog.Debug("[Routing] Playback started", "call_id", dlg.CallID)
-		case transport.PlayStateCompleted:
-			slog.Info("[Routing] Playback completed", "call_id", dlg.CallID)
-		case transport.PlayStateError:
-			slog.Error("[Routing] Playback error", "call_id", dlg.CallID, "error", status.Error)
-		case transport.PlayStateStopped:
-			slog.Info("[Routing] Playback stopped", "call_id", dlg.CallID)
-		}
+	// Terminate dialog after dialplan completes (if not already terminated)
+	if !dlg.IsTerminated() {
+		slog.Info("[Routing] Dialplan complete, terminating dialog", "call_id", dlg.CallID)
+		h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
 	}
 }

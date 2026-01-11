@@ -10,6 +10,7 @@ import (
 	"github.com/emiago/sipgo/sip"
 	"github.com/sebas/switchboard/services/signaling/api"
 	"github.com/sebas/switchboard/services/signaling/config"
+	"github.com/sebas/switchboard/services/signaling/dialplan"
 	"github.com/sebas/switchboard/services/signaling/dialog"
 	"github.com/sebas/switchboard/services/signaling/location"
 	"github.com/sebas/switchboard/services/signaling/registration"
@@ -96,14 +97,32 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Create API server with registration handler and dialog manager
 	apiServer := api.NewServer("0.0.0.0:8080", regHandler, dialogMgr)
 
-	// Create INVITE handler with session recorder for API visibility
+	// Load dialplan configuration
+	dialplanPath := cfg.DialplanPath
+	if dialplanPath == "" {
+		dialplanPath = "dialplan.json"
+	}
+	dp, err := dialplan.New(dialplanPath, slog.Default())
+	if err != nil {
+		ua.Close()
+		locStore.Close()
+		mediaTransport.Close()
+		return nil, fmt.Errorf("failed to load dialplan: %w", err)
+	}
+	slog.Info("Dialplan loaded", "path", dialplanPath, "routes", dp.RouteCount())
+
+	// Create dialplan executor with default actions
+	executor := dialplan.NewExecutor(dp, dialplan.DefaultRegistry(), slog.Default())
+
+	// Create INVITE handler with dialplan executor
 	inviteHandler := routing.NewInviteHandler(
 		mediaTransport,
 		cfg.AdvertiseAddr,
 		cfg.Port,
-		"audio/demo-congrats.wav",
 		dialogMgr,
 		apiServer,
+		executor,
+		locStore,
 	)
 
 	proxy := &SwitchBoard{
