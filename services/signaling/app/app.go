@@ -93,17 +93,18 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Create dialog manager (single source of truth for call state)
 	dialogMgr := dialog.NewManager(uac, dialogUA)
 
-	// Create INVITE handler
+	// Create API server with registration handler and dialog manager
+	apiServer := api.NewServer("0.0.0.0:8080", regHandler, dialogMgr)
+
+	// Create INVITE handler with session recorder for API visibility
 	inviteHandler := routing.NewInviteHandler(
 		mediaTransport,
 		cfg.AdvertiseAddr,
 		cfg.Port,
 		"audio/demo-congrats.wav",
 		dialogMgr,
+		apiServer,
 	)
-
-	// Create API server with registration handler and dialog manager
-	apiServer := api.NewServer(":8080", regHandler, dialogMgr)
 
 	proxy := &SwitchBoard{
 		ua:              ua,
@@ -118,8 +119,11 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		transport:       mediaTransport,
 	}
 
-	// Set up dialog termination callback to cleanup transport sessions
+	// Set up dialog termination callback to cleanup transport sessions and API records
 	dialogMgr.SetOnTerminated(func(d *dialog.Dialog) {
+		// Remove session from API records
+		apiServer.RemoveSession(d.CallID)
+
 		if sessionID := d.GetSessionID(); sessionID != "" {
 			reason := transport.TerminateReasonNormal
 			switch d.TerminateReason {

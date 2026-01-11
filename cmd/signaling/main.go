@@ -38,7 +38,7 @@ func run(proxy *app.SwitchBoard, cfg *config.Config) {
 		"rtpmanagers", cfg.RTPManagerAddrs,
 	)
 
-	slog.Info("API available at http://127.0.0.1:8080")
+	slog.Info("API available at http://0.0.0.0:8080")
 	logNetworkInterfaces()
 
 	ctx, cancel := context.WithCancel(context.Background())

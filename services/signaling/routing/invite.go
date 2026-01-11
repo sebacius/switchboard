@@ -12,13 +12,19 @@ import (
 	"github.com/sebas/switchboard/services/signaling/transport"
 )
 
+// SessionRecorder records session info for the API
+type SessionRecorder interface {
+	RecordSession(callID, clientAddr string, clientPort int, serverAddr string, serverPort int)
+}
+
 // InviteHandler handles incoming INVITE requests
 type InviteHandler struct {
-	transport     transport.Transport
-	advertiseAddr string
-	port          int
-	audioFile     string
-	dialogMgr     *dialog.Manager
+	transport       transport.Transport
+	advertiseAddr   string
+	port            int
+	audioFile       string
+	dialogMgr       *dialog.Manager
+	sessionRecorder SessionRecorder
 }
 
 // NewInviteHandler creates a new INVITE handler
@@ -28,13 +34,15 @@ func NewInviteHandler(
 	port int,
 	audioFile string,
 	dialogMgr *dialog.Manager,
+	sessionRecorder SessionRecorder,
 ) *InviteHandler {
 	return &InviteHandler{
-		transport:     transport,
-		advertiseAddr: advertiseAddr,
-		port:          port,
-		audioFile:     audioFile,
-		dialogMgr:     dialogMgr,
+		transport:       transport,
+		advertiseAddr:   advertiseAddr,
+		port:            port,
+		audioFile:       audioFile,
+		dialogMgr:       dialogMgr,
+		sessionRecorder: sessionRecorder,
 	}
 }
 
@@ -83,6 +91,11 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	// Store session info in dialog
 	dlg.SetSessionID(sessionResult.SessionID)
 	dlg.SetMediaEndpoint(clientAddr, clientPort, sessionResult.SelectedCodec)
+
+	// Record session for API visibility
+	if h.sessionRecorder != nil {
+		h.sessionRecorder.RecordSession(dlg.CallID, clientAddr, clientPort, sessionResult.LocalAddr, sessionResult.LocalPort)
+	}
 
 	// Send 183 Session Progress with SDP (early media)
 	if err := h.dialogMgr.SendProgress(dlg, sessionResult.SDPBody); err != nil {
