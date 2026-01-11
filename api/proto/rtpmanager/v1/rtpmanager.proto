@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+package rtpmanager.v1;
+
+option go_package = "github.com/sebas/switchboard/pkg/rtpmanager/v1;rtpmanagerv1";
+
+// RTPManagerService handles media session lifecycle for SIP calls.
+// Manages RTP port allocation, SDP generation, and audio streaming.
+service RTPManagerService {
+  // CreateSession allocates RTP ports and returns SDP for the session.
+  // Called during INVITE processing to get media endpoint for SDP answer.
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+
+  // DestroySession releases all resources associated with a session.
+  // Called on BYE or call termination.
+  rpc DestroySession(DestroySessionRequest) returns (DestroySessionResponse);
+
+  // PlayAudio starts audio playback to the remote endpoint.
+  // Returns a stream of events including progress and completion.
+  rpc PlayAudio(PlayAudioRequest) returns (stream PlaybackEvent);
+
+  // StopAudio immediately stops any active playback for a session.
+  rpc StopAudio(StopAudioRequest) returns (StopAudioResponse);
+
+  // Health checks if the service is operational.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// Session Management
+
+message CreateSessionRequest {
+  // Call-ID from SIP for correlation
+  string call_id = 1;
+
+  // Remote endpoint from client SDP
+  string remote_addr = 2;
+  int32 remote_port = 3;
+
+  // Codecs offered by remote party (payload type strings: "0", "8", etc.)
+  repeated string offered_codecs = 4;
+}
+
+message CreateSessionResponse {
+  // Unique session ID for subsequent calls
+  string session_id = 1;
+
+  // Allocated local endpoint for SDP answer
+  string local_addr = 2;
+  int32 local_port = 3;
+
+  // Selected codec after negotiation
+  string selected_codec = 4;
+
+  // Complete SDP body for SIP response
+  bytes sdp_body = 5;
+
+  // Status
+  SessionStatus status = 6;
+}
+
+message DestroySessionRequest {
+  string session_id = 1;
+  TerminateReason reason = 2;
+}
+
+message DestroySessionResponse {
+  string session_id = 1;
+  SessionStatus status = 2;
+}
+
+// Audio Playback
+
+message PlayAudioRequest {
+  string session_id = 1;
+  string file_path = 2;
+  bool loop = 3;
+}
+
+message PlaybackEvent {
+  string session_id = 1;
+
+  oneof event {
+    PlaybackStarted started = 2;
+    PlaybackProgress progress = 3;
+    PlaybackCompleted completed = 4;
+    PlaybackError error = 5;
+    PlaybackStopped stopped = 6;
+  }
+}
+
+message PlaybackStarted {
+  int32 total_frames = 1;
+  int32 duration_ms = 2;
+}
+
+message PlaybackProgress {
+  int32 frames_sent = 1;
+  float percent_complete = 2;
+}
+
+message PlaybackCompleted {
+  int32 total_frames_sent = 1;
+  int32 duration_ms = 2;
+}
+
+message PlaybackError {
+  string code = 1;
+  string message = 2;
+}
+
+message PlaybackStopped {
+  string reason = 1;
+  int32 frames_sent = 2;
+}
+
+message StopAudioRequest {
+  string session_id = 1;
+}
+
+message StopAudioResponse {
+  string session_id = 1;
+  bool was_playing = 2;
+}
+
+// Health Check
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  int32 active_sessions = 2;
+  int32 available_ports = 3;
+}
+
+// Common Types
+
+message SessionStatus {
+  SessionState state = 1;
+  string error_message = 2;
+}
+
+enum SessionState {
+  SESSION_STATE_UNSPECIFIED = 0;
+  SESSION_STATE_CREATED = 1;
+  SESSION_STATE_ACTIVE = 2;
+  SESSION_STATE_TERMINATED = 3;
+  SESSION_STATE_ERROR = 4;
+}
+
+enum TerminateReason {
+  TERMINATE_REASON_UNSPECIFIED = 0;
+  TERMINATE_REASON_NORMAL = 1;
+  TERMINATE_REASON_BYE = 2;
+  TERMINATE_REASON_CANCEL = 3;
+  TERMINATE_REASON_ERROR = 4;
+  TERMINATE_REASON_TIMEOUT = 5;
+}

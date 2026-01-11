@@ -8,6 +8,12 @@
 *.so
 *.dylib
 
+# Built binaries
+switchboard-signaling
+switchboard-rtpmanager
+switchboard-signaling-linux
+switchboard-rtpmanager-linux
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -28,5 +34,9 @@ go.work.sum
 .env
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
+
+# Claude
+.claude
+CLAUDE.md
