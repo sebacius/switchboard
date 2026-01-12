@@ -3,7 +3,6 @@
 package events
 
 import (
-	"encoding/json"
 	"time"
 )
 
@@ -218,17 +217,3 @@ const (
 	DispositionFailed   = "FAILED"
 	DispositionCanceled = "CANCELED"
 )
-
-// MarshalJSON implements json.Marshaler for Event interface
-func MarshalEvent(e Event) ([]byte, error) {
-	return json.Marshal(e)
-}
-
-// EventMetadata contains optional metadata that can be attached to any event
-type EventMetadata struct {
-	// Custom key-value pairs (dialplan variables, etc.)
-	Custom map[string]string `json:"custom,omitempty"`
-	// Trace context for distributed tracing
-	TraceID string `json:"trace_id,omitempty"`
-	SpanID  string `json:"span_id,omitempty"`
-}

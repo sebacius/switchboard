@@ -42,7 +42,8 @@ type GRPCTransport struct {
 	callToSession map[string]string // callID -> sessionID mapping
 }
 
-// NewGRPCTransport creates a new gRPC transport client
+// NewGRPCTransport creates a new gRPC transport client.
+// Uses grpc.NewClient which establishes connection lazily on first RPC.
 func NewGRPCTransport(cfg GRPCConfig) (*GRPCTransport, error) {
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -53,12 +54,11 @@ func NewGRPCTransport(cfg GRPCConfig) (*GRPCTransport, error) {
 		}),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectTimeout)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, cfg.Address, opts...)
+	// NewClient creates a ClientConn with lazy connection establishment.
+	// The connection is established on first RPC, not at construction time.
+	conn, err := grpc.NewClient(cfg.Address, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to RTP Manager at %s: %w", cfg.Address, err)
+		return nil, fmt.Errorf("failed to create gRPC client for RTP Manager at %s: %w", cfg.Address, err)
 	}
 
 	t := &GRPCTransport{
@@ -71,7 +71,7 @@ func NewGRPCTransport(cfg GRPCConfig) (*GRPCTransport, error) {
 	// Start connection state monitor for keepalive visibility
 	go t.monitorConnectionState(cfg.Address)
 
-	slog.Info("[gRPC] Connected to RTP Manager", "address", cfg.Address)
+	slog.Info("[gRPC] Client created for RTP Manager", "address", cfg.Address)
 	return t, nil
 }
 

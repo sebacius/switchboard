@@ -32,14 +32,3 @@ type CallSession interface {
 	// State queries
 	IsTerminated() bool
 }
-
-// DialResult contains the outcome of a dial action.
-type DialResult struct {
-	Success     bool
-	BridgeID    string // If bridged
-	SIPCode     int    // Response code if failed
-	SIPReason   string
-	Duration    time.Duration // Time until answer or failure
-	TalkTime    time.Duration // Time after bridge until hangup
-	EndedByLegA bool          // Which side hung up
-}
