@@ -4,34 +4,35 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	// NOTE: Uncomment when adding NATS dependency
 	// "encoding/json"
+	// "sync"
 	// "github.com/nats-io/nats.go"
 	// "github.com/nats-io/nats.go/jetstream"
 )
 
 // NATSPublisher publishes events to NATS JetStream.
 // This is a sketch implementation - uncomment NATS imports to activate.
+// The fields are commented out since NATS is not compiled in; they exist
+// in the commented-out implementation block below.
 type NATSPublisher struct {
-	// js       jetstream.JetStream
-	// conn     *nats.Conn
-	streamName string
-	logger     *slog.Logger
-
-	// Async publishing buffer
-	asyncCh  chan Event
-	asyncWg  sync.WaitGroup
-	closedMu sync.RWMutex
-	closed   bool
-
-	// Metrics
-	mu            sync.Mutex
-	publishCount  int64
-	errorCount    int64
-	asyncDropped  int64
+	// NOTE: Fields are defined in the commented-out implementation.
+	// When enabling NATS, uncomment the imports and implementation,
+	// and add the following fields:
+	//   js         jetstream.JetStream
+	//   conn       *nats.Conn
+	//   streamName string
+	//   logger     *slog.Logger
+	//   asyncCh    chan Event
+	//   asyncWg    sync.WaitGroup
+	//   closedMu   sync.RWMutex
+	//   closed     bool
+	//   mu         sync.Mutex
+	//   publishCount  int64
+	//   errorCount    int64
+	//   asyncDropped  int64
 }
 
 // NATSConfig configures the NATS publisher.

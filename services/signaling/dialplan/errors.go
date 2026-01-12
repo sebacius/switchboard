@@ -2,6 +2,7 @@
 package dialplan
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -56,5 +57,5 @@ func (e *DialError) Unwrap() error {
 
 // IsCanceled returns true if the error is due to context cancellation.
 func IsCanceled(err error) bool {
-	return errors.Is(err, errors.New("context canceled")) || errors.Is(err, ErrSessionCanceled)
+	return errors.Is(err, context.Canceled) || errors.Is(err, ErrSessionCanceled)
 }

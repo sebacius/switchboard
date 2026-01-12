@@ -60,7 +60,12 @@ type legImpl struct {
 }
 
 // NewInboundLeg creates a leg from an existing inbound dialog.
+// Returns error if dlg is nil since an inbound leg requires a valid dialog.
 func NewInboundLeg(dlg *dialog.Dialog, sessionID string, opts ...LegOption) (Leg, error) {
+	if dlg == nil {
+		return nil, ErrInvalidState
+	}
+
 	options := &legOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -79,16 +84,14 @@ func NewInboundLeg(dlg *dialog.Dialog, sessionID string, opts ...LegOption) (Leg
 	now := time.Now()
 	var answeredAt time.Time
 
-	if dlg != nil {
-		// Check if the dialog is in a state indicating the call is answered
-		// StateWaitingACK = 200 OK sent, awaiting ACK
-		// StateConfirmed = ACK received, dialog fully established
-		// Either state means the call is "answered" from B2BUA perspective
-		dlgState := dlg.GetState()
-		if dlgState == dialog.StateWaitingACK || dlgState == dialog.StateConfirmed {
-			initialState = LegStateAnswered
-			answeredAt = now
-		}
+	// Check if the dialog is in a state indicating the call is answered
+	// StateWaitingACK = 200 OK sent, awaiting ACK
+	// StateConfirmed = ACK received, dialog fully established
+	// Either state means the call is "answered" from B2BUA perspective
+	dlgState := dlg.GetState()
+	if dlgState == dialog.StateWaitingACK || dlgState == dialog.StateConfirmed {
+		initialState = LegStateAnswered
+		answeredAt = now
 	}
 
 	leg := &legImpl{
@@ -106,26 +109,24 @@ func NewInboundLeg(dlg *dialog.Dialog, sessionID string, opts ...LegOption) (Leg
 	}
 
 	// Extract SIP addressing from dialog
-	if dlg != nil {
-		// Extract From/To URIs from the INVITE request
-		if dlg.InviteRequest != nil {
-			if from := dlg.InviteRequest.From(); from != nil {
-				leg.fromURI = from.Address.String()
-			}
-			if to := dlg.InviteRequest.To(); to != nil {
-				leg.toURI = to.Address.String()
-			}
-			if contact := dlg.InviteRequest.Contact(); contact != nil {
-				leg.remoteURI = contact.Address.String()
-			}
+	// Extract From/To URIs from the INVITE request
+	if dlg.InviteRequest != nil {
+		if from := dlg.InviteRequest.From(); from != nil {
+			leg.fromURI = from.Address.String()
 		}
+		if to := dlg.InviteRequest.To(); to != nil {
+			leg.toURI = to.Address.String()
+		}
+		if contact := dlg.InviteRequest.Contact(); contact != nil {
+			leg.remoteURI = contact.Address.String()
+		}
+	}
 
-		// Get media endpoint if available
-		if addr, port, codec := dlg.GetMediaEndpoint(); addr != "" {
-			leg.remoteRTPAddr = addr
-			leg.remoteRTPPort = port
-			leg.negotiatedCodec = codec
-		}
+	// Get media endpoint if available
+	if addr, port, codec := dlg.GetMediaEndpoint(); addr != "" {
+		leg.remoteRTPAddr = addr
+		leg.remoteRTPPort = port
+		leg.negotiatedCodec = codec
 	}
 
 	return leg, nil

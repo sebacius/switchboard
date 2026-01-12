@@ -26,17 +26,6 @@ type Publisher interface {
 	Close() error
 }
 
-// Subscriber is the interface for receiving events.
-// Used for testing and local event processing.
-type Subscriber interface {
-	// Subscribe returns a channel of events matching the subject pattern.
-	// Pattern supports wildcards: * (single token), > (remaining tokens)
-	Subscribe(ctx context.Context, pattern string) (<-chan Event, error)
-
-	// Close stops all subscriptions.
-	Close() error
-}
-
 // NoopPublisher discards all events. Use when NATS is not configured.
 type NoopPublisher struct{}
 
