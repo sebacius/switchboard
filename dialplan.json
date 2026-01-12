@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "routes": [
+    {
+      "id": "route_ivr",
+      "name": "Main IVR",
+      "pattern": "500",
+      "priority": 10,
+      "enabled": true,
+      "actions": [
+        {
+          "type": "play_audio",
+          "params": {
+            "file": "audio/demo-congrats.wav"
+          }
+        }
+      ]
+    },
+    {
+      "id": "route_internal",
+      "name": "Internal Extensions",
+      "pattern": "1*",
+      "priority": 50,
+      "enabled": true,
+      "actions": [
+        {
+          "type": "dial",
+          "params": {
+            "target": "user/${destination}",
+            "timeout": 30
+          }
+        }
+      ]
+    },
+    {
+      "id": "route_default",
+      "name": "Default - Play Message",
+      "pattern": "*",
+      "priority": 1000,
+      "enabled": true,
+      "actions": [
+        {
+          "type": "play_audio",
+          "params": {
+            "file": "audio/demo-congrats.wav"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Switchboard VoIP Platform
+Documentation=https://github.com/sebas/switchboard
+After=network.target
+
+# This target groups all switchboard services together
+# Use: systemctl restart switchboard.target
+
+[Install]
+WantedBy=multi-user.target

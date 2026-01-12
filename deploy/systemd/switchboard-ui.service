@@ -1,0 +1,40 @@
+[Unit]
+Description=Switchboard UI Dashboard Service
+Documentation=https://github.com/sebas/switchboard
+After=network.target switchboard-signaling.service
+Wants=switchboard-signaling.service
+PartOf=switchboard.target
+
+[Service]
+Type=simple
+User=switchboard
+Group=switchboard
+WorkingDirectory=/opt/switchboard
+
+ExecStart=/opt/switchboard/switchboard-ui \
+    --port=${UI_PORT} \
+    --bind=${UI_BIND} \
+    --backends=${UI_BACKENDS} \
+    --loglevel=${LOG_LEVEL}
+
+EnvironmentFile=/etc/switchboard/ui.env
+
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=switchboard-ui
+
+[Install]
+WantedBy=switchboard.target
+WantedBy=multi-user.target
