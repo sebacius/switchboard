@@ -1,7 +1,27 @@
 # Switchboard
 
 A modular B2BUA (Back-to-Back User Agent) VoIP system built from scratch in Go.
-
+```
+                      _..--""""""""""--.._
+                    .'`       ______       `'.
+                 __/     _.-;"      ";-._     \
+                (("|     || '--------' ||     |
+                 ))\_,.-;`   .-""""-.   `;-.,_/
+                ((      |  .'  .==.  '.  |
+                 ))     | /  /` __ `\  \ |
+                ((      | | |  (__)  | | |
+                 ))   _.| \  \      /  / |
+                ((   /.-|  '. `'=='` .'  |
+                 \'-'/  |    '-....-'    |
+                  `"`   |'-..________..-'|
+                        |                |
+                        '-..__________..-'
+ ____          _ _       _     _                         _ 
+/ ___|_      _(_) |_ ___| |__ | |__   ___   __ _ _ __ __| |
+\___ \ \ /\ / / | __/ __| '_ \| '_ \ / _ \ / _` | '__/ _` |
+ ___) \ V  V /| | || (__| | | | |_) | (_) | (_| | | | (_| |
+|____/ \_/\_/ |_|\__\___|_| |_|_.__/ \___/ \__,_|_|  \__,_|
+```
 ---
 
 > **WARNING: EXPERIMENTAL PROJECT**
@@ -13,6 +33,7 @@ A modular B2BUA (Back-to-Back User Agent) VoIP system built from scratch in Go.
 > This project uses AI-assisted development (Claude Code) to rapidly prototype and iterate. Code is generated and modified across multiple fronts simultaneously. Bugs exist. Inconsistencies exist. You have been warned.
 
 ---
+
 
 ## Why This Exists
 
