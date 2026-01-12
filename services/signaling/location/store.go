@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -279,6 +280,58 @@ func (s *Store) CountAORs() int {
 // Has returns true if the AOR has any active bindings
 func (s *Store) Has(aor string) bool {
 	return len(s.Lookup(aor)) > 0
+}
+
+// LookupByUser searches for bindings where the AOR's user part matches the given user.
+// This handles the case where we know the extension (e.g., "1000") but not the exact
+// domain/port format used during registration.
+// Per RFC 3261, the user part is the portion before '@' in a SIP URI.
+func (s *Store) LookupByUser(user string) []*Binding {
+	if user == "" {
+		return nil
+	}
+
+	allBindings := s.bindings.All()
+	var result []*Binding
+
+	for aor, bindingsMap := range allBindings {
+		// Extract user part from AOR
+		aorUser := extractUserFromAOR(aor)
+		if aorUser == user {
+			for _, b := range bindingsMap {
+				if !b.IsExpired() {
+					result = append(result, b)
+				}
+			}
+		}
+	}
+
+	return result
+}
+
+// extractUserFromAOR extracts the user part from a SIP AOR.
+// Examples:
+//   - "sip:1000@domain.com" -> "1000"
+//   - "sip:alice@domain.com:5060" -> "alice"
+//   - "1000@domain.com" -> "1000"
+//   - "1000" -> "1000"
+func extractUserFromAOR(aor string) string {
+	// Remove sip: or sips: prefix
+	s := aor
+	if strings.HasPrefix(s, "sip:") {
+		s = s[4:]
+	} else if strings.HasPrefix(s, "sips:") {
+		s = s[5:]
+	}
+
+	// Find the @ separator
+	atIdx := strings.Index(s, "@")
+	if atIdx == -1 {
+		// No domain, the whole thing is the user
+		return s
+	}
+
+	return s[:atIdx]
 }
 
 // Close stops the cleanup goroutine

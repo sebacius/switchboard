@@ -90,13 +90,51 @@ func (b *Binding) TTL() time.Duration {
 
 // EffectiveContact returns the best URI to use for routing.
 // Uses received IP/port if behind NAT, otherwise Contact URI.
+// Always preserves the user part from the ContactURI.
 func (b *Binding) EffectiveContact() string {
-	// If we have received info and it differs from Contact, use received for NAT
+	// If we have received info, use received IP/port for NAT traversal
+	// but preserve the user part from ContactURI
 	if b.ReceivedIP != "" && b.ReceivedPort > 0 {
+		user := extractUserFromURI(b.ContactURI)
+		if user != "" {
+			return fmt.Sprintf("sip:%s@%s:%d;transport=%s",
+				user, b.ReceivedIP, b.ReceivedPort, b.Transport)
+		}
 		return fmt.Sprintf("sip:%s:%d;transport=%s",
 			b.ReceivedIP, b.ReceivedPort, b.Transport)
 	}
 	return b.ContactURI
+}
+
+// extractUserFromURI extracts the user part from a SIP URI.
+// Examples:
+//   - "sip:1000@domain.com:5060" -> "1000"
+//   - "sip:alice@example.com" -> "alice"
+//   - "sip:domain.com" -> ""
+func extractUserFromURI(uri string) string {
+	s := uri
+	// Remove scheme
+	if len(s) > 4 && s[:4] == "sip:" {
+		s = s[4:]
+	} else if len(s) > 5 && s[:5] == "sips:" {
+		s = s[5:]
+	}
+
+	// Find @ separator
+	atIdx := -1
+	for i, c := range s {
+		if c == '@' {
+			atIdx = i
+			break
+		}
+	}
+
+	if atIdx == -1 {
+		// No user part
+		return ""
+	}
+
+	return s[:atIdx]
 }
 
 // DialogInfo holds information needed for dialog routing from a binding

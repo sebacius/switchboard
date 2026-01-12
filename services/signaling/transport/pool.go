@@ -296,6 +296,86 @@ func (p *Pool) StopAudio(ctx context.Context, sessionID string) error {
 	return member.transport.StopAudio(ctx, sessionID)
 }
 
+// CreateSessionPendingRemote implements Transport.CreateSessionPendingRemote with load balancing
+func (p *Pool) CreateSessionPendingRemote(ctx context.Context, callID string, codecs []string) (*SessionResult, error) {
+	member, err := p.selectMember()
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := member.transport.CreateSessionPendingRemote(ctx, callID, codecs)
+	if err != nil {
+		member.failCount.Add(1)
+		return nil, fmt.Errorf("CreateSessionPendingRemote on %s failed: %w", member.address, err)
+	}
+
+	// Track session affinity
+	p.mu.Lock()
+	p.sessionToAddr[result.SessionID] = member.address
+	p.mu.Unlock()
+
+	slog.Debug("[Pool] Session created (pending remote)",
+		"session_id", result.SessionID,
+		"rtp_manager", member.address,
+	)
+
+	return result, nil
+}
+
+// UpdateSessionRemote implements Transport.UpdateSessionRemote with affinity
+func (p *Pool) UpdateSessionRemote(ctx context.Context, sessionID, remoteAddr string, remotePort int) error {
+	member, ok := p.getMemberForSession(sessionID)
+	if !ok {
+		return fmt.Errorf("no RTP manager found for session %s", sessionID)
+	}
+
+	return member.transport.UpdateSessionRemote(ctx, sessionID, remoteAddr, remotePort)
+}
+
+// BridgeMedia implements Transport.BridgeMedia
+func (p *Pool) BridgeMedia(ctx context.Context, sessionAID, sessionBID string) (string, error) {
+	// Both sessions must be on the same RTP manager for bridging
+	memberA, okA := p.getMemberForSession(sessionAID)
+	memberB, okB := p.getMemberForSession(sessionBID)
+
+	if !okA {
+		return "", fmt.Errorf("no RTP manager found for session A: %s", sessionAID)
+	}
+	if !okB {
+		return "", fmt.Errorf("no RTP manager found for session B: %s", sessionBID)
+	}
+
+	if memberA.address != memberB.address {
+		return "", fmt.Errorf("sessions are on different RTP managers (%s vs %s) - cross-manager bridging not supported",
+			memberA.address, memberB.address)
+	}
+
+	return memberA.transport.BridgeMedia(ctx, sessionAID, sessionBID)
+}
+
+// UnbridgeMedia implements Transport.UnbridgeMedia
+func (p *Pool) UnbridgeMedia(ctx context.Context, bridgeID string) error {
+	// We need to find which member has this bridge
+	// For now, try all members until one succeeds
+	p.mu.RLock()
+	members := make([]*poolMember, len(p.members))
+	copy(members, p.members)
+	p.mu.RUnlock()
+
+	for _, member := range members {
+		if member.transport == nil || !member.healthy.Load() {
+			continue
+		}
+		err := member.transport.UnbridgeMedia(ctx, bridgeID)
+		if err == nil {
+			return nil
+		}
+		// Try next member - bridge might be on a different one
+	}
+
+	return fmt.Errorf("bridge not found on any RTP manager: %s", bridgeID)
+}
+
 // Ready implements Transport.Ready
 func (p *Pool) Ready() bool {
 	p.mu.RLock()

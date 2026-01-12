@@ -221,6 +221,97 @@ func (t *GRPCTransport) StopAudio(ctx context.Context, sessionID string) error {
 	return err
 }
 
+// CreateSessionPendingRemote implements Transport.CreateSessionPendingRemote
+func (t *GRPCTransport) CreateSessionPendingRemote(ctx context.Context, callID string, codecs []string) (*SessionResult, error) {
+	// For B2BUA B-leg, we create a session without a remote endpoint
+	// The remote endpoint will be set later via UpdateSessionRemote
+	req := &rtpv1.CreateSessionRequest{
+		CallId:        callID,
+		RemoteAddr:    "", // Empty - to be set later
+		RemotePort:    0,  // Empty - to be set later
+		OfferedCodecs: codecs,
+	}
+
+	resp, err := t.client.CreateSession(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("CreateSessionPendingRemote RPC failed: %w", err)
+	}
+
+	if resp.Status != nil && resp.Status.State == rtpv1.SessionState_SESSION_STATE_ERROR {
+		return nil, fmt.Errorf("session creation failed: %s", resp.Status.ErrorMessage)
+	}
+
+	// Cache the call->session mapping
+	t.mu.Lock()
+	t.callToSession[callID] = resp.SessionId
+	t.mu.Unlock()
+
+	return &SessionResult{
+		SessionID:     resp.SessionId,
+		LocalAddr:     resp.LocalAddr,
+		LocalPort:     int(resp.LocalPort),
+		SDPBody:       resp.SdpBody,
+		SelectedCodec: resp.SelectedCodec,
+	}, nil
+}
+
+// UpdateSessionRemote implements Transport.UpdateSessionRemote
+func (t *GRPCTransport) UpdateSessionRemote(ctx context.Context, sessionID, remoteAddr string, remotePort int) error {
+	req := &rtpv1.UpdateSessionRemoteRequest{
+		SessionId:  sessionID,
+		RemoteAddr: remoteAddr,
+		RemotePort: int32(remotePort),
+	}
+
+	resp, err := t.client.UpdateSessionRemote(ctx, req)
+	if err != nil {
+		return fmt.Errorf("UpdateSessionRemote RPC failed: %w", err)
+	}
+
+	if resp.Status != nil && resp.Status.State == rtpv1.SessionState_SESSION_STATE_ERROR {
+		return fmt.Errorf("update session remote failed: %s", resp.Status.ErrorMessage)
+	}
+
+	return nil
+}
+
+// BridgeMedia implements Transport.BridgeMedia
+func (t *GRPCTransport) BridgeMedia(ctx context.Context, sessionAID, sessionBID string) (string, error) {
+	req := &rtpv1.BridgeMediaRequest{
+		SessionAId: sessionAID,
+		SessionBId: sessionBID,
+	}
+
+	resp, err := t.client.BridgeMedia(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("BridgeMedia RPC failed: %w", err)
+	}
+
+	if resp.Status != nil && resp.Status.State == rtpv1.SessionState_SESSION_STATE_ERROR {
+		return "", fmt.Errorf("bridge media failed: %s", resp.Status.ErrorMessage)
+	}
+
+	return resp.BridgeId, nil
+}
+
+// UnbridgeMedia implements Transport.UnbridgeMedia
+func (t *GRPCTransport) UnbridgeMedia(ctx context.Context, bridgeID string) error {
+	req := &rtpv1.UnbridgeMediaRequest{
+		BridgeId: bridgeID,
+	}
+
+	resp, err := t.client.UnbridgeMedia(ctx, req)
+	if err != nil {
+		return fmt.Errorf("UnbridgeMedia RPC failed: %w", err)
+	}
+
+	if resp.Status != nil && resp.Status.State == rtpv1.SessionState_SESSION_STATE_ERROR {
+		return fmt.Errorf("unbridge media failed: %s", resp.Status.ErrorMessage)
+	}
+
+	return nil
+}
+
 // Ready implements Transport.Ready
 func (t *GRPCTransport) Ready() bool {
 	t.mu.RLock()

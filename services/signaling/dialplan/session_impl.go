@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sebas/switchboard/services/signaling/b2bua"
 	"github.com/sebas/switchboard/services/signaling/dialog"
 	"github.com/sebas/switchboard/services/signaling/location"
 	"github.com/sebas/switchboard/services/signaling/transport"
@@ -21,15 +22,17 @@ type sessionImpl struct {
 	callID      string
 	destination string
 	callerID    string
+	callerName  string
 
 	// Core components
-	ctx       context.Context
-	cancel    context.CancelFunc
-	dialog    *dialog.Dialog
-	transport transport.Transport
-	dialogMgr *dialog.Manager
-	locStore  location.LocationStore
-	logger    *slog.Logger
+	ctx         context.Context
+	cancel      context.CancelFunc
+	dialog      *dialog.Dialog
+	transport   transport.Transport
+	dialogMgr   *dialog.Manager
+	locStore    location.LocationStore
+	callService b2bua.CallService
+	logger      *slog.Logger
 
 	// Session state
 	sessionID  string
@@ -42,9 +45,11 @@ type SessionConfig struct {
 	Transport   transport.Transport
 	DialogMgr   *dialog.Manager
 	LocStore    location.LocationStore
+	CallService b2bua.CallService
 	Logger      *slog.Logger
 	Destination string
-	CallerID    string
+	CallerID    string // From header user part (phone number/extension)
+	CallerName  string // From header display name
 }
 
 // NewSession creates a CallSession from an established dialog.
@@ -60,12 +65,14 @@ func NewSession(cfg SessionConfig) CallSession {
 		callID:      cfg.Dialog.CallID,
 		destination: cfg.Destination,
 		callerID:    cfg.CallerID,
+		callerName:  cfg.CallerName,
 		ctx:         ctx,
 		cancel:      cancel,
 		dialog:      cfg.Dialog,
 		transport:   cfg.Transport,
 		dialogMgr:   cfg.DialogMgr,
 		locStore:    cfg.LocStore,
+		callService: cfg.CallService,
 		logger:      cfg.Logger,
 		sessionID:   cfg.Dialog.GetSessionID(),
 	}
@@ -152,7 +159,7 @@ func (s *sessionImpl) StopAudio() error {
 }
 
 // Dial initiates an outbound call and bridges on answer.
-// This is the B2BUA dial action - it will be expanded in future iterations.
+// Uses the B2BUA CallService for full dial and bridge functionality.
 func (s *sessionImpl) Dial(ctx context.Context, target string, timeout time.Duration) error {
 	s.logger.Info("[Session] Dial action",
 		"call_id", s.callID,
@@ -160,36 +167,76 @@ func (s *sessionImpl) Dial(ctx context.Context, target string, timeout time.Dura
 		"timeout", timeout,
 	)
 
-	// Parse target
-	contactURI, err := s.resolveTarget(target)
+	// Check if CallService is configured
+	if s.callService == nil {
+		// Fall back to basic resolution for diagnostics
+		contactURI, err := s.resolveTarget(target)
+		if err != nil {
+			return &DialError{
+				Target: target,
+				Cause:  err,
+			}
+		}
+		s.logger.Info("[Session] Resolved target (no CallService)",
+			"call_id", s.callID,
+			"target", target,
+			"contact_uri", contactURI,
+		)
+		return &DialError{
+			Target:  target,
+			Cause:   fmt.Errorf("B2BUA CallService not configured"),
+			SIPCode: 501,
+		}
+	}
+
+	// Adopt the A-leg (inbound dialog) as a B2BUA leg
+	aLeg, err := s.callService.AdoptInboundLeg(s.dialog, s.sessionID)
 	if err != nil {
+		return &DialError{
+			Target: target,
+			Cause:  fmt.Errorf("adopt inbound leg: %w", err),
+		}
+	}
+
+	s.logger.Info("[Session] A-leg adopted",
+		"call_id", s.callID,
+		"leg_id", aLeg.ID(),
+	)
+
+	// Use DialAndBridge for the complete B2BUA flow
+	// This will: lookup target, create B-leg, wait for answer, bridge media, wait for termination
+	// Pass CallerID from the inbound call to set the From header on the outbound INVITE
+	callerName := s.callerName
+	if callerName == "" {
+		callerName = s.callerID // Fallback to callerID if no display name
+	}
+	bridgeInfo, err := s.callService.DialAndBridge(ctx, aLeg, target, timeout,
+		b2bua.WithCallerID(s.callerID),
+		b2bua.WithCallerName(callerName),
+	)
+	if err != nil {
+		// Extract SIP code from DialError if available
+		if dialErr, ok := err.(*b2bua.DialError); ok {
+			return &DialError{
+				Target:    target,
+				SIPCode:   dialErr.SIPCode,
+				SIPReason: dialErr.SIPReason,
+				Cause:     dialErr.Cause,
+			}
+		}
 		return &DialError{
 			Target: target,
 			Cause:  err,
 		}
 	}
 
-	s.logger.Info("[Session] Resolved target",
+	s.logger.Info("[Session] Bridge terminated",
 		"call_id", s.callID,
-		"target", target,
-		"contact_uri", contactURI,
+		"bridge_id", bridgeInfo.ID,
+		"duration", bridgeInfo.Duration(),
 	)
 
-	// TODO: Implement B2BUA flow:
-	// 1. Create leg B dialog (UAC role)
-	// 2. Create RTP session for leg B
-	// 3. Send INVITE to resolved contact with leg B's SDP
-	// 4. Wait for answer (183/200)
-	// 5. Create media bridge between leg A and leg B
-	// 6. Wait for BYE from either side
-	// 7. Propagate hangup to other leg
-
-	// For now, return an error indicating B2BUA is not yet implemented
-	return &DialError{
-		Target:  target,
-		Cause:   fmt.Errorf("B2BUA dial not yet implemented (resolved: %s)", contactURI),
-		SIPCode: 501,
-	}
+	return nil
 }
 
 // resolveTarget resolves a dial target to a contact URI.

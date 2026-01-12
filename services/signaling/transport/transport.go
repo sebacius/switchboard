@@ -58,11 +58,26 @@ const (
 	TerminateReasonTimeout
 )
 
+// BridgeInfo contains information about an active bridge
+type BridgeInfo struct {
+	BridgeID   string
+	SessionAID string
+	SessionBID string
+}
+
 // Transport abstracts media service communication.
 // Implementations: LocalTransport (in-process), GRPCTransport (remote)
 type Transport interface {
 	// CreateSession allocates resources and returns SDP
 	CreateSession(ctx context.Context, info SessionInfo) (*SessionResult, error)
+
+	// CreateSessionPendingRemote allocates resources without remote endpoint.
+	// Used for B2BUA B-leg where remote is set later via UpdateSessionRemote.
+	CreateSessionPendingRemote(ctx context.Context, callID string, codecs []string) (*SessionResult, error)
+
+	// UpdateSessionRemote updates the remote endpoint for a session.
+	// Used when SDP answer arrives after session creation (B2BUA scenario).
+	UpdateSessionRemote(ctx context.Context, sessionID, remoteAddr string, remotePort int) error
 
 	// DestroySession releases resources
 	DestroySession(ctx context.Context, sessionID string, reason TerminateReason) error
@@ -72,6 +87,13 @@ type Transport interface {
 
 	// StopAudio cancels ongoing playback
 	StopAudio(ctx context.Context, sessionID string) error
+
+	// BridgeMedia connects two sessions for bidirectional RTP relay.
+	// Returns a bridge ID for later unbridging.
+	BridgeMedia(ctx context.Context, sessionAID, sessionBID string) (string, error)
+
+	// UnbridgeMedia disconnects two bridged sessions.
+	UnbridgeMedia(ctx context.Context, bridgeID string) error
 
 	// Ready checks if transport is connected and healthy
 	Ready() bool

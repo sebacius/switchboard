@@ -2,8 +2,10 @@ package dialplan
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 )
 
 // Executor runs dialplan routes.
@@ -81,8 +83,11 @@ func (e *Executor) ExecuteRoute(ctx context.Context, session CallSession, route 
 			}
 		}
 
+		// Substitute variables in params (e.g., ${destination} -> actual value)
+		expandedParams := e.substituteVars(actionCfg.Params, session)
+
 		// Create action from config
-		action, err := e.registry.Create(actionCfg.Type, actionCfg.Params)
+		action, err := e.registry.Create(actionCfg.Type, expandedParams)
 		if err != nil {
 			return &ExecutionError{
 				RouteID:        route.ID,
@@ -140,4 +145,31 @@ func (e *Executor) Registry() *ActionRegistry {
 // Dialplan returns the underlying dialplan for inspection.
 func (e *Executor) Dialplan() *Dialplan {
 	return e.dialplan
+}
+
+// substituteVars replaces ${variable} placeholders in the params JSON with session values.
+// Supported variables:
+//   - ${destination} - dialed number (To URI user part)
+//   - ${caller_id} - caller number (From URI user part)
+//   - ${call_id} - SIP Call-ID
+func (e *Executor) substituteVars(params json.RawMessage, session CallSession) json.RawMessage {
+	if len(params) == 0 {
+		return params
+	}
+
+	s := string(params)
+
+	// Build replacement map
+	vars := map[string]string{
+		"${destination}": session.Destination(),
+		"${caller_id}":   session.CallerID(),
+		"${call_id}":     session.CallID(),
+	}
+
+	// Replace all variables
+	for placeholder, value := range vars {
+		s = strings.ReplaceAll(s, placeholder, value)
+	}
+
+	return json.RawMessage(s)
 }

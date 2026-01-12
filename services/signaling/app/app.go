@@ -9,6 +9,7 @@ import (
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/sebas/switchboard/services/signaling/api"
+	"github.com/sebas/switchboard/services/signaling/b2bua"
 	"github.com/sebas/switchboard/services/signaling/config"
 	"github.com/sebas/switchboard/services/signaling/dialplan"
 	"github.com/sebas/switchboard/services/signaling/dialog"
@@ -29,6 +30,7 @@ type SwitchBoard struct {
 	inviteHandler   *routing.InviteHandler
 	dialogMgr       dialog.DialogStore
 	transport       transport.Transport
+	callService     b2bua.CallService
 }
 
 func NewServer(cfg *config.Config) (*SwitchBoard, error) {
@@ -114,7 +116,18 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Create dialplan executor with default actions
 	executor := dialplan.NewExecutor(dp, dialplan.DefaultRegistry(), slog.Default())
 
-	// Create INVITE handler with dialplan executor
+	// Create B2BUA CallService for dial actions
+	callService := b2bua.NewCallService(b2bua.CallServiceConfig{
+		Client:        uac,
+		Resolver:      b2bua.DefaultResolver(locStore, cfg.AdvertiseAddr),
+		DialogManager: dialogMgr,
+		Transport:     mediaTransport,
+		LocalContact:  fmt.Sprintf("sip:switchboard@%s:%d", cfg.AdvertiseAddr, cfg.Port),
+		AdvertiseAddr: cfg.AdvertiseAddr,
+		Port:          cfg.Port,
+	})
+
+	// Create INVITE handler with dialplan executor and B2BUA service
 	inviteHandler := routing.NewInviteHandler(
 		mediaTransport,
 		cfg.AdvertiseAddr,
@@ -123,6 +136,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		apiServer,
 		executor,
 		locStore,
+		callService,
 	)
 
 	proxy := &SwitchBoard{
@@ -136,6 +150,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		inviteHandler:   inviteHandler,
 		dialogMgr:       dialogMgr,
 		transport:       mediaTransport,
+		callService:     callService,
 	}
 
 	// Set up dialog termination callback to cleanup transport sessions and API records
@@ -207,6 +222,13 @@ func (p *SwitchBoard) handleINVITE(req *sip.Request, tx sip.ServerTransaction) {
 }
 
 func (p *SwitchBoard) handleBYE(req *sip.Request, tx sip.ServerTransaction) {
+	// First, check if this is a BYE for an outbound (B-leg) call.
+	// B-legs are tracked by the CallService/Originator, not the dialog manager.
+	if p.callService != nil && p.callService.HandleIncomingBYE(req, tx) {
+		return // Handled by CallService
+	}
+
+	// Otherwise, handle as an inbound (A-leg) dialog
 	if err := p.dialogMgr.HandleIncomingBYE(req, tx); err != nil {
 		slog.Debug("[App] BYE handling note", "error", err)
 	}

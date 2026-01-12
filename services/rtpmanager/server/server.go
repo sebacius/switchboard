@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 
+	rtpv1 "github.com/sebas/switchboard/pkg/rtpmanager/v1"
+	"github.com/sebas/switchboard/services/rtpmanager/bridge"
 	"github.com/sebas/switchboard/services/rtpmanager/media"
 	"github.com/sebas/switchboard/services/rtpmanager/portpool"
 	"github.com/sebas/switchboard/services/rtpmanager/session"
-	rtpv1 "github.com/sebas/switchboard/pkg/rtpmanager/v1"
 )
 
 // Config holds RTP Manager configuration
@@ -25,6 +26,7 @@ type Config struct {
 type Server struct {
 	rtpv1.UnimplementedRTPManagerServiceServer
 	sessionMgr *session.Manager
+	bridgeMgr  *bridge.Manager
 	portPool   *portpool.PortPool
 	config     *Config
 }
@@ -40,8 +42,12 @@ func NewServer(cfg *Config) (*Server, error) {
 	// Create session manager
 	sessionMgr := session.NewManager(pool, mediaService, cfg.AdvertiseAddr)
 
+	// Create bridge manager
+	bridgeMgr := bridge.NewManager()
+
 	return &Server{
 		sessionMgr: sessionMgr,
+		bridgeMgr:  bridgeMgr,
 		portPool:   pool,
 		config:     cfg,
 	}, nil
@@ -150,8 +156,153 @@ func (s *Server) Health(ctx context.Context, req *rtpv1.HealthRequest) (*rtpv1.H
 	}, nil
 }
 
+// UpdateSessionRemote implements RTPManagerService.UpdateSessionRemote
+func (s *Server) UpdateSessionRemote(ctx context.Context, req *rtpv1.UpdateSessionRemoteRequest) (*rtpv1.UpdateSessionRemoteResponse, error) {
+	slog.Info("[gRPC] UpdateSessionRemote",
+		"session_id", req.SessionId,
+		"remote", fmt.Sprintf("%s:%d", req.RemoteAddr, req.RemotePort),
+	)
+
+	if err := s.sessionMgr.UpdateRemoteEndpoint(req.SessionId, req.RemoteAddr, int(req.RemotePort)); err != nil {
+		slog.Error("[gRPC] UpdateSessionRemote failed", "error", err)
+		return &rtpv1.UpdateSessionRemoteResponse{
+			SessionId: req.SessionId,
+			Status: &rtpv1.SessionStatus{
+				State:        rtpv1.SessionState_SESSION_STATE_ERROR,
+				ErrorMessage: err.Error(),
+			},
+		}, nil
+	}
+
+	return &rtpv1.UpdateSessionRemoteResponse{
+		SessionId: req.SessionId,
+		Status: &rtpv1.SessionStatus{
+			State: rtpv1.SessionState_SESSION_STATE_ACTIVE,
+		},
+	}, nil
+}
+
+// BridgeMedia implements RTPManagerService.BridgeMedia
+func (s *Server) BridgeMedia(ctx context.Context, req *rtpv1.BridgeMediaRequest) (*rtpv1.BridgeMediaResponse, error) {
+	slog.Info("[gRPC] BridgeMedia",
+		"session_a", req.SessionAId,
+		"session_b", req.SessionBId,
+	)
+
+	// Get endpoint info for session A
+	localAddrA, localPortA, remoteAddrA, remotePortA, err := s.sessionMgr.GetSessionEndpoint(req.SessionAId)
+	if err != nil {
+		slog.Error("[gRPC] BridgeMedia failed", "error", fmt.Sprintf("session A: %v", err))
+		return &rtpv1.BridgeMediaResponse{
+			Status: &rtpv1.SessionStatus{
+				State:        rtpv1.SessionState_SESSION_STATE_ERROR,
+				ErrorMessage: fmt.Sprintf("session A: %v", err),
+			},
+		}, nil
+	}
+
+	// Get endpoint info for session B
+	localAddrB, localPortB, remoteAddrB, remotePortB, err := s.sessionMgr.GetSessionEndpoint(req.SessionBId)
+	if err != nil {
+		slog.Error("[gRPC] BridgeMedia failed", "error", fmt.Sprintf("session B: %v", err))
+		return &rtpv1.BridgeMediaResponse{
+			Status: &rtpv1.SessionStatus{
+				State:        rtpv1.SessionState_SESSION_STATE_ERROR,
+				ErrorMessage: fmt.Sprintf("session B: %v", err),
+			},
+		}, nil
+	}
+
+	// Create bridge endpoints
+	endpointA := &bridge.Endpoint{
+		SessionID:  req.SessionAId,
+		LocalAddr:  localAddrA,
+		LocalPort:  localPortA,
+		RemoteAddr: remoteAddrA,
+		RemotePort: remotePortA,
+	}
+	endpointB := &bridge.Endpoint{
+		SessionID:  req.SessionBId,
+		LocalAddr:  localAddrB,
+		LocalPort:  localPortB,
+		RemoteAddr: remoteAddrB,
+		RemotePort: remotePortB,
+	}
+
+	bridgeID, err := s.bridgeMgr.CreateBridge(endpointA, endpointB)
+	if err != nil {
+		slog.Error("[gRPC] BridgeMedia failed", "error", err)
+		return &rtpv1.BridgeMediaResponse{
+			Status: &rtpv1.SessionStatus{
+				State:        rtpv1.SessionState_SESSION_STATE_ERROR,
+				ErrorMessage: err.Error(),
+			},
+		}, nil
+	}
+
+	// Mark sessions as bridged
+	s.sessionMgr.SetSessionBridged(req.SessionAId)
+	s.sessionMgr.SetSessionBridged(req.SessionBId)
+
+	slog.Info("[gRPC] BridgeMedia success",
+		"bridge_id", bridgeID,
+		"session_a", req.SessionAId,
+		"session_b", req.SessionBId,
+	)
+
+	return &rtpv1.BridgeMediaResponse{
+		BridgeId: bridgeID,
+		Status: &rtpv1.SessionStatus{
+			State: rtpv1.SessionState_SESSION_STATE_BRIDGED,
+		},
+	}, nil
+}
+
+// UnbridgeMedia implements RTPManagerService.UnbridgeMedia
+func (s *Server) UnbridgeMedia(ctx context.Context, req *rtpv1.UnbridgeMediaRequest) (*rtpv1.UnbridgeMediaResponse, error) {
+	slog.Info("[gRPC] UnbridgeMedia",
+		"bridge_id", req.BridgeId,
+		"session_id", req.SessionId,
+	)
+
+	var err error
+	bridgeID := req.BridgeId
+
+	if bridgeID != "" {
+		err = s.bridgeMgr.DestroyBridge(bridgeID)
+	} else if req.SessionId != "" {
+		bridgeID, err = s.bridgeMgr.DestroyBySession(req.SessionId)
+	} else {
+		return &rtpv1.UnbridgeMediaResponse{
+			Status: &rtpv1.SessionStatus{
+				State:        rtpv1.SessionState_SESSION_STATE_ERROR,
+				ErrorMessage: "bridge_id or session_id required",
+			},
+		}, nil
+	}
+
+	if err != nil {
+		slog.Error("[gRPC] UnbridgeMedia failed", "error", err)
+		return &rtpv1.UnbridgeMediaResponse{
+			BridgeId: bridgeID,
+			Status: &rtpv1.SessionStatus{
+				State:        rtpv1.SessionState_SESSION_STATE_ERROR,
+				ErrorMessage: err.Error(),
+			},
+		}, nil
+	}
+
+	return &rtpv1.UnbridgeMediaResponse{
+		BridgeId: bridgeID,
+		Status: &rtpv1.SessionStatus{
+			State: rtpv1.SessionState_SESSION_STATE_TERMINATED,
+		},
+	}, nil
+}
+
 // Close cleans up resources
 func (s *Server) Close() error {
+	s.bridgeMgr.CloseAll()
 	s.sessionMgr.CloseAll()
 	return nil
 }

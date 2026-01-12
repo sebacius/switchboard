@@ -24,6 +24,20 @@ service RTPManagerService {
 
   // Health checks if the service is operational.
   rpc Health(HealthRequest) returns (HealthResponse);
+
+  // UpdateSessionRemote updates the remote endpoint for an existing session.
+  // Used for B2BUA: B-leg session is created without remote info, then updated
+  // when the 200 OK with SDP arrives from the callee.
+  rpc UpdateSessionRemote(UpdateSessionRemoteRequest) returns (UpdateSessionRemoteResponse);
+
+  // BridgeMedia connects two sessions for bidirectional RTP forwarding.
+  // Packets received on session A are forwarded to session B's remote endpoint
+  // and vice versa. Both sessions must exist and have valid remote endpoints.
+  rpc BridgeMedia(BridgeMediaRequest) returns (BridgeMediaResponse);
+
+  // UnbridgeMedia disconnects two bridged sessions.
+  // Each session continues to exist but packets are no longer forwarded.
+  rpc UnbridgeMedia(UnbridgeMediaRequest) returns (UnbridgeMediaResponse);
 }
 
 // Session Management
@@ -145,6 +159,9 @@ enum SessionState {
   SESSION_STATE_ACTIVE = 2;
   SESSION_STATE_TERMINATED = 3;
   SESSION_STATE_ERROR = 4;
+  // Bridge-specific states
+  SESSION_STATE_PENDING_REMOTE = 5;  // Waiting for remote endpoint info
+  SESSION_STATE_BRIDGED = 6;         // Part of an active bridge
 }
 
 enum TerminateReason {
@@ -154,4 +171,41 @@ enum TerminateReason {
   TERMINATE_REASON_CANCEL = 3;
   TERMINATE_REASON_ERROR = 4;
   TERMINATE_REASON_TIMEOUT = 5;
+}
+
+// Bridge Operations
+
+message UpdateSessionRemoteRequest {
+  string session_id = 1;
+  string remote_addr = 2;
+  int32 remote_port = 3;
+}
+
+message UpdateSessionRemoteResponse {
+  string session_id = 1;
+  SessionStatus status = 2;
+}
+
+message BridgeMediaRequest {
+  // Session ID for leg A (typically caller side)
+  string session_a_id = 1;
+  // Session ID for leg B (typically callee side)
+  string session_b_id = 2;
+}
+
+message BridgeMediaResponse {
+  // Unique bridge ID for managing the bridge
+  string bridge_id = 1;
+  SessionStatus status = 2;
+}
+
+message UnbridgeMediaRequest {
+  // Can specify by bridge_id OR by session_id
+  string bridge_id = 1;
+  string session_id = 2;
+}
+
+message UnbridgeMediaResponse {
+  string bridge_id = 1;
+  SessionStatus status = 2;
 }

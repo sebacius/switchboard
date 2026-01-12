@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.0
 // - protoc             v6.33.2
-// source: rtpmanager/v1/rtpmanager.proto
+// source: api/proto/rtpmanager/v1/rtpmanager.proto
 
 package rtpmanagerv1
 
@@ -19,11 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RTPManagerService_CreateSession_FullMethodName  = "/rtpmanager.v1.RTPManagerService/CreateSession"
-	RTPManagerService_DestroySession_FullMethodName = "/rtpmanager.v1.RTPManagerService/DestroySession"
-	RTPManagerService_PlayAudio_FullMethodName      = "/rtpmanager.v1.RTPManagerService/PlayAudio"
-	RTPManagerService_StopAudio_FullMethodName      = "/rtpmanager.v1.RTPManagerService/StopAudio"
-	RTPManagerService_Health_FullMethodName         = "/rtpmanager.v1.RTPManagerService/Health"
+	RTPManagerService_CreateSession_FullMethodName       = "/rtpmanager.v1.RTPManagerService/CreateSession"
+	RTPManagerService_DestroySession_FullMethodName      = "/rtpmanager.v1.RTPManagerService/DestroySession"
+	RTPManagerService_PlayAudio_FullMethodName           = "/rtpmanager.v1.RTPManagerService/PlayAudio"
+	RTPManagerService_StopAudio_FullMethodName           = "/rtpmanager.v1.RTPManagerService/StopAudio"
+	RTPManagerService_Health_FullMethodName              = "/rtpmanager.v1.RTPManagerService/Health"
+	RTPManagerService_UpdateSessionRemote_FullMethodName = "/rtpmanager.v1.RTPManagerService/UpdateSessionRemote"
+	RTPManagerService_BridgeMedia_FullMethodName         = "/rtpmanager.v1.RTPManagerService/BridgeMedia"
+	RTPManagerService_UnbridgeMedia_FullMethodName       = "/rtpmanager.v1.RTPManagerService/UnbridgeMedia"
 )
 
 // RTPManagerServiceClient is the client API for RTPManagerService service.
@@ -46,6 +49,17 @@ type RTPManagerServiceClient interface {
 	StopAudio(ctx context.Context, in *StopAudioRequest, opts ...grpc.CallOption) (*StopAudioResponse, error)
 	// Health checks if the service is operational.
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
+	// UpdateSessionRemote updates the remote endpoint for an existing session.
+	// Used for B2BUA: B-leg session is created without remote info, then updated
+	// when the 200 OK with SDP arrives from the callee.
+	UpdateSessionRemote(ctx context.Context, in *UpdateSessionRemoteRequest, opts ...grpc.CallOption) (*UpdateSessionRemoteResponse, error)
+	// BridgeMedia connects two sessions for bidirectional RTP forwarding.
+	// Packets received on session A are forwarded to session B's remote endpoint
+	// and vice versa. Both sessions must exist and have valid remote endpoints.
+	BridgeMedia(ctx context.Context, in *BridgeMediaRequest, opts ...grpc.CallOption) (*BridgeMediaResponse, error)
+	// UnbridgeMedia disconnects two bridged sessions.
+	// Each session continues to exist but packets are no longer forwarded.
+	UnbridgeMedia(ctx context.Context, in *UnbridgeMediaRequest, opts ...grpc.CallOption) (*UnbridgeMediaResponse, error)
 }
 
 type rTPManagerServiceClient struct {
@@ -115,6 +129,36 @@ func (c *rTPManagerServiceClient) Health(ctx context.Context, in *HealthRequest,
 	return out, nil
 }
 
+func (c *rTPManagerServiceClient) UpdateSessionRemote(ctx context.Context, in *UpdateSessionRemoteRequest, opts ...grpc.CallOption) (*UpdateSessionRemoteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateSessionRemoteResponse)
+	err := c.cc.Invoke(ctx, RTPManagerService_UpdateSessionRemote_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *rTPManagerServiceClient) BridgeMedia(ctx context.Context, in *BridgeMediaRequest, opts ...grpc.CallOption) (*BridgeMediaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BridgeMediaResponse)
+	err := c.cc.Invoke(ctx, RTPManagerService_BridgeMedia_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *rTPManagerServiceClient) UnbridgeMedia(ctx context.Context, in *UnbridgeMediaRequest, opts ...grpc.CallOption) (*UnbridgeMediaResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnbridgeMediaResponse)
+	err := c.cc.Invoke(ctx, RTPManagerService_UnbridgeMedia_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RTPManagerServiceServer is the server API for RTPManagerService service.
 // All implementations must embed UnimplementedRTPManagerServiceServer
 // for forward compatibility.
@@ -135,6 +179,17 @@ type RTPManagerServiceServer interface {
 	StopAudio(context.Context, *StopAudioRequest) (*StopAudioResponse, error)
 	// Health checks if the service is operational.
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
+	// UpdateSessionRemote updates the remote endpoint for an existing session.
+	// Used for B2BUA: B-leg session is created without remote info, then updated
+	// when the 200 OK with SDP arrives from the callee.
+	UpdateSessionRemote(context.Context, *UpdateSessionRemoteRequest) (*UpdateSessionRemoteResponse, error)
+	// BridgeMedia connects two sessions for bidirectional RTP forwarding.
+	// Packets received on session A are forwarded to session B's remote endpoint
+	// and vice versa. Both sessions must exist and have valid remote endpoints.
+	BridgeMedia(context.Context, *BridgeMediaRequest) (*BridgeMediaResponse, error)
+	// UnbridgeMedia disconnects two bridged sessions.
+	// Each session continues to exist but packets are no longer forwarded.
+	UnbridgeMedia(context.Context, *UnbridgeMediaRequest) (*UnbridgeMediaResponse, error)
 	mustEmbedUnimplementedRTPManagerServiceServer()
 }
 
@@ -159,6 +214,15 @@ func (UnimplementedRTPManagerServiceServer) StopAudio(context.Context, *StopAudi
 }
 func (UnimplementedRTPManagerServiceServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
+}
+func (UnimplementedRTPManagerServiceServer) UpdateSessionRemote(context.Context, *UpdateSessionRemoteRequest) (*UpdateSessionRemoteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateSessionRemote not implemented")
+}
+func (UnimplementedRTPManagerServiceServer) BridgeMedia(context.Context, *BridgeMediaRequest) (*BridgeMediaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BridgeMedia not implemented")
+}
+func (UnimplementedRTPManagerServiceServer) UnbridgeMedia(context.Context, *UnbridgeMediaRequest) (*UnbridgeMediaResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnbridgeMedia not implemented")
 }
 func (UnimplementedRTPManagerServiceServer) mustEmbedUnimplementedRTPManagerServiceServer() {}
 func (UnimplementedRTPManagerServiceServer) testEmbeddedByValue()                           {}
@@ -264,6 +328,60 @@ func _RTPManagerService_Health_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RTPManagerService_UpdateSessionRemote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateSessionRemoteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RTPManagerServiceServer).UpdateSessionRemote(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RTPManagerService_UpdateSessionRemote_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RTPManagerServiceServer).UpdateSessionRemote(ctx, req.(*UpdateSessionRemoteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RTPManagerService_BridgeMedia_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BridgeMediaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RTPManagerServiceServer).BridgeMedia(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RTPManagerService_BridgeMedia_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RTPManagerServiceServer).BridgeMedia(ctx, req.(*BridgeMediaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RTPManagerService_UnbridgeMedia_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnbridgeMediaRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RTPManagerServiceServer).UnbridgeMedia(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RTPManagerService_UnbridgeMedia_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RTPManagerServiceServer).UnbridgeMedia(ctx, req.(*UnbridgeMediaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RTPManagerService_ServiceDesc is the grpc.ServiceDesc for RTPManagerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -287,6 +405,18 @@ var RTPManagerService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Health",
 			Handler:    _RTPManagerService_Health_Handler,
 		},
+		{
+			MethodName: "UpdateSessionRemote",
+			Handler:    _RTPManagerService_UpdateSessionRemote_Handler,
+		},
+		{
+			MethodName: "BridgeMedia",
+			Handler:    _RTPManagerService_BridgeMedia_Handler,
+		},
+		{
+			MethodName: "UnbridgeMedia",
+			Handler:    _RTPManagerService_UnbridgeMedia_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -295,5 +425,5 @@ var RTPManagerService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "rtpmanager/v1/rtpmanager.proto",
+	Metadata: "api/proto/rtpmanager/v1/rtpmanager.proto",
 }

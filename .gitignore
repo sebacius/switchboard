@@ -11,8 +11,10 @@
 # Built binaries
 switchboard-signaling
 switchboard-rtpmanager
+switchboard-ui
 switchboard-signaling-linux
 switchboard-rtpmanager-linux
+switchboard-ui-linux
 
 # Test binary, built with `go test -c`
 *.test

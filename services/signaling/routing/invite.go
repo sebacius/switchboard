@@ -10,6 +10,7 @@ import (
 
 	"github.com/emiago/sipgo/sip"
 	psdp "github.com/pion/sdp/v3"
+	"github.com/sebas/switchboard/services/signaling/b2bua"
 	"github.com/sebas/switchboard/services/signaling/dialplan"
 	"github.com/sebas/switchboard/services/signaling/dialog"
 	"github.com/sebas/switchboard/services/signaling/location"
@@ -30,6 +31,7 @@ type InviteHandler struct {
 	sessionRecorder SessionRecorder
 	executor        *dialplan.Executor
 	locStore        location.LocationStore
+	callService     b2bua.CallService
 }
 
 // NewInviteHandler creates a new INVITE handler
@@ -41,6 +43,7 @@ func NewInviteHandler(
 	sessionRecorder SessionRecorder,
 	executor *dialplan.Executor,
 	locStore location.LocationStore,
+	callService b2bua.CallService,
 ) *InviteHandler {
 	return &InviteHandler{
 		transport:       transport,
@@ -50,6 +53,7 @@ func NewInviteHandler(
 		sessionRecorder: sessionRecorder,
 		executor:        executor,
 		locStore:        locStore,
+		callService:     callService,
 	}
 }
 
@@ -185,24 +189,36 @@ func (h *InviteHandler) extractDestination(req *sip.Request) string {
 	return user
 }
 
-// extractCallerID extracts the caller ID from the From header.
+// extractCallerID extracts the caller ID (user part) from the From header.
+// This is the phone number or extension, e.g., "1001" from "sip:1001@example.com".
 func (h *InviteHandler) extractCallerID(req *sip.Request) string {
 	from := req.From()
 	if from == nil {
 		return ""
 	}
-	// Prefer display name, fallback to user part
+	return from.Address.User
+}
+
+// extractCallerName extracts the caller display name from the From header.
+// This is the human-readable name, e.g., "John Doe" from "John Doe" <sip:1001@example.com>.
+func (h *InviteHandler) extractCallerName(req *sip.Request) string {
+	from := req.From()
+	if from == nil {
+		return ""
+	}
 	if from.DisplayName != "" {
 		return strings.Trim(from.DisplayName, "\"")
 	}
-	return from.Address.User
+	return ""
 }
 
 // executeDialplan runs the dialplan for the call.
 func (h *InviteHandler) executeDialplan(dlg *dialog.Dialog, destination string) {
 	callerID := ""
+	callerName := ""
 	if dlg.InviteRequest != nil {
 		callerID = h.extractCallerID(dlg.InviteRequest)
+		callerName = h.extractCallerName(dlg.InviteRequest)
 	}
 
 	// Create call session for dialplan execution
@@ -211,9 +227,11 @@ func (h *InviteHandler) executeDialplan(dlg *dialog.Dialog, destination string) 
 		Transport:   h.transport,
 		DialogMgr:   h.dialogMgr,
 		LocStore:    h.locStore,
+		CallService: h.callService,
 		Logger:      slog.Default(),
 		Destination: destination,
 		CallerID:    callerID,
+		CallerName:  callerName,
 	})
 
 	// Execute dialplan

@@ -39,6 +39,11 @@ type LocationStore interface {
 	// Has returns true if the AOR has any active bindings.
 	Has(aor string) bool
 
+	// LookupByUser searches for bindings where the AOR's user part matches the given user.
+	// This is useful when the exact domain/port in the AOR is unknown.
+	// For example, LookupByUser("1000") would match "sip:1000@domain.com:5060".
+	LookupByUser(user string) []*Binding
+
 	// MinExpires returns the minimum allowed expires value in seconds.
 	// This is used for the Min-Expires header in 423 responses per RFC 3261.
 	MinExpires() int
