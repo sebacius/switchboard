@@ -157,43 +157,6 @@ UI_LOGLEVEL=info       # debug, info, warn, error
 ./switchboard-signaling --rtpmanager localhost:9090,localhost:9091
 ```
 
-## Project Structure
-
-```
-switchboard/
-├── cmd/
-│   ├── signaling/           # Signaling server entry point
-│   ├── rtpmanager/          # RTP Manager entry point
-│   └── ui/                  # UI server entry point
-├── services/
-│   ├── signaling/           # SIP handling, B2BUA, dialplan
-│   │   ├── app/             # Application coordinator
-│   │   ├── b2bua/           # Back-to-back user agent logic
-│   │   ├── dialog/          # SIP dialog state machine
-│   │   ├── dialplan/        # Routing rules and actions
-│   │   ├── location/        # User location service
-│   │   ├── registration/    # REGISTER handler
-│   │   ├── routing/         # INVITE/BYE handlers
-│   │   ├── transport/       # gRPC client to RTP Manager
-│   │   ├── api/             # REST API
-│   │   └── events/          # Event bus
-│   ├── rtpmanager/          # Media handling
-│   │   ├── server/          # gRPC service implementation
-│   │   ├── session/         # Session lifecycle
-│   │   ├── media/           # Audio processing, RTP streaming
-│   │   ├── bridge/          # RTP bridging between sessions
-│   │   ├── portpool/        # Port allocation
-│   │   └── sdp/             # SDP generation
-│   └── ui/                  # Admin dashboard
-│       ├── server/          # HTTP server, templates
-│       └── client/          # HTTP client for signaling API
-├── api/
-│   ├── proto/               # gRPC proto definitions
-│   └── types/               # Shared API types
-├── pkg/rtpmanager/v1/       # Generated gRPC code
-└── internal/logger/         # Shared logging
-```
-
 ## REST API
 
 **Signaling Server** (port 8080):
