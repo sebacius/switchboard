@@ -1,43 +1,21 @@
 # Switchboard
-
-A modular B2BUA (Back-to-Back User Agent) VoIP system built in Go, exploring the separation of signaling and media.
-
 ![Switchboard avatar](switchboard.png)
 
 > **WARNING: EXPERIMENTAL PROJECT**
->
 > This is a **learning project** in active development. It is **pre-alpha**, **unstable**, and **not suitable for any production use**. The architecture is still being decided. Entire subsystems may be rewritten without notice. APIs will break. Config formats will change. Here be dragons.
->
-> **DO NOT USE THIS IN PRODUCTION. SERIOUSLY.**
->
-> This project uses AI-assisted development (Claude Code) to rapidly prototype and iterate. Code is generated and modified across multiple fronts simultaneously. Bugs exist. Inconsistencies exist. You have been warned.
-
----
 
 ## About
+Switchboard is a VoIP platform that separates signaling and media into independently scalable components. It uses SIP for call control, RTP for media transport, and gRPC to coordinate services.
 
-Before anything else, this project exists because of the incredible work done by others:
+Signaling and media place very different demands on a system. Signaling is intermittent and stateful, while media is continuous, bandwidth-heavy, and sensitive to latency and I/O behavior. Treating both under the same execution and scaling model tightly couples concerns that behave differently under load.
 
-### [Pion](https://github.com/pion)
-The Pion project provides the entire foundation for RTP, SDP, and WebRTC in Go. Without Pion's clean, well-tested libraries for packet handling, SDP parsing, and media transport, building something like this would take years instead of weeks. The quality and documentation of the Pion ecosystem is exceptional.
+Switchboard is built around separating these responsibilities. Signaling and media are handled by distinct components and coordinated through explicit interfaces, allowing each to scale and operate according to its own characteristics.
 
-### [sipgo](https://github.com/emiago/sipgo) & [diago](https://github.com/emiago/diago)
-Emiago's sipgo library is a pure-Go SIP stack that actually makes sense. It's clean, well-documented, and handles the gnarly parts of SIP so you don't have to. The diago project, built on top of sipgo, provided invaluable patterns for B2BUA implementation, dialog management, and call handling. Many of the architectural decisions in Switchboard were informed by studying how diago approaches these problems.
-**Thank you to all these projects. Switchboard is an experiment built on your foundations.**
+Go provides a practical foundation for this approach. Lightweight concurrency fits signaling workloads well, and structured interfaces such as gRPC keep communication between components explicit and predictable.
 
----
+With a [stable SIP stack available in Go like sipgo](https://github.com/emiago/sipgo), and [session mangemnt libraries like Pion](https://github.com/pion) the focus shifts away from protocol implementation and toward system boundaries, resource usage, and operational behavior.
 
-## Why This Exists
-
-This project treats media handling as an independent concern. Signaling and media are separated and coordinated through a control interface, allowing each to scale, fail, and evolve on its own terms.
-
-At its core,signaling and media place very different demands on the system. Signaling is intermittent and stateful. Media is continuous, bandwidth-heavy, and sensitive to latency and I/O behavior. Treating both under the same execution and scaling model tightly couples concerns that behave differently under load.
-
-Go provides a practical foundation for this approach. Lightweight concurrency fits signaling workloads well, while structured interfaces like gRPC make coordination between components explicit and predictable.
-
-With a stable SIP stack available in Go, the focus shifts to system boundaries, resource usage, and operational behavior rather than protocol implementation.
-
-This project explores whether structuring a system around these separations results in something that is easier to scale, easier to operate, and easier to reason about.
+This project explores whether structuring a VoIP system around these separations leads to something that is easier to scale, easier to operate, and easier to reason about.
 
 This project takes a different approach by explicitly separating those planes:
 - **Signaling (SIP)** is lightweight, stateful, and primarily CPU-bound
@@ -51,43 +29,58 @@ By decoupling signaling and media and coordinating them through a control interf
 4. **Keep responsibilities clear** — each component has a focused role  
 5. **Deploy cleanly** — small, single-purpose services that fit container-based environments
 
-This project is an experiment in applying this model with Go’s concurrency primitives and modern tooling, aiming for something that is both scalable and easy to reason about.
-
----
 
 ## Architecture
+```mermaid
+flowchart TB
+  %% Nodes
+  ClientsTop["SIP Clients"]
+  Signaling["Signaling Server<br/>(SIP B2BUA + REST)"]
+  ClientsBottom["SIP Clients"]
 
-Three services, loosely coupled via gRPC:
+  subgraph MediaPlane["Media Plane"]
+    direction LR
+    RTP1["RTP Manager #1<br/>(Media Bridge)"]
+    RTP2["RTP Manager #2<br/>(Media Bridge)"]
+    RTPN["RTP Manager #N<br/>(Media Bridge)"]
+  end
 
-```
-                              ┌─────────────────────────┐
-                              │      SIP Clients        │
-                              └───────────┬─────────────┘
-                                          │ SIP (5060)
-                              ┌───────────▼─────────────┐
-                              │    Signaling Server     │
-                              │   (SIP B2BUA + REST)    │
-                              └───────────┬─────────────┘
-                                          │ gRPC (9090)
-               ┌──────────────────────────┼──────────────────────────┐
-               │                          │                          │
-    ┌──────────▼──────────┐    ┌──────────▼──────────┐    ┌──────────▼──────────┐
-    │   RTP Manager #1    │    │   RTP Manager #2    │    │   RTP Manager #N    │
-    │   (Media Bridge)    │    │   (Media Bridge)    │    │   (Media Bridge)    │
-    └──────────┬──────────┘    └──────────┬──────────┘    └──────────┬──────────┘
-               │                          │                          │
-               └──────────────────────────┼──────────────────────────┘
-                                          │ RTP
-                              ┌───────────▼─────────────┐
-                              │      SIP Clients        │
-                              └─────────────────────────┘
+  UI["UI Server<br/>(Admin Dashboard)<br/>Aggregates backends"]
 
-                              ┌─────────────────────────┐
-                              │       UI Server         │
-                              │  (Admin Dashboard)      │◄─── HTTP :3000
-                              │  Aggregates backends    │
-                              └─────────────────────────┘
-```
+  %% Edges
+  ClientsTop -->|"SIP :5060"| Signaling
+  Signaling -->|"gRPC :9090"| RTP1
+  Signaling -->|"gRPC :9090"| RTP2
+  Signaling -->|"gRPC :9090"| RTPN
+  RTP1 -->|"RTP"| ClientsBottom
+  RTP2 -->|"RTP"| ClientsBottom
+  RTPN -->|"RTP"| ClientsBottom
+  UI <-->|"HTTP :3000"| Signaling
+
+  %% Styling
+  classDef clients fill:#0b3d91,stroke:#0b3d91,color:#ffffff,stroke-width:2px;
+  classDef signaling fill:#6a00ff,stroke:#6a00ff,color:#ffffff,stroke-width:2px;
+  classDef media fill:#00a86b,stroke:#00a86b,color:#ffffff,stroke-width:2px;
+  classDef ui fill:#ff7a00,stroke:#ff7a00,color:#ffffff,stroke-width:2px;
+  classDef plane fill:#111827,stroke:#9ca3af,color:#ffffff,stroke-width:1px;
+
+  class ClientsTop,ClientsBottom clients;
+  class Signaling signaling;
+  class RTP1,RTP2,RTPN media;
+  class UI ui;
+  class MediaPlane plane;
+
+  %% Link styling (index-based)
+  %% Order matters: these correspond to edges in the order they were declared above.
+  linkStyle 0 stroke:#0b3d91,stroke-width:3px;
+  linkStyle 1 stroke:#6a00ff,stroke-width:3px;
+  linkStyle 2 stroke:#6a00ff,stroke-width:3px;
+  linkStyle 3 stroke:#6a00ff,stroke-width:3px;
+  linkStyle 4 stroke:#00a86b,stroke-width:3px;
+  linkStyle 5 stroke:#00a86b,stroke-width:3px;
+  linkStyle 6 stroke:#00a86b,stroke-width:3px;
+  linkStyle 7 stroke:#ff7a00,stroke-width:3px,stroke-dasharray: 5 5;
+````
 
 **Signaling Server** - SIP protocol handling, B2BUA call bridging, dialplan engine, location service
 - Packages: `app`, `b2bua`, `dialog`, `dialplan`, `location`, `registration`, `routing`, `transport`, `api`, `events`
@@ -262,6 +255,16 @@ curl http://localhost:8080/api/v1/stats         # Statistics
 - **gRPC** - Service communication between signaling and media
 - **g711** - PCMU/PCMA codec support
 - **HTMX + Tailwind** - Dashboard UI
+
+## Shoulders of giants
+
+### [Pion](https://github.com/pion)
+The Pion project provides the entire foundation for RTP, SDP, and WebRTC in Go. Without Pion's clean, well-tested libraries for packet handling, SDP parsing, and media transport, building something like this would take years instead of weeks. The quality and documentation of the Pion ecosystem is exceptional.
+
+### [sipgo](https://github.com/emiago/sipgo) & [diago](https://github.com/emiago/diago)
+Emiago's sipgo library is a pure-Go SIP stack that actually makes sense. It's clean, well-documented, and handles the gnarly parts of SIP so you don't have to. The diago project, built on top of sipgo, provided invaluable patterns for B2BUA implementation, dialog management, and call handling. Many of the architectural decisions in Switchboard were informed by studying how diago approaches these problems.
+**Thank you to all these projects. Switchboard is an experiment built on your foundations.**
+
 
 ## Contributing
 
