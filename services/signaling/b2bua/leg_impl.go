@@ -359,9 +359,10 @@ func (l *legImpl) OnTerminated(fn func(cause TerminationCause)) {
 // --- Internal Methods ---
 
 // TransitionTo transitions the leg to a new state.
+// State change is atomic, and callbacks are invoked after releasing the lock
+// to prevent deadlocks if callbacks try to access the leg.
 func (l *legImpl) TransitionTo(newState LegState) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 
 	oldState := l.state
 	l.state = newState
@@ -377,6 +378,10 @@ func (l *legImpl) TransitionTo(newState LegState) error {
 	case LegStateFailed, LegStateDestroyed:
 		l.terminatedAt = time.Now()
 	}
+
+	// Release lock before notifying callbacks to prevent deadlock
+	// if callbacks try to access the leg (e.g., call GetState())
+	l.mu.Unlock()
 
 	l.notifyStateChange(oldState, newState)
 	return nil
