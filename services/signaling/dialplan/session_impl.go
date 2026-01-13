@@ -190,7 +190,20 @@ func (s *sessionImpl) Dial(ctx context.Context, target string, timeout time.Dura
 	}
 
 	// Adopt the A-leg (inbound dialog) as a B2BUA leg
-	aLeg, err := s.callService.AdoptInboundLeg(s.dialog, s.sessionID)
+	// The teardown handler is called when the A-leg is hung up (e.g., when B hangs up and bridge terminates)
+	// It sends BYE to the caller via the dialog manager
+	aLeg, err := s.callService.AdoptInboundLeg(s.dialog, s.sessionID,
+		b2bua.WithTeardownHandler(func(leg b2bua.Leg) {
+			if s.dialogMgr != nil && !s.dialog.IsTerminated() {
+				if err := s.dialogMgr.Terminate(s.callID, dialog.ReasonLocalBYE); err != nil {
+					s.logger.Warn("[Session] A-leg teardown BYE failed",
+						"call_id", s.callID,
+						"error", err,
+					)
+				}
+			}
+		}),
+	)
 	if err != nil {
 		return &DialError{
 			Target: target,

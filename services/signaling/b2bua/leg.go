@@ -172,6 +172,7 @@ type legOptions struct {
 	onAnswered func(Leg)
 	callerID   string
 	callerName string
+	onTeardown func(Leg) // Called when leg is being torn down (before state change)
 }
 
 // WithLegID sets a custom leg ID instead of generating one.
@@ -223,5 +224,16 @@ func WithCallerID(callerID string) LegOption {
 func WithCallerName(callerName string) LegOption {
 	return func(o *legOptions) {
 		o.callerName = callerName
+	}
+}
+
+// WithTeardownHandler sets a callback invoked when the leg is being torn down.
+// This is called BEFORE the state changes to Destroyed, allowing the handler
+// to send SIP signaling (BYE) before the leg is marked as terminated.
+// For A-leg: handler should call dialogMgr.Terminate() to send BYE to caller.
+// For B-leg: handler should call originator.SendBYE() to send BYE to callee.
+func WithTeardownHandler(fn func(Leg)) LegOption {
+	return func(o *legOptions) {
+		o.onTeardown = fn
 	}
 }
