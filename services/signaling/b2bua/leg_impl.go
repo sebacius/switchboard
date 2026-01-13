@@ -49,6 +49,12 @@ type legImpl struct {
 	sipCode   int
 	sipReason string
 
+	// Outbound dialog state (for sending BYE)
+	// These are populated from the 200 OK response
+	remoteContactURI string // Contact header from 200 OK - used as Request-URI for BYE
+	remoteTag        string // Tag from To header in 200 OK
+	localTag         string // Our From tag
+
 	// Lifecycle
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -57,6 +63,7 @@ type legImpl struct {
 	stateChangeCallbacks  []func(old, new LegState)
 	terminatedCallbacks   []func(cause TerminationCause)
 	stateChangeCallbackMu sync.Mutex
+	onTeardown            func(Leg) // Called before teardown to send SIP BYE
 }
 
 // NewInboundLeg creates a leg from an existing inbound dialog.
@@ -76,7 +83,10 @@ func NewInboundLeg(dlg *dialog.Dialog, sessionID string, opts ...LegOption) (Leg
 		id = "leg-" + uuid.New().String()
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Derive the leg's context from the dialog's context.
+	// This ensures that when the dialog is terminated (e.g., caller sends BYE),
+	// the leg's context is also canceled, allowing proper teardown propagation.
+	ctx, cancel := context.WithCancel(dlg.Context())
 
 	// Determine initial state based on dialog state
 	// If the dialog has already sent 200 OK, the leg is answered
@@ -106,6 +116,7 @@ func NewInboundLeg(dlg *dialog.Dialog, sessionID string, opts ...LegOption) (Leg
 		answeredAt: answeredAt,
 		ctx:        ctx,
 		cancel:     cancel,
+		onTeardown: options.onTeardown,
 	}
 
 	// Extract SIP addressing from dialog
@@ -147,14 +158,15 @@ func NewOutboundLeg(callID, targetURI string, opts ...LegOption) (Leg, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	leg := &legImpl{
-		id:        id,
-		callID:    callID,
-		direction: LegDirectionOutbound,
-		state:     LegStateCreated,
-		toURI:     targetURI,
-		createdAt: time.Now(),
-		ctx:       ctx,
-		cancel:    cancel,
+		id:         id,
+		callID:     callID,
+		direction:  LegDirectionOutbound,
+		state:      LegStateCreated,
+		toURI:      targetURI,
+		createdAt:  time.Now(),
+		ctx:        ctx,
+		cancel:     cancel,
+		onTeardown: options.onTeardown,
 	}
 
 	return leg, nil
@@ -311,11 +323,23 @@ func (l *legImpl) Hangup(ctx context.Context, cause TerminationCause) error {
 		return nil // Already terminated, safe to call multiple times
 	}
 
+	// Get teardown handler before changing state
+	teardownFn := l.onTeardown
 	oldState := l.state
+
+	// Mark as terminating (not yet destroyed) to prevent re-entry
+	// but allow teardown handler to still work with the leg
 	l.state = LegStateDestroyed
 	l.terminationCause = cause
 	l.terminatedAt = time.Now()
 	l.mu.Unlock()
+
+	// Call teardown handler to send SIP BYE signaling
+	// This is called AFTER marking state to prevent infinite recursion
+	// if the handler calls Hangup again
+	if teardownFn != nil {
+		teardownFn(l)
+	}
 
 	// Cancel context to signal goroutines
 	l.cancel()
@@ -447,6 +471,31 @@ func (l *legImpl) SetTerminationCause(cause TerminationCause) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.terminationCause = cause
+}
+
+// SetOutboundDialogState stores the dialog state needed to send BYE for outbound legs.
+// This should be called when the 200 OK is received.
+func (l *legImpl) SetOutboundDialogState(remoteContactURI, remoteTag, localTag string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.remoteContactURI = remoteContactURI
+	l.remoteTag = remoteTag
+	l.localTag = localTag
+}
+
+// GetOutboundDialogState returns the dialog state for sending BYE.
+func (l *legImpl) GetOutboundDialogState() (remoteContactURI, remoteTag, localTag string) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.remoteContactURI, l.remoteTag, l.localTag
+}
+
+// SetTeardownHandler sets the teardown callback.
+// This is called before state changes to Destroyed to allow SIP signaling.
+func (l *legImpl) SetTeardownHandler(fn func(Leg)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.onTeardown = fn
 }
 
 // notifyStateChange invokes registered state change callbacks.

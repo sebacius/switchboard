@@ -94,6 +94,18 @@ func (o *Originator) Originate(ctx context.Context, req OriginateRequest) (*Orig
 	}
 	bleg := leg.(*legImpl)
 
+	// Set up teardown handler to send SIP BYE when bridge terminates this leg
+	bleg.SetTeardownHandler(func(l Leg) {
+		// SendBYE will construct and send a SIP BYE to the remote party
+		// It's safe to call even if the leg is already terminated (will be a no-op)
+		if err := o.SendBYE(l); err != nil {
+			slog.Warn("[Originator] Teardown BYE failed",
+				"call_id", bLegCallID,
+				"error", err,
+			)
+		}
+	})
+
 	// Store B leg - will be cleaned up when the leg terminates
 	o.mu.Lock()
 	o.legs[bLegCallID] = bleg
@@ -399,6 +411,31 @@ func (o *Originator) handleResponse(ctx context.Context, bleg *legImpl, resp *si
 func (o *Originator) handle2xx(ctx context.Context, bleg *legImpl, resp *sip.Response, invite *sip.Request, tx sip.ClientTransaction) *OriginateResult {
 	bleg.SetSIPResponse(int(resp.StatusCode), resp.Reason)
 
+	// Extract and store dialog state for future BYE sending
+	// Per RFC 3261 Section 12.1.2, dialog is identified by Call-ID, local tag, and remote tag
+	var remoteContactURI, remoteTag, localTag string
+
+	// Remote Contact from 200 OK - used as Request-URI for BYE
+	if contact := resp.Contact(); contact != nil {
+		remoteContactURI = contact.Address.String()
+	}
+
+	// Remote tag from To header in 200 OK
+	if to := resp.To(); to != nil {
+		if tag, ok := to.Params.Get("tag"); ok {
+			remoteTag = tag
+		}
+	}
+
+	// Local tag from our From header in the INVITE
+	if from := invite.From(); from != nil {
+		if tag, ok := from.Params.Get("tag"); ok {
+			localTag = tag
+		}
+	}
+
+	bleg.SetOutboundDialogState(remoteContactURI, remoteTag, localTag)
+
 	// Extract SDP answer and update RTP manager with remote endpoint
 	if resp.Body() != nil {
 		if err := o.extractRemoteMedia(ctx, bleg, resp); err != nil {
@@ -424,6 +461,7 @@ func (o *Originator) handle2xx(ctx context.Context, bleg *legImpl, resp *sip.Res
 		"bleg_call_id", bleg.callID,
 		"remote_addr", bleg.remoteRTPAddr,
 		"remote_port", bleg.remoteRTPPort,
+		"remote_contact", remoteContactURI,
 	)
 
 	return &OriginateResult{
@@ -601,22 +639,114 @@ func (o *Originator) sendCANCEL(bleg *legImpl, invite *sip.Request, tx sip.Clien
 	return nil
 }
 
-// SendBYE terminates an answered call.
+// SendBYE terminates an answered call by sending a SIP BYE request.
+// This can be called from the teardown handler even after state changes.
 func (o *Originator) SendBYE(leg Leg) error {
 	bleg, ok := leg.(*legImpl)
 	if !ok {
 		return fmt.Errorf("invalid leg type")
 	}
 
-	if bleg.GetState() != LegStateAnswered {
-		return ErrLegNotAnswered
+	// Get dialog state for constructing BYE
+	// We check if we have dialog state rather than leg state, because
+	// the teardown handler is called after state changes to Destroyed
+	remoteContactURI, remoteTag, localTag := bleg.GetOutboundDialogState()
+	if remoteContactURI == "" {
+		slog.Debug("[Originate] No remote contact URI for BYE (call may not have been answered)",
+			"bleg_call_id", bleg.callID,
+		)
+		return nil // Nothing to send, caller handles state
 	}
 
-	// Build BYE request - this is simplified; full implementation would
-	// use dialog state for proper routing
-	slog.Info("[Originate] Sending BYE", "bleg_call_id", bleg.callID)
+	// Build BYE request per RFC 3261 Section 15.1.1
+	var requestURI sip.Uri
+	if err := sip.ParseUri(remoteContactURI, &requestURI); err != nil {
+		slog.Error("[Originate] Failed to parse remote contact URI",
+			"bleg_call_id", bleg.callID,
+			"uri", remoteContactURI,
+			"error", err,
+		)
+		return fmt.Errorf("parse remote contact: %w", err)
+	}
 
-	bleg.Hangup(context.Background(), TerminationCauseNormal)
+	bye := sip.NewRequest(sip.BYE, requestURI)
+
+	// Max-Forwards
+	maxFwd := sip.MaxForwardsHeader(70)
+	bye.AppendHeader(&maxFwd)
+
+	// From header (our identity with our tag)
+	fromURI := sip.Uri{
+		Scheme: "sip",
+		User:   "switchboard",
+		Host:   o.cfg.AdvertiseAddr,
+		Port:   o.cfg.Port,
+	}
+	fromParams := sip.NewParams()
+	fromParams.Add("tag", localTag)
+	fromHdr := &sip.FromHeader{
+		Address: fromURI,
+		Params:  fromParams,
+	}
+	bye.AppendHeader(fromHdr)
+
+	// To header (remote party with their tag)
+	toParams := sip.NewParams()
+	toParams.Add("tag", remoteTag)
+	toHdr := &sip.ToHeader{
+		Address: requestURI,
+		Params:  toParams,
+	}
+	bye.AppendHeader(toHdr)
+
+	// Call-ID
+	callIDHdr := sip.CallIDHeader(bleg.callID)
+	bye.AppendHeader(&callIDHdr)
+
+	// CSeq (use 2 since INVITE was 1)
+	cseqHdr := &sip.CSeqHeader{
+		SeqNo:      2,
+		MethodName: sip.BYE,
+	}
+	bye.AppendHeader(cseqHdr)
+
+	slog.Info("[Originate] Sending BYE",
+		"bleg_call_id", bleg.callID,
+		"remote_contact", remoteContactURI,
+	)
+
+	// Send BYE via client transaction
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tx, err := o.cfg.Client.TransactionRequest(ctx, bye)
+	if err != nil {
+		slog.Error("[Originate] Failed to send BYE",
+			"bleg_call_id", bleg.callID,
+			"error", err,
+		)
+		// Caller handles state, we just log the error
+		return fmt.Errorf("send BYE: %w", err)
+	}
+
+	// Wait for response
+	select {
+	case resp := <-tx.Responses():
+		if resp != nil {
+			slog.Debug("[Originate] BYE response",
+				"bleg_call_id", bleg.callID,
+				"status", resp.StatusCode,
+			)
+		}
+	case <-tx.Done():
+	case <-ctx.Done():
+		slog.Warn("[Originate] BYE timeout", "bleg_call_id", bleg.callID)
+	}
+
+	// Note: We don't call Hangup here because:
+	// 1. If called from teardown handler, Hangup is already in progress
+	// 2. The SIP BYE has been sent, which is the main purpose
+	// The caller is responsible for state management
 	return nil
 }
 
