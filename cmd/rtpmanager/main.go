@@ -15,8 +15,8 @@ import (
 	"google.golang.org/grpc/peer"
 
 	"github.com/sebas/switchboard/internal/logger"
-	"github.com/sebas/switchboard/services/rtpmanager/config"
-	"github.com/sebas/switchboard/services/rtpmanager/server"
+	"github.com/sebas/switchboard/internal/rtpmanager/config"
+	"github.com/sebas/switchboard/internal/rtpmanager/server"
 	rtpv1 "github.com/sebas/switchboard/pkg/rtpmanager/v1"
 )
 

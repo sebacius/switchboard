@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/sebas/switchboard/services/ui/config"
-	"github.com/sebas/switchboard/services/ui/server"
+	"github.com/sebas/switchboard/internal/ui/config"
+	"github.com/sebas/switchboard/internal/ui/server"
 )
 
 func main() {

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/sebas/switchboard/internal/logger"
-	"github.com/sebas/switchboard/services/signaling/app"
-	"github.com/sebas/switchboard/services/signaling/config"
+	"github.com/sebas/switchboard/internal/signaling/app"
+	"github.com/sebas/switchboard/internal/signaling/config"
 )
 
 func main() {
