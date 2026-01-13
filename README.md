@@ -29,17 +29,15 @@ Emiago's sipgo library is a pure-Go SIP stack that actually makes sense. It's cl
 
 ## Why This Exists
 
-At its core, this project is driven by a practical observation: **in real VoIP systems, media is what consumes resources — not signaling**.
+This project treats media handling as an independent concern. Signaling and media are separated and coordinated through a control interface, allowing each to scale, fail, and evolve on its own terms.
 
-Signaling is relatively lightweight. It is stateful, bursty, and mostly CPU-bound. Media, on the other hand, is continuous, bandwidth-heavy, and sensitive to latency and I/O pressure. Treating both concerns as if they scale the same way leads to inefficiencies, unnecessary coupling, and harder operational decisions.
+At its core,signaling and media place very different demands on the system. Signaling is intermittent and stateful. Media is continuous, bandwidth-heavy, and sensitive to latency and I/O behavior. Treating both under the same execution and scaling model tightly couples concerns that behave differently under load.
 
-This project starts from the assumption that media deserves to be treated as a first-class, independently scalable concern. By separating signaling from media handling, each can evolve, scale, and fail according to its own characteristics, rather than being forced into a single execution model.
+Go provides a practical foundation for this approach. Lightweight concurrency fits signaling workloads well, while structured interfaces like gRPC make coordination between components explicit and predictable.
 
-Go makes this approach particularly compelling. Its concurrency model is well-suited for managing large numbers of lightweight signaling tasks, while still being capable of coordinating high-throughput media pipelines. At the same time, modern control interfaces like gRPC make it straightforward to coordinate independent components without resorting to fragile or ad-hoc integrations.
+With a stable SIP stack available in Go, the focus shifts to system boundaries, resource usage, and operational behavior rather than protocol implementation.
 
-The availability of a stable, well-designed SIP stack in Go provides the missing foundation to explore this space seriously. With that in place, it becomes possible to focus on system boundaries, resource efficiency, and clarity of responsibility rather than reimplementing basic protocol mechanics.
-
-This project is an exploration of whether separating media and signaling along these lines can lead to a system that is easier to scale, easier to reason about, and better aligned with how VoIP workloads actually behave in practice.
+This project explores whether structuring a system around these separations results in something that is easier to scale, easier to operate, and easier to reason about.
 
 This project takes a different approach by explicitly separating those planes:
 - **Signaling (SIP)** is lightweight, stateful, and primarily CPU-bound

@@ -61,7 +61,9 @@ func Load() *Config {
 	}
 	if advertise := os.Getenv("ADVERTISE"); advertise != "" {
 		cfg.AdvertiseAddr = advertise
-	} else if cfg.AdvertiseAddr == "" {
+	}
+	// Validate and fallback to auto-detection if invalid
+	if cfg.AdvertiseAddr == "" || !isValidAddress(cfg.AdvertiseAddr) {
 		cfg.AdvertiseAddr = getPrimaryInterfaceIP()
 	}
 	if loglevel := os.Getenv("LOGLEVEL"); loglevel != "" {
@@ -91,6 +93,19 @@ func parseAddressList(s string) []string {
 		}
 	}
 	return addrs
+}
+
+// isValidAddress checks if the address is a valid IP or resolvable hostname
+func isValidAddress(addr string) bool {
+	// Check if it's a valid IP address
+	if ip := net.ParseIP(addr); ip != nil {
+		return true
+	}
+	// Try to resolve as hostname
+	if ips, err := net.LookupIP(addr); err == nil && len(ips) > 0 {
+		return true
+	}
+	return false
 }
 
 // getPrimaryInterfaceIP detects the primary network interface IP address

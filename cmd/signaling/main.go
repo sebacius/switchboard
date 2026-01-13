@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/sebas/switchboard/internal/banner"
 	"github.com/sebas/switchboard/internal/logger"
 	"github.com/sebas/switchboard/internal/signaling/app"
 	"github.com/sebas/switchboard/internal/signaling/config"
@@ -17,6 +20,15 @@ import (
 func main() {
 	// Load configuration
 	cfg := config.Load()
+
+	// Print startup banner
+	banner.Print("SIGNALING SERVER", []banner.ConfigLine{
+		{Label: "Listen", Value: fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)},
+		{Label: "Advertise", Value: cfg.AdvertiseAddr},
+		{Label: "RTP Manager", Value: strings.Join(cfg.RTPManagerAddrs, ", ")},
+		{Label: "Dialplan", Value: cfg.DialplanPath},
+		{Label: "Log Level", Value: cfg.LogLevel},
+	})
 
 	// Initialize logger
 	logger.InitLogger(os.Stdout)

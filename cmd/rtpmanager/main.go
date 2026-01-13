@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 
+	"github.com/sebas/switchboard/internal/banner"
 	"github.com/sebas/switchboard/internal/logger"
 	"github.com/sebas/switchboard/internal/rtpmanager/config"
 	"github.com/sebas/switchboard/internal/rtpmanager/server"
@@ -24,16 +25,17 @@ func main() {
 	// Load configuration
 	cfg := config.Load()
 
+	// Print startup banner
+	banner.Print("RTP MANAGER", []banner.ConfigLine{
+		{Label: "gRPC Listen", Value: fmt.Sprintf("%s:%d", cfg.GRPCBindAddr, cfg.GRPCPort)},
+		{Label: "Advertise", Value: cfg.AdvertiseAddr},
+		{Label: "RTP Range", Value: fmt.Sprintf("%d-%d", cfg.RTPPortMin, cfg.RTPPortMax)},
+		{Label: "Audio Path", Value: cfg.AudioBasePath},
+		{Label: "Log Level", Value: cfg.LogLevel},
+	})
+
 	// Initialize logger
 	logger.InitLogger(os.Stdout)
-
-	slog.Info("Starting RTP Manager",
-		"grpc_port", cfg.GRPCPort,
-		"bind", cfg.GRPCBindAddr,
-		"advertise", cfg.AdvertiseAddr,
-		"rtp_ports", fmt.Sprintf("%d-%d", cfg.RTPPortMin, cfg.RTPPortMax),
-		"audio_path", cfg.AudioBasePath,
-	)
 
 	// Create RTP Manager server
 	srvCfg := &server.Config{
