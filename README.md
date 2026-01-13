@@ -7,16 +7,14 @@
 ## About
 Switchboard is a VoIP platform that separates signaling and media into independently scalable components. It uses SIP for call control, RTP for media transport, and gRPC to coordinate services.
 
-Switchboard is built around separating responsibilities. Signaling and media are handled by distinct components and coordinated through explicit interfaces, allowing each to scale and operate according to its own characteristics.
-
 With a [stable SIP stack available in Go like sipgo](https://github.com/emiago/sipgo), and [session mangemnt libraries like Pion](https://github.com/pion) switchboard shifts the focus away from protocol implementation and toward system boundaries, resource usage, and operational behavior.
 
 By decoupling signaling and media and coordinating them through a control interface (gRPC in this case), it becomes possible to:
 
 1. **Scale independently** — grow signaling and media at different rates  
-2. **Distribute geographically** — place media closer to users while keeping signaling centralized  
-3. **Isolate resources** — media load spikes don’t interfere with call setup  
-4. **Keep responsibilities clear** — each component has a focused role  
+2. **Load Distribution** — ability to scale emdia resources
+3. **Isolate resources** — load spikes don’t interfere with call setup  
+4. **Keep responsibilities clear** — each component has a focused role 
 5. **Deploy cleanly** — small, single-purpose services that fit container-based environments
 
 
@@ -255,6 +253,87 @@ The Pion project provides the entire foundation for RTP, SDP, and WebRTC in Go. 
 Emiago's sipgo library is a pure-Go SIP stack that actually makes sense. It's clean, well-documented, and handles the gnarly parts of SIP so you don't have to. The diago project, built on top of sipgo, provided invaluable patterns for B2BUA implementation, dialog management, and call handling. Many of the architectural decisions in Switchboard were informed by studying how diago approaches these problems.
 **Thank you to all these projects. Switchboard is an experiment built on your foundations.**
 
+## Switchboard Roadmap
+
+This roadmap outlines the major capabilities and milestones planned for Switchboard.
+
+### Foundation
+- Configuration and lifecycle management (env, flags, optional config file)
+- Hot reload for non-critical settings (routing, logging)
+- Structured logging with call/dialog correlation
+- Core B2BUA call flows (INVITE, re-INVITE, UPDATE, BYE, CANCEL)
+- Early media support (183, PRACK where applicable)
+- Deterministic transaction and dialog state handling
+- Stable gRPC control for RTP managers (allocate, release, stats, health)
+- Readiness and liveness checks and deterministic media cleanup
+
+### Routing & Call Logic
+- Rule-based routing (source, destination, domain, headers, time, tags)
+- Routing actions (route, fork, failover, reject, rewrite)
+- Reusable templates and macros
+- Weighted routing and priority chains (LCR-style)
+- E.164 normalization helpers
+- Header manipulation (From, To, Contact, PAI, RPID)
+- Optional topology hiding
+
+### Security
+- SIP over TLS (certificate reload, SNI)
+- Optional mutual TLS for trusted peers
+- SDES-SRTP support
+- DTLS-SRTP for WebRTC compatibility
+- Digest authentication for REGISTER and inbound traffic
+- ACLs, rate limits, and basic anti-flood protections
+- Static and dynamic banning hooks
+
+### Registration
+- Registration store (in-memory, optional Redis)
+- NAT-aware Contact handling and ranking
+- Multi-contact per AOR routing
+- Expiration and keepalive strategies
+- Outbound (RFC 5626) groundwork
+- Registration lifecycle events for external systems
+
+### APIs & Eventing
+- REST APIs for routing and call control
+- Call control primitives (hangup, transfer, header injection)
+- Live call inspection and call detail views
+- Webhooks and optional SSE
+- Versioned call and media event schemas
+
+### WebSockets & AI Hooks
+- WebSocket interface for external controllers
+- Subscription to call events
+- Real-time call control actions
+- RTP tap / fork for recording or AI processing
+- Future WebRTC gateway considerations
+
+### Presence & Integration
+- SIP presence (SUBSCRIBE / NOTIFY)
+- BLF and dialog event packages
+- Bridging presence and dialog state to external systems
+- Optional directory and contact integrations
+
+### Media Capabilities
+- Call recording (on-demand and policy-driven)
+- Media transcoding (only when required)
+- Explicit codec negotiation policies
+- Resource limits enforced at the media layer
+- DTMF handling (RFC2833, SIP INFO, in-band)
+- Tone generation and basic announcements
+
+### Observability & Operations
+- Metrics (CPS, ASR, ACD, setup time, SIP errors)
+- RTP quality metrics (jitter, packet loss, bitrate)
+- Cross-component tracing (signaling ↔ media)
+- Per-call debug artifacts with safe redaction
+- Load testing and scenario replay tooling
+- Optional multi-tenant isolation and quotas
+
+### High Availability & Scaling
+- Stateless signaling with externalized state (optional)
+- Media node autoscaling strategies
+- Geographic distribution (edge media, central control)
+- Rolling upgrades with best-effort call preservation
 
 ## Contributing
 
@@ -264,14 +343,4 @@ Contributions are welcome, but please understand what you are getting into:
 2. **No promises** - This is a side project for learning. Response times will vary.
 3. **Discussion first** - For anything non-trivial, open an issue to discuss before submitting a PR.
 
-That said, if you are also curious about VoIP systems and want to experiment together, pull up a chair.
-
-## License
-
-MIT License - See [LICENSE](LICENSE) for details.
-
----
-
-Built by Sebastian as an exploration of VoIP systems, scalable architecture, and real-time media routing.
-
-*If this project somehow helps you learn something, that is the whole point.*
+If you are also curious about VoIP systems and want to experiment together, pull up a chair and If this project somehow helps you learn something, that is the whole point.
