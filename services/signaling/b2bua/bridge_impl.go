@@ -327,6 +327,9 @@ func (b *bridgeImpl) handleLegTerminated(legName string, cause TerminationCause)
 		return
 	}
 
+	// Set state to Terminating immediately under lock to prevent race
+	// where both legs terminate simultaneously and both try to Stop()
+	b.state = BridgeStateTerminating
 	b.terminatedBy = legName
 	b.terminationCause = TerminationCauseBridgePeer
 	b.mu.Unlock()

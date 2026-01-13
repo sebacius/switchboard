@@ -131,10 +131,19 @@ func (o *Originator) Originate(ctx context.Context, req OriginateRequest) (*Orig
 	bleg.SetSessionID(sessionResult.SessionID)
 	bleg.SetMediaEndpoint(sessionResult.LocalAddr, sessionResult.LocalPort, sessionResult.SelectedCodec)
 
+	// Ensure media session cleanup on any failure path (panic, context cancel, etc.)
+	// Using defer guarantees cleanup even if something unexpected happens.
+	var originateSuccess bool
+	defer func() {
+		if !originateSuccess {
+			// Use background context since the original ctx may be cancelled
+			o.destroyMediaSession(context.Background(), bleg)
+		}
+	}()
+
 	// Step 2: Build and send INVITE
 	inviteReq, err := o.buildINVITE(bleg, contact.URI, localTag, req, sessionResult.SDPBody)
 	if err != nil {
-		o.destroyMediaSession(ctx, bleg)
 		return &OriginateResult{
 			Success:   false,
 			SIPCode:   500,
@@ -146,10 +155,8 @@ func (o *Originator) Originate(ctx context.Context, req OriginateRequest) (*Orig
 	// Step 3: Send INVITE and handle response flow
 	result := o.executeINVITE(ctx, bleg, inviteReq, localTag, req.Timeout)
 
-	// Cleanup media on failure
-	if !result.Success {
-		o.destroyMediaSession(ctx, bleg)
-	}
+	// Mark success before returning to prevent defer cleanup
+	originateSuccess = result.Success
 
 	result.Leg = bleg
 	return result, nil
@@ -513,15 +520,27 @@ func (o *Originator) sendACK(bleg *legImpl, resp *sip.Response, invite *sip.Requ
 	// Set destination on request so transport layer knows where to send
 	ack.SetDestination(destAddr)
 
-	// Use WriteRequest to send ACK through sipgo's transport layer.
+	// Use WriteRequest to send ACK through sipgo's transport layer with timeout.
 	// This reuses the existing UDP listener connection (port 5060) instead of
 	// creating a new ephemeral socket. The transport layer will:
 	// 1. Look up the connection pool by remote address (the phone's address)
 	// 2. Find the listener connection that received the 200 OK
 	// 3. Send the ACK through that same socket
 	// 4. Add the Via header with correct local address/port
-	if err := o.cfg.Client.WriteRequest(ack); err != nil {
-		return fmt.Errorf("write ACK: %w", err)
+	//
+	// We add a 5-second timeout to prevent hanging if the transport layer blocks.
+	ackDone := make(chan error, 1)
+	go func() {
+		ackDone <- o.cfg.Client.WriteRequest(ack)
+	}()
+
+	select {
+	case err := <-ackDone:
+		if err != nil {
+			return fmt.Errorf("write ACK: %w", err)
+		}
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("ACK timeout: write did not complete within 5 seconds")
 	}
 
 	slog.Debug("[Originate] ACK sent via sipgo transport",

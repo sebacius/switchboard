@@ -137,8 +137,14 @@ func (s *LocalService) streamAudio(ctx context.Context, req PlayRequest, codecCf
 	// Calculate frame parameters
 	// PCMU uses 8 bits per sample (µ-law encoded), so 160 samples = 160 bytes
 	bytesPerFrame := frameSize // 160 bytes for PCMU (8-bit encoded)
-	rtpSeq := uint16(0)
-	rtpTs := uint32(0)
+
+	// Initialize RTP header fields per RFC 3550 recommendations:
+	// - Random sequence number to prevent known-plaintext attacks
+	// - Random SSRC to minimize collisions in multi-party sessions
+	// - Random timestamp start for additional randomness
+	rtpSeq := GenerateSequenceStart()
+	rtpTs := GenerateTimestampStart()
+	ssrc := GenerateSSRC()
 
 	frameCount := (len(encodedAudio) + bytesPerFrame - 1) / bytesPerFrame
 	framesSent := 0
@@ -167,7 +173,7 @@ func (s *LocalService) streamAudio(ctx context.Context, req PlayRequest, codecCf
 				PayloadType:    uint8(codecCfg.PayloadType),
 				SequenceNumber: rtpSeq,
 				Timestamp:      rtpTs,
-				SSRC:           1234, // Arbitrary but consistent SSRC
+				SSRC:           ssrc,
 			},
 			Payload: frame,
 		}
