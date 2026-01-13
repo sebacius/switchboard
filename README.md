@@ -14,7 +14,7 @@ A modular B2BUA (Back-to-Back User Agent) VoIP system built in Go, exploring the
 
 ---
 
-## Standing on the Shoulders of Giants
+## About
 
 Before anything else, this project exists because of the incredible work done by others:
 
@@ -23,35 +23,37 @@ The Pion project provides the entire foundation for RTP, SDP, and WebRTC in Go. 
 
 ### [sipgo](https://github.com/emiago/sipgo) & [diago](https://github.com/emiago/diago)
 Emiago's sipgo library is a pure-Go SIP stack that actually makes sense. It's clean, well-documented, and handles the gnarly parts of SIP so you don't have to. The diago project, built on top of sipgo, provided invaluable patterns for B2BUA implementation, dialog management, and call handling. Many of the architectural decisions in Switchboard were informed by studying how diago approaches these problems.
-
-### Kamailio & RTPEngine
-The architectural inspiration for separating signaling and media comes directly from the Kamailio + RTPEngine pattern that has proven itself in large-scale VoIP deployments. This battle-tested approach showed that decoupling these concerns enables true horizontal scaling.
-
 **Thank you to all these projects. Switchboard is an experiment built on your foundations.**
 
 ---
 
 ## Why This Exists
 
-This project was born from a specific curiosity: **what if we built a VoIP system with the Kamailio/RTPEngine separation pattern from day one, but in Go?**
+At its core, this project is driven by a practical observation: **in real VoIP systems, media is what consumes resources — not signaling**.
 
-The traditional approach in systems like Asterisk or FreeSWITCH is to handle signaling and media in the same process. This works well, but scaling becomes challenging - you're scaling both concerns together even when they have different resource profiles.
+Signaling is relatively lightweight. It is stateful, bursty, and mostly CPU-bound. Media, on the other hand, is continuous, bandwidth-heavy, and sensitive to latency and I/O pressure. Treating both concerns as if they scale the same way leads to inefficiencies, unnecessary coupling, and harder operational decisions.
 
-The Kamailio + RTPEngine architecture separates these concerns:
-- **Signaling** (SIP) is lightweight, stateful, and CPU-bound
-- **Media** (RTP) is heavyweight, mostly stateless per-stream, and I/O-bound
+This project starts from the assumption that media deserves to be treated as a first-class, independently scalable concern. By separating signaling from media handling, each can evolve, scale, and fail according to its own characteristics, rather than being forced into a single execution model.
 
-By separating them and using a control protocol (in our case, gRPC) to manage media servers, you get:
+Go makes this approach particularly compelling. Its concurrency model is well-suited for managing large numbers of lightweight signaling tasks, while still being capable of coordinating high-throughput media pipelines. At the same time, modern control interfaces like gRPC make it straightforward to coordinate independent components without resorting to fragile or ad-hoc integrations.
 
-1. **Independent scaling** - Add more media servers without touching signaling, or vice versa
-2. **Geographic distribution** - Media servers close to users, signaling centralized
-3. **Resource isolation** - A media processing spike doesn't affect call setup
-4. **Simpler deployments** - Each component has a focused responsibility
-5. **Container-friendly** - Small, single-purpose binaries that fit the Kubernetes model
+The availability of a stable, well-designed SIP stack in Go provides the missing foundation to explore this space seriously. With that in place, it becomes possible to focus on system boundaries, resource efficiency, and clarity of responsibility rather than reimplementing basic protocol mechanics.
 
-This is an experiment to see if this architecture, combined with Go's concurrency model and modern tooling, can produce something that's both scalable and understandable.
+This project is an exploration of whether separating media and signaling along these lines can lead to a system that is easier to scale, easier to reason about, and better aligned with how VoIP workloads actually behave in practice.
 
-**I couldn't explore this without the work done on Pion, sipgo, and diago. They made it possible to prototype these ideas in weeks rather than years.**
+This project takes a different approach by explicitly separating those planes:
+- **Signaling (SIP)** is lightweight, stateful, and primarily CPU-bound
+- **Media (RTP)** is heavier, largely stateless per stream, and I/O-bound
+
+By decoupling signaling and media and coordinating them through a control interface (gRPC in this case), it becomes possible to:
+
+1. **Scale independently** — grow signaling and media at different rates  
+2. **Distribute geographically** — place media closer to users while keeping signaling centralized  
+3. **Isolate resources** — media load spikes don’t interfere with call setup  
+4. **Keep responsibilities clear** — each component has a focused role  
+5. **Deploy cleanly** — small, single-purpose services that fit container-based environments
+
+This project is an experiment in applying this model with Go’s concurrency primitives and modern tooling, aiming for something that is both scalable and easy to reason about.
 
 ---
 
