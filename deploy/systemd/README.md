@@ -54,13 +54,30 @@ sudo systemctl status switchboard-signaling
 sudo systemctl status switchboard-rtpmanager
 sudo systemctl status switchboard-ui
 
-# View logs
+# Follow logs (live)
 sudo journalctl -u switchboard-signaling -f
 sudo journalctl -u switchboard-rtpmanager -f
 sudo journalctl -u switchboard-ui -f
 
-# View all switchboard logs
+# Follow all switchboard logs
 sudo journalctl -u 'switchboard-*' -f
+
+# View recent logs (last 100 lines)
+sudo journalctl -u switchboard-signaling -n 100
+
+# View logs since boot
+sudo journalctl -u switchboard-signaling -b
+
+# View logs from specific time
+sudo journalctl -u switchboard-signaling --since "10 minutes ago"
+sudo journalctl -u switchboard-signaling --since "2024-01-15 10:00:00"
+
+# Filter by priority (emerg, alert, crit, err, warning, notice, info, debug)
+sudo journalctl -u switchboard-signaling -p err    # Errors only
+sudo journalctl -u switchboard-signaling -p warning  # Warnings and above
+
+# Export logs to file
+sudo journalctl -u switchboard-signaling --no-pager > signaling.log
 ```
 
 ## Configuration

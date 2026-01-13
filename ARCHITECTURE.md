@@ -1,18 +1,46 @@
 # Switchboard Architecture
 
-> **Note**: This document describes the *current* architecture as of January 2025. Everything is subject to change. This is a living document that will evolve with the project.
+> **Note**: This document describes the *current* architecture as of January 2026. Everything is subject to change. This is a living document that will evolve with the project.
+
+## Built With
+
+This architecture is made possible by:
+
+- **[Pion](https://github.com/pion)** - RTP, SDP, and WebRTC libraries for Go
+- **[sipgo](https://github.com/emiago/sipgo)** - Pure Go SIP stack
+- **[diago](https://github.com/emiago/diago)** - B2BUA patterns and reference implementation
+
+The architectural inspiration comes from the **Kamailio + RTPEngine** pattern used in large-scale VoIP deployments.
 
 ## Design Philosophy
 
-### Separation of Concerns
+### Separation of Signaling and Media
+
+The core architectural decision is separating signaling from media handling. This is inspired by the Kamailio + RTPEngine pattern:
+
+**Traditional approach (Asterisk, FreeSWITCH):**
+- Single process handles both SIP signaling and RTP media
+- Scaling means scaling both concerns together
+- Resource contention between CPU-bound signaling and I/O-bound media
+
+**Switchboard approach (Kamailio/RTPEngine pattern):**
+- **Signaling Server** - Handles SIP, lightweight and stateful
+- **RTP Manager** - Handles media, heavyweight and I/O-bound
+- **gRPC control plane** - Signaling tells media what to do
+
+This separation enables:
+1. **Independent scaling** - Add media servers without touching signaling
+2. **Geographic distribution** - Media servers close to users, centralized signaling
+3. **Resource isolation** - Media spikes don't affect call setup
+4. **Container-friendly** - Small, focused binaries
+
+### Why This Matters
 
 Switchboard splits VoIP handling into distinct responsibilities:
 
 1. **Signaling** - SIP protocol, call state, routing decisions
 2. **Media** - RTP streaming, codec handling, audio bridging
 3. **Presentation** - Admin visibility, monitoring
-
-This mirrors the Kamailio + RTPEngine pattern that has proven itself in production environments, but implemented from scratch with Go.
 
 ### Horizontal Scalability
 
@@ -236,10 +264,24 @@ A-Phone    Signaling       RTP Manager      B-Phone
 
 ### Why gRPC Between Services?
 
-- Strongly typed contracts (proto files)
-- Efficient binary serialization
-- Bidirectional streaming (used for PlayAudio status)
-- Good Go tooling
+The choice of gRPC as the control protocol between Signaling and RTP Manager is central to the architecture:
+
+**Control Plane vs Data Plane:**
+- gRPC carries control messages (create session, bridge media, play audio)
+- RTP carries the actual media data directly between clients and RTP Manager
+- This mirrors how Kamailio uses the ng control protocol with RTPEngine
+
+**Why gRPC specifically:**
+- Strongly typed contracts (proto files) - changes are explicit and versioned
+- Efficient binary serialization - low overhead for control messages
+- Bidirectional streaming - used for PlayAudio status updates
+- Excellent Go tooling and code generation
+- Connection pooling and load balancing built-in
+
+**Alternative considered:**
+- HTTP/REST - simpler but less efficient, no streaming
+- Custom TCP protocol - more work, less tooling
+- Unix sockets - limits to single-host deployments
 
 ### Why In-Memory Storage?
 
@@ -268,4 +310,4 @@ These are ideas, not commitments:
 - **REFER** - Call transfer
 ---
 
-*This document will be updated as the architecture evolves. Last updated: January 2025*
+*This document will be updated as the architecture evolves. Last updated: January 2026*
