@@ -1,6 +1,7 @@
 # Switchboard
 
-A modular B2BUA (Back-to-Back User Agent) VoIP system built from scratch in Go.
+A modular B2BUA (Back-to-Back User Agent) VoIP system built in Go, exploring the separation of signaling and media.
+
 ![Switchboard avatar](switchboard.png)
 
 > **WARNING: EXPERIMENTAL PROJECT**
@@ -13,16 +14,50 @@ A modular B2BUA (Back-to-Back User Agent) VoIP system built from scratch in Go.
 
 ---
 
+## Standing on the Shoulders of Giants
+
+Before anything else, this project exists because of the incredible work done by others:
+
+### [Pion](https://github.com/pion)
+The Pion project provides the entire foundation for RTP, SDP, and WebRTC in Go. Without Pion's clean, well-tested libraries for packet handling, SDP parsing, and media transport, building something like this would take years instead of weeks. The quality and documentation of the Pion ecosystem is exceptional.
+
+### [sipgo](https://github.com/emiago/sipgo) & [diago](https://github.com/emiago/diago)
+Emiago's sipgo library is a pure-Go SIP stack that actually makes sense. It's clean, well-documented, and handles the gnarly parts of SIP so you don't have to. The diago project, built on top of sipgo, provided invaluable patterns for B2BUA implementation, dialog management, and call handling. Many of the architectural decisions in Switchboard were informed by studying how diago approaches these problems.
+
+### Kamailio & RTPEngine
+The architectural inspiration for separating signaling and media comes directly from the Kamailio + RTPEngine pattern that has proven itself in large-scale VoIP deployments. This battle-tested approach showed that decoupling these concerns enables true horizontal scaling.
+
+**Thank you to all these projects. Switchboard is an experiment built on your foundations.**
+
+---
 
 ## Why This Exists
 
-This project was born from curiosity: what would it look like to build a simple, modern B2BUA from scratch? Not to replace FreeSWITCH, Asterisk, or Kamailio - they have earned their place through decades of battle-testing. This is about learning, experimenting, and exploring what is possible with modern Go tooling.
+This project was born from a specific curiosity: **what if we built a VoIP system with the Kamailio/RTPEngine separation pattern from day one, but in Go?**
 
-The inspiration comes from the Kamailio + RTPEngine architecture - signaling and media as separate, scalable components. What if we built something with horizontal scaling and container orchestration in mind from the start?
+The traditional approach in systems like Asterisk or FreeSWITCH is to handle signaling and media in the same process. This works well, but scaling becomes challenging - you're scaling both concerns together even when they have different resource profiles.
+
+The Kamailio + RTPEngine architecture separates these concerns:
+- **Signaling** (SIP) is lightweight, stateful, and CPU-bound
+- **Media** (RTP) is heavyweight, mostly stateless per-stream, and I/O-bound
+
+By separating them and using a control protocol (in our case, gRPC) to manage media servers, you get:
+
+1. **Independent scaling** - Add more media servers without touching signaling, or vice versa
+2. **Geographic distribution** - Media servers close to users, signaling centralized
+3. **Resource isolation** - A media processing spike doesn't affect call setup
+4. **Simpler deployments** - Each component has a focused responsibility
+5. **Container-friendly** - Small, single-purpose binaries that fit the Kubernetes model
+
+This is an experiment to see if this architecture, combined with Go's concurrency model and modern tooling, can produce something that's both scalable and understandable.
+
+**I couldn't explore this without the work done on Pion, sipgo, and diago. They made it possible to prototype these ideas in weeks rather than years.**
+
+---
 
 ## Architecture
 
-Three services, loosely coupled:
+Three services, loosely coupled via gRPC:
 
 ```
                               ┌─────────────────────────┐
@@ -157,6 +192,52 @@ UI_LOGLEVEL=info       # debug, info, warn, error
 ./switchboard-signaling --rtpmanager localhost:9090,localhost:9091
 ```
 
+## Systemd Deployment
+
+Systemd service files are provided in `deploy/systemd/`. See the [deployment README](deploy/systemd/README.md) for installation instructions.
+
+### Viewing Logs
+
+When running under systemd, logs go to the journal:
+
+```bash
+# Follow logs for a specific service
+journalctl -u switchboard-signaling -f
+
+# Follow logs for all switchboard services
+journalctl -u 'switchboard-*' -f
+
+# View recent logs (last 100 lines)
+journalctl -u switchboard-signaling -n 100
+
+# View logs since last boot
+journalctl -u switchboard-signaling -b
+
+# View logs from a specific time
+journalctl -u switchboard-signaling --since "10 minutes ago"
+
+# View logs with priority filtering
+journalctl -u switchboard-signaling -p err  # Only errors
+```
+
+### Service Management
+
+```bash
+# Start all services
+systemctl start switchboard.target
+
+# Stop all services
+systemctl stop switchboard.target
+
+# Restart all services
+systemctl restart switchboard.target
+
+# Check status
+systemctl status switchboard-signaling
+systemctl status switchboard-rtpmanager
+systemctl status switchboard-ui
+```
+
 ## REST API
 
 **Signaling Server** (port 8080):
@@ -174,11 +255,12 @@ curl http://localhost:8080/api/v1/stats         # Statistics
 
 ## Technology Stack
 
-- **Go 1.24** - Because single binaries and goroutines are nice
-- **[sipgo](https://github.com/emiago/sipgo)** - Pure Go SIP stack (thank you, emiago)
-- **[Pion](https://github.com/pion)** - RTP/SDP handling
-- **gRPC** - Service communication
-- **g711** - PCMU codec
+- **Go 1.24** - Single binaries, goroutines, and a great standard library
+- **[sipgo](https://github.com/emiago/sipgo)** - Pure Go SIP stack
+- **[diago](https://github.com/emiago/diago)** - B2BUA patterns and inspiration
+- **[Pion](https://github.com/pion)** - RTP, SDP, and WebRTC ecosystem
+- **gRPC** - Service communication between signaling and media
+- **g711** - PCMU/PCMA codec support
 - **HTMX + Tailwind** - Dashboard UI
 
 ## Contributing
@@ -191,22 +273,12 @@ Contributions are welcome, but please understand what you are getting into:
 
 That said, if you are also curious about VoIP systems and want to experiment together, pull up a chair.
 
-## Acknowledgments
-
-This project would not exist without:
-
-- **[sipgo](https://github.com/emiago/sipgo)** - A clean, well-documented pure-Go SIP library
-- **[Pion](https://github.com/pion)** - The entire ecosystem for WebRTC/RTP in Go
-- **Kamailio** and **RTPEngine** - The architecture inspiration
-- **FreeSWITCH** and **Asterisk** - For decades of teaching the world how VoIP works
-- **Claude Code** - AI-assisted development that makes experimentation faster
-
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details.
 
 ---
 
-Built by Sebastian as an exploration of VoIP systems and real-time media routing.
+Built by Sebastian as an exploration of VoIP systems, scalable architecture, and real-time media routing.
 
 *If this project somehow helps you learn something, that is the whole point.*
