@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
-	"github.com/sebas/switchboard/services/ui/config"
-	"github.com/sebas/switchboard/services/ui/server"
+	"github.com/sebas/switchboard/internal/banner"
+	"github.com/sebas/switchboard/internal/ui/config"
+	"github.com/sebas/switchboard/internal/ui/server"
 )
 
 func main() {
@@ -23,6 +26,19 @@ func main() {
 	// Load configuration
 	cfg := config.Load()
 
+	// Format backends for display
+	backendStrs := make([]string, len(cfg.Backends))
+	for i, b := range cfg.Backends {
+		backendStrs[i] = fmt.Sprintf("%s (%s)", b.Name, b.Address)
+	}
+
+	// Print startup banner
+	banner.Print("UI SERVER", []banner.ConfigLine{
+		{Label: "HTTP Listen", Value: fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)},
+		{Label: "Backends", Value: strings.Join(backendStrs, ", ")},
+		{Label: "Log Level", Value: cfg.LogLevel},
+	})
+
 	// Apply log level from config
 	switch cfg.LogLevel {
 	case "debug":
@@ -36,12 +52,6 @@ func main() {
 	}
 	logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
-
-	slog.Info("Starting Switchboard UI",
-		"port", cfg.Port,
-		"bind", cfg.BindAddr,
-		"backends", len(cfg.Backends),
-	)
 
 	// Create and start server
 	srv, err := server.NewServer(cfg)

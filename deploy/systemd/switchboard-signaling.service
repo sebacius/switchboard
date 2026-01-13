@@ -11,13 +11,13 @@ User=switchboard
 Group=switchboard
 WorkingDirectory=/opt/switchboard
 
-ExecStart=/opt/switchboard/switchboard-signaling \
+ExecStart=/bin/bash -c '/opt/switchboard/switchboard-signaling \
     --port=${SIP_PORT} \
     --bind=${SIP_BIND} \
-    --advertise=${SIP_ADVERTISE} \
+    ${SIP_ADVERTISE:+--advertise=${SIP_ADVERTISE}} \
     --rtpmanager=${RTPMANAGER_ADDRS} \
     --dialplan=${DIALPLAN_PATH} \
-    --loglevel=${LOG_LEVEL}
+    --loglevel=${LOG_LEVEL}'
 
 EnvironmentFile=/etc/switchboard/signaling.env
 
