@@ -7,19 +7,9 @@
 ## About
 Switchboard is a VoIP platform that separates signaling and media into independently scalable components. It uses SIP for call control, RTP for media transport, and gRPC to coordinate services.
 
-Signaling and media place very different demands on a system. Signaling is intermittent and stateful, while media is continuous, bandwidth-heavy, and sensitive to latency and I/O behavior. Treating both under the same execution and scaling model tightly couples concerns that behave differently under load.
+Switchboard is built around separating responsibilities. Signaling and media are handled by distinct components and coordinated through explicit interfaces, allowing each to scale and operate according to its own characteristics.
 
-Switchboard is built around separating these responsibilities. Signaling and media are handled by distinct components and coordinated through explicit interfaces, allowing each to scale and operate according to its own characteristics.
-
-Go provides a practical foundation for this approach. Lightweight concurrency fits signaling workloads well, and structured interfaces such as gRPC keep communication between components explicit and predictable.
-
-With a [stable SIP stack available in Go like sipgo](https://github.com/emiago/sipgo), and [session mangemnt libraries like Pion](https://github.com/pion) the focus shifts away from protocol implementation and toward system boundaries, resource usage, and operational behavior.
-
-This project explores whether structuring a VoIP system around these separations leads to something that is easier to scale, easier to operate, and easier to reason about.
-
-This project takes a different approach by explicitly separating those planes:
-- **Signaling (SIP)** is lightweight, stateful, and primarily CPU-bound
-- **Media (RTP)** is heavier, largely stateless per stream, and I/O-bound
+With a [stable SIP stack available in Go like sipgo](https://github.com/emiago/sipgo), and [session mangemnt libraries like Pion](https://github.com/pion) switchboard shifts the focus away from protocol implementation and toward system boundaries, resource usage, and operational behavior.
 
 By decoupling signaling and media and coordinating them through a control interface (gRPC in this case), it becomes possible to:
 
