@@ -1,0 +1,51 @@
+# Switchboard Signaling Server
+# Build: docker build -f deploy/docker/Dockerfile.signaling -t switchboard-signaling .
+
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Copy go mod files first for caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o switchboard-signaling ./cmd/signaling/
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create non-root user
+RUN adduser -D -u 1000 switchboard
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /build/switchboard-signaling /app/
+
+# Default config directory (mount your configs here)
+RUN mkdir -p /app/config
+
+# Switch to non-root user
+USER switchboard
+
+# Expose ports
+# 5060 - SIP (UDP/TCP)
+# 8080 - REST API
+EXPOSE 5060/udp 5060/tcp 8080/tcp
+
+# Environment defaults
+ENV LOGLEVEL=info
+ENV PORT=5060
+ENV BIND=0.0.0.0
+ENV DIALPLAN_PATH=/app/config/dialplan.json
+
+ENTRYPOINT ["/app/switchboard-signaling"]

@@ -8,13 +8,8 @@
 *.so
 *.dylib
 
-# Built binaries
-switchboard-signaling
-switchboard-rtpmanager
-switchboard-ui
-switchboard-signaling-linux
-switchboard-rtpmanager-linux
-switchboard-ui-linux
+# Build output directory
+build/
 
 # Test binary, built with `go test -c`
 *.test
@@ -42,3 +37,5 @@ go.work.sum
 # Claude
 .claude
 CLAUDE.md
+
+.DS_Store

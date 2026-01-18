@@ -1,0 +1,96 @@
+# Switchboard RTP Manager Deployment
+# Handles media (RTP streaming, audio playback, SDP generation)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rtpmanager
+  namespace: switchboard
+  labels:
+    app.kubernetes.io/name: switchboard
+    app.kubernetes.io/component: rtpmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: switchboard
+      app.kubernetes.io/component: rtpmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: switchboard
+        app.kubernetes.io/component: rtpmanager
+    spec:
+      # hostNetwork required for RTP - media packets need direct host access
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: rtpmanager
+          image: switchboard-rtpmanager:latest
+          imagePullPolicy: Never  # Use locally imported images
+          ports:
+            - name: grpc
+              containerPort: 9090
+              protocol: TCP
+            # RTP ports 10000-10100 exposed via hostNetwork
+          env:
+            - name: LOGLEVEL
+              value: "debug"
+            - name: GRPC_PORT
+              value: "9090"
+            - name: GRPC_BIND
+              value: "0.0.0.0"
+            - name: RTP_PORT_MIN
+              value: "10000"
+            - name: RTP_PORT_MAX
+              value: "10100"
+            - name: AUDIO_PATH
+              value: "/app/audio"
+            # ADVERTISE will be auto-detected from host network
+          volumeMounts:
+            - name: audio-files
+              mountPath: /app/audio
+              readOnly: true
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          livenessProbe:
+            tcpSocket:
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 9090
+            initialDelaySeconds: 2
+            periodSeconds: 5
+      volumes:
+        - name: audio-files
+          hostPath:
+            path: /opt/switchboard/audio
+            type: DirectoryOrCreate
+---
+# Service for internal gRPC communication
+# Note: With hostNetwork, signaling connects directly to host IP:9090
+apiVersion: v1
+kind: Service
+metadata:
+  name: rtpmanager
+  namespace: switchboard
+  labels:
+    app.kubernetes.io/name: switchboard
+    app.kubernetes.io/component: rtpmanager
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: switchboard
+    app.kubernetes.io/component: rtpmanager
+  ports:
+    - name: grpc
+      port: 9090
+      targetPort: 9090
+      protocol: TCP

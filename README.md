@@ -1,6 +1,6 @@
 # Switchboard
 
-![Switchboard avatar](switchboard.png)
+![Switchboard avatar](resources/img/switchboard.png)
 
 > **WARNING: EXPERIMENTAL PROJECT**
 > This is a **learning project** in active development. It is **pre-alpha**, **unstable**, and **not suitable for any production use**. The architecture is still being decided. Entire subsystems may be rewritten without notice. APIs will break. Config formats will change. Here be dragons.
@@ -93,6 +93,7 @@ Complete documentation is available in the [docs/](docs/) folder:
 | [B2BUA Design](docs/B2BUA.md) | Back-to-Back User Agent details |
 | [Code Map](docs/CODE_MAP.md) | Codebase navigation guide |
 | [Development](docs/DEVELOPMENT.md) | Build, test, and contribute |
+| [Deployment](docs/DEPLOYMENT.md) | Docker and Kubernetes deployment |
 | [Roadmap](docs/ROADMAP.md) | Planned features |
 
 ## Technology Stack

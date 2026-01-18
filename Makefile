@@ -1,13 +1,21 @@
 .PHONY: build run clean help proto \
 	build-signaling build-rtpmanager build-ui build-all build-linux \
-	deploy deploy-signaling deploy-rtpmanager \
 	test-register test-multi test-api test-deregister \
-	run-ui
+	run-ui \
+	docker-build docker-build-signaling docker-build-rtpmanager docker-build-ui \
+	docker-save docker-load k8s-deploy k8s-delete k8s-status k8s-logs
 
-# Configuration
-UTM_VM_IP ?= 192.168.50.181
-UTM_VM_USER ?= root
-TEST_SIP_SERVER ?= 192.168.50.181:5060
+# Docker image names
+IMAGE_SIGNALING ?= switchboard-signaling
+IMAGE_RTPMANAGER ?= switchboard-rtpmanager
+IMAGE_UI ?= switchboard-ui
+IMAGE_TAG ?= latest
+
+# Build output directory
+BUILD_DIR ?= build
+
+# Test configuration
+TEST_SIP_SERVER ?= localhost:5060
 
 # Help
 help:
@@ -30,61 +38,72 @@ help:
 	@echo "PROTO:"
 	@echo "  make proto            - Regenerate gRPC code from proto files"
 	@echo ""
-	@echo "DEPLOY (UTM VM):"
-	@echo "  make deploy           - Build and deploy all services to UTM VM"
-	@echo "  make ssh              - SSH into UTM VM"
+	@echo "DOCKER:"
+	@echo "  make docker-build     - Build all Docker images"
+	@echo "  make docker-save      - Save images to tar files (for k3s import)"
+	@echo "  make docker-load      - Load images into k3s (requires k3s)"
+	@echo ""
+	@echo "KUBERNETES (k3s):"
+	@echo "  make k8s-deploy       - Deploy to Kubernetes (build + load + apply)"
+	@echo "  make k8s-delete       - Delete all Switchboard resources"
+	@echo "  make k8s-status       - Show deployment status"
+	@echo "  make k8s-logs         - Tail logs from all pods"
 	@echo ""
 	@echo "TESTING:"
 	@echo "  make test-register    - Register single user"
 	@echo "  make test-multi       - Register multiple users"
 	@echo "  make test-api         - Check registrations via API"
 
+# Ensure build directory exists
+$(BUILD_DIR):
+	@mkdir -p $(BUILD_DIR)
+
 # Build targets (macOS)
-build-signaling:
+build-signaling: $(BUILD_DIR)
 	@echo "Building signaling server..."
-	@go build -o switchboard-signaling ./cmd/signaling/
+	@go build -o $(BUILD_DIR)/switchboard-signaling ./cmd/signaling/
 
-build-rtpmanager:
+build-rtpmanager: $(BUILD_DIR)
 	@echo "Building RTP Manager..."
-	@go build -o switchboard-rtpmanager ./cmd/rtpmanager/
+	@go build -o $(BUILD_DIR)/switchboard-rtpmanager ./cmd/rtpmanager/
 
-build-ui:
+build-ui: $(BUILD_DIR)
 	@echo "Building UI server..."
-	@go build -o switchboard-ui ./cmd/ui/
+	@go build -o $(BUILD_DIR)/switchboard-ui ./cmd/ui/
 
 build-all: build-signaling build-rtpmanager build-ui
-	@echo "All binaries built"
+	@echo "All binaries built in $(BUILD_DIR)/"
 
 # Build targets (Linux)
 build: build-linux
 
-build-linux:
+build-linux: $(BUILD_DIR)
 	@echo "Building for Linux AMD64..."
-	@GOOS=linux GOARCH=amd64 go build -o switchboard-signaling-linux ./cmd/signaling/
-	@GOOS=linux GOARCH=amd64 go build -o switchboard-rtpmanager-linux ./cmd/rtpmanager/
-	@GOOS=linux GOARCH=amd64 go build -o switchboard-ui-linux ./cmd/ui/
-	@echo "Built: switchboard-signaling-linux, switchboard-rtpmanager-linux, switchboard-ui-linux"
+	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/switchboard-signaling-linux ./cmd/signaling/
+	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/switchboard-rtpmanager-linux ./cmd/rtpmanager/
+	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/switchboard-ui-linux ./cmd/ui/
+	@echo "Built in $(BUILD_DIR)/: switchboard-signaling-linux, switchboard-rtpmanager-linux, switchboard-ui-linux"
 
 # Run targets
 run: build-all
 	@echo "Starting RTP Manager on :9090..."
-	@./switchboard-rtpmanager --grpc-port 9090 &
+	@$(BUILD_DIR)/switchboard-rtpmanager --grpc-port 9090 &
 	@sleep 1
 	@echo "Starting Signaling Server on :5060 (API on :8080)..."
-	@./switchboard-signaling --rtpmanager localhost:9090 &
+	@$(BUILD_DIR)/switchboard-signaling --rtpmanager localhost:9090 &
 	@sleep 1
 	@echo "Starting UI Server on :3000..."
-	@./switchboard-ui --backends http://localhost:8080
+	@$(BUILD_DIR)/switchboard-ui --backends http://localhost:8080
 	@echo "Use 'pkill switchboard' to stop"
 
 run-signaling: build-signaling
-	@./switchboard-signaling --rtpmanager localhost:9090
+	@$(BUILD_DIR)/switchboard-signaling --rtpmanager localhost:9090
 
 run-rtpmanager: build-rtpmanager
-	@./switchboard-rtpmanager --grpc-port 9090
+	@$(BUILD_DIR)/switchboard-rtpmanager --grpc-port 9090
 
 run-ui: build-ui
-	@./switchboard-ui --backends http://localhost:8080
+	@$(BUILD_DIR)/switchboard-ui --backends http://localhost:8080
 
 # Proto generation
 proto:
@@ -94,24 +113,93 @@ proto:
 
 # Clean
 clean:
-	@rm -f switchboard-signaling switchboard-rtpmanager switchboard-ui
-	@rm -f switchboard-signaling-linux switchboard-rtpmanager-linux switchboard-ui-linux
+	@rm -rf $(BUILD_DIR)
 	@echo "Cleaned build artifacts"
 
-# UTM Deployment
-deploy: build-linux
-	@echo "Deploying to UTM VM ($(UTM_VM_IP))..."
-	@ssh $(UTM_VM_USER)@$(UTM_VM_IP) 'mkdir -p /opt/switchboard'
-	@ssh $(UTM_VM_USER)@$(UTM_VM_IP) 'pkill switchboard || true'
-	@scp switchboard-signaling-linux $(UTM_VM_USER)@$(UTM_VM_IP):/opt/switchboard/switchboard-signaling
-	@scp switchboard-rtpmanager-linux $(UTM_VM_USER)@$(UTM_VM_IP):/opt/switchboard/switchboard-rtpmanager
-	@scp switchboard-ui-linux $(UTM_VM_USER)@$(UTM_VM_IP):/opt/switchboard/switchboard-ui
-	@echo "Deployed to /opt/switchboard/"
+# ============================================================================
+# Docker targets
+# ============================================================================
 
-ssh:
-	@ssh $(UTM_VM_USER)@$(UTM_VM_IP)
+docker-build-signaling:
+	@echo "Building signaling Docker image..."
+	@docker build -f deploy/docker/Dockerfile.signaling -t $(IMAGE_SIGNALING):$(IMAGE_TAG) .
 
+docker-build-rtpmanager:
+	@echo "Building rtpmanager Docker image..."
+	@docker build -f deploy/docker/Dockerfile.rtpmanager -t $(IMAGE_RTPMANAGER):$(IMAGE_TAG) .
+
+docker-build-ui:
+	@echo "Building ui Docker image..."
+	@docker build -f deploy/docker/Dockerfile.ui -t $(IMAGE_UI):$(IMAGE_TAG) .
+
+docker-build: docker-build-signaling docker-build-rtpmanager docker-build-ui
+	@echo "All Docker images built"
+
+# Save images to tar files for k3s import
+docker-save: $(BUILD_DIR)
+	@echo "Saving Docker images to tar files..."
+	@docker save $(IMAGE_SIGNALING):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-signaling.tar
+	@docker save $(IMAGE_RTPMANAGER):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-rtpmanager.tar
+	@docker save $(IMAGE_UI):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-ui.tar
+	@echo "Saved to $(BUILD_DIR)/: switchboard-signaling.tar, switchboard-rtpmanager.tar, switchboard-ui.tar"
+
+docker: docker-build docker-save
+	@echo "Docker build, save, and load complete"
+
+# ============================================================================
+# Kubernetes targets
+# ============================================================================
+
+# Full deployment: build images, load into k3s, apply manifests
+# Load images into k3s containerd
+k8s-load:
+	@echo "Loading images into k3s..."
+	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-signaling.tar
+	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-rtpmanager.tar
+	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-ui.tar
+	@echo "Images loaded into k3s"
+
+k8s-deploy: k8s-load
+	@echo "Deploying to Kubernetes..."
+	@kubectl apply -k deploy/k8s/
+	@echo ""
+	@echo "Deployment complete. Run 'make k8s-status' to check status."
+	@echo "UI available at: http://<node-ip>:30000"
+
+# Delete all switchboard resources
+k8s-delete:
+	@echo "Deleting Switchboard resources..."
+	@kubectl delete -k deploy/k8s/ --ignore-not-found
+	@echo "Resources deleted"
+
+# Show deployment status
+k8s-status:
+	@echo "=== Namespace ==="
+	@kubectl get namespace switchboard 2>/dev/null || echo "Namespace not found"
+	@echo ""
+	@echo "=== Pods ==="
+	@kubectl get pods -n switchboard -o wide 2>/dev/null || echo "No pods"
+	@echo ""
+	@echo "=== Services ==="
+	@kubectl get services -n switchboard 2>/dev/null || echo "No services"
+	@echo ""
+	@echo "=== Deployments ==="
+	@kubectl get deployments -n switchboard 2>/dev/null || echo "No deployments"
+
+# Tail logs from all pods
+k8s-logs:
+	@kubectl logs -n switchboard -l app.kubernetes.io/name=switchboard --all-containers -f --prefix
+
+# Restart all deployments (useful after image updates)
+k8s-restart:
+	@echo "Restarting deployments..."
+	@kubectl rollout restart deployment -n switchboard
+	@kubectl rollout status deployment -n switchboard
+
+# ============================================================================
 # Testing targets
+# ============================================================================
+
 test-register:
 	@echo "Registering sebas with 3600s expiry..."
 	@sipexer -register -au sebas -ex 3600 -cb $(TEST_SIP_SERVER)
