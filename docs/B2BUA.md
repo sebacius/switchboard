@@ -2,7 +2,7 @@
 
 ## Overview
 
-This package implements the core B2BUA (Back-to-Back User Agent) primitives for the Switchboard VoIP softswitch. It provides three fundamental operations:
+This package implements the core B2BUA (Back-to-Back User Agent) primitives for the Switchboard VoIP platform. It provides three fundamental operations:
 
 1. **Lookup** - Resolve dial targets to SIP URIs
 2. **Originate** - Create outbound call legs
@@ -11,23 +11,23 @@ This package implements the core B2BUA (Back-to-Back User Agent) primitives for 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                         CallService                               │
-│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐  │
-│  │  Lookup    │  │  Dial      │  │  Bridge    │  │ DialParallel│ │
-│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  │
-└────────┼───────────────┼───────────────┼───────────────┼─────────┘
-         │               │               │               │
-         ▼               ▼               ▼               ▼
-    ┌─────────┐    ┌───────────┐   ┌─────────┐    (Future)
-    │Resolver │    │Originator │   │ Bridge  │
-    └─────────┘    └───────────┘   └─────────┘
-         │               │               │
-         ▼               ▼               ▼
-    ┌─────────┐    ┌───────────┐   ┌─────────┐
-    │Location │    │   Leg     │   │   Leg   │
-    │ Store   │    └───────────┘   │ A ↔ B   │
-    └─────────┘                    └─────────┘
++------------------------------------------------------------------+
+|                         CallService                               |
+|  +------------+  +------------+  +------------+  +------------+  |
+|  |  Lookup    |  |  Dial      |  |  Bridge    |  | DialParallel| |
+|  +-----+------+  +-----+------+  +-----+------+  +-----+------+  |
++---------+---------------+---------------+---------------+---------+
+          |               |               |               |
+          v               v               v               v
+     +---------+    +-----------+   +---------+    (Future)
+     |Resolver |    |Originator |   | Bridge  |
+     +---------+    +-----------+   +---------+
+          |               |               |
+          v               v               v
+     +---------+    +-----------+   +---------+
+     |Location |    |   Leg     |   |   Leg   |
+     | Store   |    +-----------+   | A <-> B |
+     +---------+                    +---------+
 ```
 
 ## Core Types
@@ -41,11 +41,13 @@ A `Leg` represents one side of a call. It wraps:
 
 **States:**
 ```
-Created → Ringing → Answered → Destroyed
-            ↓
-        EarlyMedia → Answered → Destroyed
-            ↓
-          Failed
+Created -> Ringing -> Answered -> Destroyed
+             |
+             v
+         EarlyMedia -> Answered -> Destroyed
+             |
+             v
+           Failed
 ```
 
 **Two types of legs:**
@@ -58,9 +60,10 @@ A `Bridge` connects two answered legs for bidirectional media exchange.
 
 **States:**
 ```
-Created → Active → Terminated
-             ↓
-           Held → Active
+Created -> Active -> Terminated
+              |
+              v
+            Held -> Active
 ```
 
 **Key behaviors:**
@@ -74,9 +77,9 @@ Resolvers convert dial targets to SIP URIs:
 
 | Prefix | Resolver | Example |
 |--------|----------|---------|
-| `user/` | UserResolver | `user/1001` → query LocationStore |
-| `gateway/` | GatewayResolver | `gateway/carrier` → gateway config |
-| `sip:` | DirectResolver | `sip:user@host` → passthrough |
+| `user/` | UserResolver | `user/1001` -> query LocationStore |
+| `gateway/` | GatewayResolver | `gateway/carrier` -> gateway config |
+| `sip:` | DirectResolver | `sip:user@host` -> passthrough |
 
 The `ChainResolver` combines multiple resolvers, trying each in order.
 
@@ -86,28 +89,28 @@ The `ChainResolver` combines multiple resolvers, trying each in order.
 
 ```
 Dialplan                    CallService                  Originator
-   │                            │                            │
-   │── Dial("user/1001") ──────▶│                            │
-   │                            │── Lookup() ───────────────▶│
-   │                            │◀── LookupResult ───────────│
-   │                            │                            │
-   │                            │── Originate() ────────────▶│
-   │                            │   (builds INVITE)          │
-   │                            │   (sends INVITE)           │
-   │                            │◀── 180 Ringing ────────────│
-   │                            │◀── 200 OK ─────────────────│
-   │                            │   (sends ACK)              │
-   │◀── Leg (Answered) ─────────│                            │
-   │                            │                            │
-   │── CreateBridge() ─────────▶│                            │
-   │── Start() ────────────────▶│                            │
-   │                            │                            │
-   │   ... media flows ...      │                            │
-   │                            │                            │
-   │── WaitForTermination() ───▶│                            │
-   │   ... blocking ...         │                            │
-   │                            │                            │
-   │◀── BridgeInfo ─────────────│ (when either leg hangs up) │
+   |                            |                            |
+   |-- Dial("user/1001") ------>|                            |
+   |                            |-- Lookup() --------------->|
+   |                            |<-- LookupResult -----------|
+   |                            |                            |
+   |                            |-- Originate() ------------>|
+   |                            |   (builds INVITE)          |
+   |                            |   (sends INVITE)           |
+   |                            |<-- 180 Ringing ------------|
+   |                            |<-- 200 OK -----------------|
+   |                            |   (sends ACK)              |
+   |<-- Leg (Answered) ---------|                            |
+   |                            |                            |
+   |-- CreateBridge() --------->|                            |
+   |-- Start() ---------------->|                            |
+   |                            |                            |
+   |   ... media flows ...      |                            |
+   |                            |                            |
+   |-- WaitForTermination() --->|                            |
+   |   ... blocking ...         |                            |
+   |                            |                            |
+   |<-- BridgeInfo -------------|  (when either leg hangs up)|
 ```
 
 ## Ring Group Extensibility
@@ -235,11 +238,11 @@ func (s *sessionImpl) Dial(ctx context.Context, target string, timeout time.Dura
 
 ### RTP Manager Integration
 
-The Bridge coordinates RTP via the Transport interface:
+The Bridge coordinates RTP via the MediaClient interface:
 
 ```go
-// Future: Bridge media command in Transport
-type Transport interface {
+// MediaClient interface for RTP Manager communication
+type MediaClient interface {
     // Existing methods...
 
     // BridgeMedia connects two sessions for RTP relay
@@ -253,26 +256,23 @@ type Transport interface {
 ## File Structure
 
 ```
-services/signaling/b2bua/
-├── state.go           # LegState, BridgeState, TerminationCause enums
-├── errors.go          # ErrTargetNotFound, DialError, etc.
-├── lookup.go          # LookupResult, Resolver, GatewayConfig
-├── leg.go             # Leg interface, LegInfo, LegOption
-├── leg_impl.go        # legImpl implementation
-├── bridge.go          # Bridge interface, BridgeInfo, BridgeOption
-├── bridge_impl.go     # bridgeImpl implementation
-├── service.go         # CallService interface, CallServiceConfig
-├── call_service.go    # callService implementation
-├── originator.go      # Originator for outbound INVITEs
-├── user_resolver.go   # UserResolver implementation
-├── direct_resolver.go # DirectResolver implementation
-├── chain_resolver.go  # ChainResolver implementation
-└── DESIGN.md          # This document
+internal/signaling/b2bua/
++-- state.go           # LegState, BridgeState, TerminationCause enums
++-- errors.go          # ErrTargetNotFound, DialError, etc.
++-- lookup.go          # LookupResult, Resolver, GatewayConfig
++-- leg.go             # Leg interface and implementation
++-- bridge.go          # Bridge interface and implementation
++-- service.go         # CallService interface
++-- call_service.go    # CallService implementation
++-- originator.go      # Originator for outbound INVITEs
++-- user_resolver.go   # UserResolver implementation
++-- direct_resolver.go # DirectResolver implementation
++-- chain_resolver.go  # ChainResolver implementation
 ```
 
 ## Testing Strategy
 
-1. **Unit tests**: Mock `Transport` and `Resolver` to test Originator logic
+1. **Unit tests**: Mock `MediaClient` and `Resolver` to test Originator logic
 2. **Integration tests**: Use in-memory location store and local transport
 3. **E2E tests**: Full SIP flow with actual sipgo against test endpoint
 
@@ -284,3 +284,13 @@ services/signaling/b2bua/
 4. **Conference**: Multi-party bridge with mixing
 5. **Recording**: Tap into bridge for media capture
 6. **Direct media**: Re-INVITE to bypass softswitch for established calls
+
+## Related Documents
+
+- [Architecture](ARCHITECTURE.md) - System design
+- [Call Flows](CALL_FLOWS.md) - Sequence diagrams
+- [Code Map](CODE_MAP.md) - Package descriptions
+
+---
+
+*Last updated: January 2026*

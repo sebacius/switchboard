@@ -7,7 +7,7 @@ import (
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/sebas/switchboard/internal/signaling/dialog"
-	"github.com/sebas/switchboard/internal/signaling/transport"
+	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 )
 
 // CallService orchestrates B2BUA operations: lookup, origination, and bridging.
@@ -99,7 +99,7 @@ type CallServiceConfig struct {
 
 	// Transport handles RTP Manager communication.
 	// Required.
-	Transport transport.Transport
+	Transport mediaclient.Transport
 
 	// LocalContact is our SIP contact URI for outbound INVITEs.
 	// Required.

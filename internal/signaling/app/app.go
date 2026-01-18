@@ -14,9 +14,8 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/dialog"
 	"github.com/sebas/switchboard/internal/signaling/location"
-	"github.com/sebas/switchboard/internal/signaling/registration"
+	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 	"github.com/sebas/switchboard/internal/signaling/routing"
-	"github.com/sebas/switchboard/internal/signaling/transport"
 )
 
 type SwitchBoard struct {
@@ -26,10 +25,13 @@ type SwitchBoard struct {
 	config          *config.Config
 	apiServer       *api.Server
 	locationStore   location.LocationStore
-	registrationMgr *registration.Handler
+	registerHandler *routing.RegisterHandler
 	inviteHandler   *routing.InviteHandler
+	byeHandler      *routing.BYEHandler
+	ackHandler      *routing.ACKHandler
+	cancelHandler   *routing.CANCELHandler
 	dialogMgr       dialog.DialogStore
-	transport       transport.Transport
+	transport       mediaclient.Transport
 	callService     b2bua.CallService
 }
 
@@ -54,12 +56,12 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	locStoreCfg := location.DefaultStoreConfig()
 	locStore := location.NewStore(locStoreCfg)
 
-	// Create registration handler with location store
+	// Create REGISTER handler with location store
 	realm := cfg.AdvertiseAddr
 	if realm == "" {
 		realm = "switchboard.local"
 	}
-	regHandler := registration.NewHandler(locStore, realm)
+	registerHandler := routing.NewRegisterHandler(locStore, realm)
 
 	// Create DialogUA for sipgo dialog management
 	contact := sip.ContactHeader{
@@ -77,7 +79,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 
 	// Create RTP Manager pool (gRPC transport)
 	slog.Info("Connecting to RTP Manager pool", "addresses", cfg.RTPManagerAddrs)
-	poolCfg := transport.PoolConfig{
+	poolCfg := mediaclient.PoolConfig{
 		Addresses:           cfg.RTPManagerAddrs,
 		ConnectTimeout:      cfg.GRPCConnectTimeout,
 		KeepaliveInterval:   cfg.GRPCKeepaliveInterval,
@@ -86,7 +88,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		UnhealthyThreshold:  3,
 		HealthyThreshold:    2,
 	}
-	mediaTransport, err := transport.NewPool(poolCfg)
+	mediaTransport, err := mediaclient.NewPool(poolCfg)
 	if err != nil {
 		ua.Close()
 		locStore.Close()
@@ -96,8 +98,8 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Create dialog manager (single source of truth for call state)
 	dialogMgr := dialog.NewManager(uac, dialogUA)
 
-	// Create API server with registration handler and dialog manager
-	apiServer := api.NewServer("0.0.0.0:8080", regHandler, dialogMgr)
+	// Create API server with register handler and dialog manager
+	apiServer := api.NewServer("0.0.0.0:8080", registerHandler, dialogMgr)
 
 	// Load dialplan configuration
 	dialplanPath := cfg.DialplanPath
@@ -127,7 +129,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		Port:          cfg.Port,
 	})
 
-	// Create INVITE handler with dialplan executor and B2BUA service
+	// Create SIP method handlers
 	inviteHandler := routing.NewInviteHandler(
 		mediaTransport,
 		cfg.AdvertiseAddr,
@@ -138,6 +140,9 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		locStore,
 		callService,
 	)
+	byeHandler := routing.NewBYEHandler(dialogMgr, callService)
+	ackHandler := routing.NewACKHandler(dialogMgr)
+	cancelHandler := routing.NewCANCELHandler(dialogMgr)
 
 	proxy := &SwitchBoard{
 		ua:              ua,
@@ -145,9 +150,12 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		client:          uac,
 		config:          cfg,
 		locationStore:   locStore,
-		registrationMgr: regHandler,
+		registerHandler: registerHandler,
 		apiServer:       apiServer,
 		inviteHandler:   inviteHandler,
+		byeHandler:      byeHandler,
+		ackHandler:      ackHandler,
+		cancelHandler:   cancelHandler,
 		dialogMgr:       dialogMgr,
 		transport:       mediaTransport,
 		callService:     callService,
@@ -159,16 +167,16 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		apiServer.RemoveSession(d.CallID)
 
 		if sessionID := d.GetSessionID(); sessionID != "" {
-			reason := transport.TerminateReasonNormal
+			reason := mediaclient.TerminateReasonNormal
 			switch d.TerminateReason {
 			case dialog.ReasonRemoteBYE:
-				reason = transport.TerminateReasonBYE
+				reason = mediaclient.TerminateReasonBYE
 			case dialog.ReasonCancel:
-				reason = transport.TerminateReasonCancel
+				reason = mediaclient.TerminateReasonCancel
 			case dialog.ReasonTimeout:
-				reason = transport.TerminateReasonTimeout
+				reason = mediaclient.TerminateReasonTimeout
 			case dialog.ReasonError:
-				reason = transport.TerminateReasonError
+				reason = mediaclient.TerminateReasonError
 			}
 			if err := mediaTransport.DestroySession(context.Background(), sessionID, reason); err != nil {
 				slog.Warn("[App] Failed to destroy session", "session_id", sessionID, "error", err)
@@ -208,7 +216,7 @@ func (p *SwitchBoard) Start(ctx context.Context) error {
 }
 
 func (p *SwitchBoard) handleRegister(req *sip.Request, tx sip.ServerTransaction) {
-	if err := p.registrationMgr.HandleRegister(req, tx); err != nil {
+	if err := p.registerHandler.HandleRegister(req, tx); err != nil {
 		slog.Error("Error handling REGISTER", "error", err)
 		res := sip.NewResponseFromRequest(req, sip.StatusInternalServerError, "Server Error", nil)
 		if err := tx.Respond(res); err != nil {
@@ -222,28 +230,15 @@ func (p *SwitchBoard) handleINVITE(req *sip.Request, tx sip.ServerTransaction) {
 }
 
 func (p *SwitchBoard) handleBYE(req *sip.Request, tx sip.ServerTransaction) {
-	// First, check if this is a BYE for an outbound (B-leg) call.
-	// B-legs are tracked by the CallService/Originator, not the dialog manager.
-	if p.callService != nil && p.callService.HandleIncomingBYE(req, tx) {
-		return // Handled by CallService
-	}
-
-	// Otherwise, handle as an inbound (A-leg) dialog
-	if err := p.dialogMgr.HandleIncomingBYE(req, tx); err != nil {
-		slog.Debug("[App] BYE handling note", "error", err)
-	}
+	p.byeHandler.HandleBYE(req, tx)
 }
 
 func (p *SwitchBoard) handleACK(req *sip.Request, tx sip.ServerTransaction) {
-	if err := p.dialogMgr.ConfirmWithACK(req, tx); err != nil {
-		slog.Debug("[App] ACK handling note", "error", err)
-	}
+	p.ackHandler.HandleACK(req, tx)
 }
 
 func (p *SwitchBoard) handleCANCEL(req *sip.Request, tx sip.ServerTransaction) {
-	if err := p.dialogMgr.HandleIncomingCANCEL(req, tx); err != nil {
-		slog.Debug("[App] CANCEL handling note", "error", err)
-	}
+	p.cancelHandler.HandleCANCEL(req, tx)
 }
 
 func (p *SwitchBoard) Close() error {
