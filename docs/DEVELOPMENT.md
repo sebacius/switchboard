@@ -362,13 +362,37 @@ sipexer -invite -user 1001 sip:1002@localhost:5060
 
 For load testing and complex scenarios.
 
+## Continuous Integration
+
+GitHub Actions runs automatically on pushes to main and on pull requests.
+
+### CI Checks
+
+| Job | Description |
+|-----|-------------|
+| **Build** | Compiles all services, verifies go.mod is tidy |
+| **Lint** | Runs golangci-lint with project configuration |
+| **Docker** | Builds all Dockerfiles to verify they work |
+
+### Running Locally
+
+```bash
+# Run the same lint checks locally
+golangci-lint run
+
+# Install golangci-lint if needed
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
+The lint configuration is in `.golangci.yml` at the project root.
+
 ## Contributing
 
 ### Before Submitting
 
 1. Run all tests: `go test ./...`
 2. Format code: `go fmt ./...`
-3. Check for issues: `go vet ./...`
+3. Check for issues: `golangci-lint run`
 4. Update documentation if needed
 
 ### Commit Messages
