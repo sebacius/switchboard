@@ -14,7 +14,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/dialog"
 	"github.com/sebas/switchboard/internal/signaling/location"
-	"github.com/sebas/switchboard/internal/signaling/transport"
+	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 )
 
 // SessionRecorder records session info for the API
@@ -24,7 +24,7 @@ type SessionRecorder interface {
 
 // InviteHandler handles incoming INVITE requests
 type InviteHandler struct {
-	transport       transport.Transport
+	transport       mediaclient.Transport
 	advertiseAddr   string
 	port            int
 	dialogMgr       *dialog.Manager
@@ -36,7 +36,7 @@ type InviteHandler struct {
 
 // NewInviteHandler creates a new INVITE handler
 func NewInviteHandler(
-	transport transport.Transport,
+	transport mediaclient.Transport,
 	advertiseAddr string,
 	port int,
 	dialogMgr *dialog.Manager,
@@ -85,7 +85,7 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	}
 
 	// Create media session via transport (this returns SDP)
-	sessionResult, err := h.transport.CreateSession(context.Background(), transport.SessionInfo{
+	sessionResult, err := h.transport.CreateSession(context.Background(), mediaclient.SessionInfo{
 		CallID:        dlg.CallID,
 		RemoteAddr:    clientAddr,
 		RemotePort:    clientPort,
@@ -121,7 +121,7 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	// Send 200 OK (this also creates the sipgo session)
 	if err := h.dialogMgr.SendOK(dlg, sessionResult.SDPBody); err != nil {
 		slog.Error("Failed to send 200 OK", "error", err)
-		h.transport.DestroySession(context.Background(), sessionResult.SessionID, transport.TerminateReasonError)
+		h.transport.DestroySession(context.Background(), sessionResult.SessionID, mediaclient.TerminateReasonError)
 		h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonError)
 		return
 	}

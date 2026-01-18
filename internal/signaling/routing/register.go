@@ -1,4 +1,4 @@
-package registration
+package routing
 
 import (
 	"errors"
@@ -16,22 +16,24 @@ import (
 // Used when the requested registration expires is below the minimum.
 const StatusIntervalTooBrief sip.StatusCode = 423
 
-// Handler handles REGISTER requests
-type Handler struct {
+// RegisterHandler handles REGISTER requests.
+// REGISTER is used by SIP clients to bind their contact address to their AOR
+// (Address of Record) per RFC 3261 Section 10.
+type RegisterHandler struct {
 	locationStore location.LocationStore
 	realm         string
 }
 
-// NewHandler creates a new registration handler
-func NewHandler(locationStore location.LocationStore, realm string) *Handler {
-	return &Handler{
+// NewRegisterHandler creates a new REGISTER handler.
+func NewRegisterHandler(locationStore location.LocationStore, realm string) *RegisterHandler {
+	return &RegisterHandler{
 		locationStore: locationStore,
 		realm:         realm,
 	}
 }
 
-// HandleRegister processes a REGISTER request
-func (h *Handler) HandleRegister(req *sip.Request, tx sip.ServerTransaction) error {
+// HandleRegister processes a REGISTER request.
+func (h *RegisterHandler) HandleRegister(req *sip.Request, tx sip.ServerTransaction) error {
 	slog.Debug("[REGISTER] Processing", "from", req.Source())
 
 	// Extract AOR from To header
@@ -46,10 +48,10 @@ func (h *Handler) HandleRegister(req *sip.Request, tx sip.ServerTransaction) err
 	receivedIP, receivedPort := parseSourceAddr(source)
 
 	// Get transport from Via or connection
-	transport := "UDP"
+	sipTransport := "UDP"
 	if via := req.Via(); via != nil {
 		if t := via.Transport; t != "" {
-			transport = strings.ToUpper(t)
+			sipTransport = strings.ToUpper(t)
 		}
 	}
 
@@ -135,7 +137,7 @@ func (h *Handler) HandleRegister(req *sip.Request, tx sip.ServerTransaction) err
 			ContactURI:   contactURI,
 			ReceivedIP:   receivedIP,
 			ReceivedPort: receivedPort,
-			Transport:    transport,
+			Transport:    sipTransport,
 			InstanceID:   h.extractInstanceID(contact),
 			QValue:       h.extractQValue(contact),
 			Expires:      expires,
@@ -170,9 +172,9 @@ func (h *Handler) HandleRegister(req *sip.Request, tx sip.ServerTransaction) err
 	return h.sendOKWithBindings(tx, req, aor, lastBinding)
 }
 
-// getExpires extracts expiration time from request
+// getExpires extracts expiration time from request.
 // Priority: Contact param > Expires header > default (3600)
-func (h *Handler) getExpires(req *sip.Request, contact *sip.ContactHeader) int {
+func (h *RegisterHandler) getExpires(req *sip.Request, contact *sip.ContactHeader) int {
 	// Check Contact expires parameter first
 	if contact != nil && contact.Params != nil {
 		if expiresStr, ok := contact.Params.Get("expires"); ok {
@@ -193,8 +195,8 @@ func (h *Handler) getExpires(req *sip.Request, contact *sip.ContactHeader) int {
 	return 3600
 }
 
-// extractInstanceID extracts +sip.instance from Contact params
-func (h *Handler) extractInstanceID(contact *sip.ContactHeader) string {
+// extractInstanceID extracts +sip.instance from Contact params.
+func (h *RegisterHandler) extractInstanceID(contact *sip.ContactHeader) string {
 	if contact == nil || contact.Params == nil {
 		return ""
 	}
@@ -206,8 +208,8 @@ func (h *Handler) extractInstanceID(contact *sip.ContactHeader) string {
 	return ""
 }
 
-// extractQValue extracts q parameter from Contact
-func (h *Handler) extractQValue(contact *sip.ContactHeader) float32 {
+// extractQValue extracts q parameter from Contact.
+func (h *RegisterHandler) extractQValue(contact *sip.ContactHeader) float32 {
 	if contact == nil || contact.Params == nil {
 		return 0
 	}
@@ -219,8 +221,8 @@ func (h *Handler) extractQValue(contact *sip.ContactHeader) float32 {
 	return 0
 }
 
-// sendResponse sends a SIP response
-func (h *Handler) sendResponse(tx sip.ServerTransaction, req *sip.Request, statusCode sip.StatusCode, reason string) error {
+// sendResponse sends a SIP response.
+func (h *RegisterHandler) sendResponse(tx sip.ServerTransaction, req *sip.Request, statusCode sip.StatusCode, reason string) error {
 	res := sip.NewResponseFromRequest(req, statusCode, reason, nil)
 
 	// Add received/rport to Via per RFC 3581 for NAT traversal
@@ -238,7 +240,7 @@ func (h *Handler) sendResponse(tx sip.ServerTransaction, req *sip.Request, statu
 // sendIntervalTooBrief sends a 423 Interval Too Brief response with Min-Expires header.
 // Per RFC 3261 Section 10.3, this response MUST include a Min-Expires header field
 // that indicates the minimum expiration interval the registrar is willing to honor.
-func (h *Handler) sendIntervalTooBrief(tx sip.ServerTransaction, req *sip.Request) error {
+func (h *RegisterHandler) sendIntervalTooBrief(tx sip.ServerTransaction, req *sip.Request) error {
 	res := sip.NewResponseFromRequest(req, StatusIntervalTooBrief, "Interval Too Brief", nil)
 
 	// Add received/rport to Via per RFC 3581 for NAT traversal
@@ -257,8 +259,8 @@ func (h *Handler) sendIntervalTooBrief(tx sip.ServerTransaction, req *sip.Reques
 	return nil
 }
 
-// sendQueryResponse sends 200 OK with current bindings (query response)
-func (h *Handler) sendQueryResponse(tx sip.ServerTransaction, req *sip.Request, aor string) error {
+// sendQueryResponse sends 200 OK with current bindings (query response).
+func (h *RegisterHandler) sendQueryResponse(tx sip.ServerTransaction, req *sip.Request, aor string) error {
 	res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
 
 	// Add received/rport to Via per RFC 3581 for NAT traversal
@@ -282,8 +284,8 @@ func (h *Handler) sendQueryResponse(tx sip.ServerTransaction, req *sip.Request, 
 	return nil
 }
 
-// sendOKWithBindings sends 200 OK with updated binding info
-func (h *Handler) sendOKWithBindings(tx sip.ServerTransaction, req *sip.Request, aor string, binding *location.Binding) error {
+// sendOKWithBindings sends 200 OK with updated binding info.
+func (h *RegisterHandler) sendOKWithBindings(tx sip.ServerTransaction, req *sip.Request, aor string, binding *location.Binding) error {
 	res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
 
 	// Add received/rport to Via per RFC 3581 for NAT traversal
@@ -307,8 +309,8 @@ func (h *Handler) sendOKWithBindings(tx sip.ServerTransaction, req *sip.Request,
 	return nil
 }
 
-// addContactHeader adds a Contact header for a binding
-func (h *Handler) addContactHeader(res *sip.Response, b *location.Binding) {
+// addContactHeader adds a Contact header for a binding.
+func (h *RegisterHandler) addContactHeader(res *sip.Response, b *location.Binding) {
 	// Parse the contact URI
 	var uri sip.Uri
 	if err := sip.ParseUri(b.ContactURI, &uri); err != nil {
@@ -327,8 +329,8 @@ func (h *Handler) addContactHeader(res *sip.Response, b *location.Binding) {
 	res.AppendHeader(contactHdr)
 }
 
-// GetContact retrieves a user's contact address (highest priority binding)
-func (h *Handler) GetContact(aor string) (string, error) {
+// GetContact retrieves a user's contact address (highest priority binding).
+func (h *RegisterHandler) GetContact(aor string) (string, error) {
 	binding := h.locationStore.LookupOne(aor)
 	if binding == nil {
 		return "", fmt.Errorf("user not registered: %s", aor)
@@ -336,8 +338,8 @@ func (h *Handler) GetContact(aor string) (string, error) {
 	return binding.EffectiveContact(), nil
 }
 
-// GetBinding retrieves a specific binding
-func (h *Handler) GetBinding(aor string) (*location.Binding, error) {
+// GetBinding retrieves a specific binding.
+func (h *RegisterHandler) GetBinding(aor string) (*location.Binding, error) {
 	binding := h.locationStore.LookupOne(aor)
 	if binding == nil {
 		return nil, fmt.Errorf("binding not found: %s", aor)
@@ -345,22 +347,22 @@ func (h *Handler) GetBinding(aor string) (*location.Binding, error) {
 	return binding, nil
 }
 
-// GetAllBindings returns all bindings for an AOR
-func (h *Handler) GetAllBindings(aor string) []*location.Binding {
+// GetAllBindings returns all bindings for an AOR.
+func (h *RegisterHandler) GetAllBindings(aor string) []*location.Binding {
 	return h.locationStore.Lookup(aor)
 }
 
-// GetAllRegistrations returns all current registrations grouped by AOR
-func (h *Handler) GetAllRegistrations() map[string][]*location.Binding {
+// GetAllRegistrations returns all current registrations grouped by AOR.
+func (h *RegisterHandler) GetAllRegistrations() map[string][]*location.Binding {
 	return h.locationStore.ListByAOR()
 }
 
-// ListAll returns all bindings
-func (h *Handler) ListAll() []*location.Binding {
+// ListAll returns all bindings.
+func (h *RegisterHandler) ListAll() []*location.Binding {
 	return h.locationStore.List()
 }
 
-// parseSourceAddr parses source address into IP and port
+// parseSourceAddr parses source address into IP and port.
 func parseSourceAddr(source string) (string, int) {
 	if source == "" {
 		return "", 0
@@ -394,7 +396,7 @@ func parseSourceAddr(source string) (string, int) {
 // - received: the source IP address the request was received from
 // - rport: the source port the request was received from
 // This enables proper NAT traversal by routing responses to the actual source.
-func (h *Handler) addViaParams(res *sip.Response, req *sip.Request) {
+func (h *RegisterHandler) addViaParams(res *sip.Response, req *sip.Request) {
 	via := res.Via()
 	if via == nil {
 		return
@@ -422,7 +424,7 @@ func (h *Handler) addViaParams(res *sip.Response, req *sip.Request) {
 // addDateHeader adds a Date header to the response.
 // Per RFC 3261 Section 20.17, the Date header field contains the date and time.
 // Including it in 2xx responses to REGISTER is recommended for client clock sync.
-func (h *Handler) addDateHeader(res *sip.Response) {
+func (h *RegisterHandler) addDateHeader(res *sip.Response) {
 	// RFC 3261 specifies the format should be RFC 1123 (which is HTTP date format)
 	// Example: "Sun, 06 Nov 1994 08:49:37 GMT"
 	dateStr := time.Now().UTC().Format(time.RFC1123)

@@ -10,18 +10,25 @@ import (
 	"time"
 
 	"github.com/sebas/switchboard/internal/signaling/dialog"
-	"github.com/sebas/switchboard/internal/signaling/registration"
+	"github.com/sebas/switchboard/internal/signaling/location"
 )
+
+// RegistrationProvider provides registration data for the API.
+// Implemented by routing.RegisterHandler.
+type RegistrationProvider interface {
+	GetAllRegistrations() map[string][]*location.Binding
+	GetAllBindings(aor string) []*location.Binding
+}
 
 // Server provides HTTP API for the SIP proxy (headless, API only)
 type Server struct {
-	addr            string
-	httpServer      *http.Server
-	registrationMgr *registration.Handler
-	dialogMgr       dialog.DialogStore
-	sessionsMu      sync.RWMutex
-	sessions        map[string]*SessionRecord
-	startTime       time.Time
+	addr         string
+	httpServer   *http.Server
+	registrations RegistrationProvider
+	dialogMgr    dialog.DialogStore
+	sessionsMu   sync.RWMutex
+	sessions     map[string]*SessionRecord
+	startTime    time.Time
 }
 
 // SessionRecord tracks an active RTP session
@@ -35,13 +42,13 @@ type SessionRecord struct {
 }
 
 // NewServer creates a new API server (headless, API only - no UI)
-func NewServer(addr string, registrationMgr *registration.Handler, dialogMgr dialog.DialogStore) *Server {
+func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog.DialogStore) *Server {
 	s := &Server{
-		addr:            addr,
-		registrationMgr: registrationMgr,
-		dialogMgr:       dialogMgr,
-		sessions:        make(map[string]*SessionRecord),
-		startTime:       time.Now(),
+		addr:          addr,
+		registrations: registrations,
+		dialogMgr:     dialogMgr,
+		sessions:      make(map[string]*SessionRecord),
+		startTime:     time.Now(),
 	}
 
 	mux := http.NewServeMux()
@@ -131,7 +138,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	activeSessions := len(s.sessions)
 	s.sessionsMu.RUnlock()
 
-	registrations := s.registrationMgr.GetAllRegistrations()
+	registrations := s.registrations.GetAllRegistrations()
 	totalBindings := 0
 	for _, bindings := range registrations {
 		totalBindings += len(bindings)
@@ -160,7 +167,7 @@ func (s *Server) handleRegistrations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	registrations := s.registrationMgr.GetAllRegistrations()
+	registrations := s.registrations.GetAllRegistrations()
 
 	// Convert to API format
 	type bindingResponse struct {
@@ -223,7 +230,7 @@ func (s *Server) handleRegistrationByAOR(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	bindings := s.registrationMgr.GetAllBindings(aor)
+	bindings := s.registrations.GetAllBindings(aor)
 	if len(bindings) == 0 {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return

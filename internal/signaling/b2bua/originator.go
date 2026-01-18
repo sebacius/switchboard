@@ -11,14 +11,14 @@ import (
 	"github.com/emiago/sipgo/sip"
 	"github.com/google/uuid"
 	psdp "github.com/pion/sdp/v3"
-	"github.com/sebas/switchboard/internal/signaling/transport"
+	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 )
 
 // OriginatorConfig holds originator configuration.
 type OriginatorConfig struct {
 	AdvertiseAddr string
 	Port          int
-	Transport     transport.Transport
+	Transport     mediaclient.Transport
 	Client        *sipgo.Client
 	LocalContact  string
 }
@@ -753,7 +753,7 @@ func (o *Originator) SendBYE(leg Leg) error {
 // destroyMediaSession releases the media session.
 func (o *Originator) destroyMediaSession(ctx context.Context, bleg *legImpl) {
 	if bleg.sessionID != "" {
-		o.cfg.Transport.DestroySession(ctx, bleg.sessionID, transport.TerminateReasonError)
+		o.cfg.Transport.DestroySession(ctx, bleg.sessionID, mediaclient.TerminateReasonError)
 	}
 }
 
