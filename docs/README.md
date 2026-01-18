@@ -15,6 +15,7 @@ This directory contains the complete documentation for the Switchboard VoIP plat
 | [Dialplan](DIALPLAN.md) | Route matching, actions, and variable substitution |
 | [Code Map](CODE_MAP.md) | Codebase navigation and package descriptions |
 | [Development](DEVELOPMENT.md) | Build instructions, testing, and contribution guide |
+| [Deployment](DEPLOYMENT.md) | Docker containers and Kubernetes (k3s) deployment |
 | [Roadmap](ROADMAP.md) | Planned features and future direction |
 
 ## Overview

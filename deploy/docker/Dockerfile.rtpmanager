@@ -1,0 +1,53 @@
+# Switchboard RTP Manager
+# Build: docker build -f deploy/docker/Dockerfile.rtpmanager -t switchboard-rtpmanager .
+
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Copy go mod files first for caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o switchboard-rtpmanager ./cmd/rtpmanager/
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create non-root user
+RUN adduser -D -u 1000 switchboard
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /build/switchboard-rtpmanager /app/
+
+# Default audio directory (mount your audio files here)
+RUN mkdir -p /app/audio
+
+# Switch to non-root user
+USER switchboard
+
+# Expose ports
+# 9090 - gRPC
+# 10000-10100 - RTP ports (dev range)
+EXPOSE 9090/tcp
+
+# Environment defaults
+ENV LOGLEVEL=info
+ENV GRPC_PORT=9090
+ENV GRPC_BIND=0.0.0.0
+ENV RTP_PORT_MIN=10000
+ENV RTP_PORT_MAX=10100
+ENV AUDIO_PATH=/app/audio
+
+ENTRYPOINT ["/app/switchboard-rtpmanager"]

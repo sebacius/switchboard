@@ -1,0 +1,17 @@
+# Kustomization for Switchboard K8s deployment
+# Usage: kubectl apply -k deploy/k8s/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: switchboard
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - rtpmanager.yaml
+  - signaling.yaml
+  - ui.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: switchboard
+  app.kubernetes.io/managed-by: kustomize

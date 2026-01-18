@@ -1,0 +1,9 @@
+# Switchboard Namespace
+# All Switchboard resources live in this namespace for isolation
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: switchboard
+  labels:
+    app.kubernetes.io/name: switchboard
+    app.kubernetes.io/component: system
