@@ -8,10 +8,17 @@ namespace: switchboard
 resources:
   - namespace.yaml
   - configmap.yaml
+  # Infrastructure
+  - postgres.yaml
+  - redis.yaml
+  - nats.yaml
+  # Application
   - rtpmanager.yaml
   - signaling.yaml
   - ui.yaml
 
-commonLabels:
-  app.kubernetes.io/part-of: switchboard
-  app.kubernetes.io/managed-by: kustomize
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: switchboard
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false

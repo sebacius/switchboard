@@ -79,9 +79,9 @@ build: build-linux
 
 build-linux: $(BUILD_DIR)
 	@echo "Building for Linux AMD64..."
-	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/switchboard-signaling-linux ./cmd/signaling/
-	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/switchboard-rtpmanager-linux ./cmd/rtpmanager/
-	@GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/switchboard-ui-linux ./cmd/ui/
+	@GOOS=linux GOARCH=amd64 go build -buildvcs=false -o $(BUILD_DIR)/switchboard-signaling-linux ./cmd/signaling/
+	@GOOS=linux GOARCH=amd64 go build -buildvcs=false -o $(BUILD_DIR)/switchboard-rtpmanager-linux ./cmd/rtpmanager/
+	@GOOS=linux GOARCH=amd64 go build -buildvcs=false -o $(BUILD_DIR)/switchboard-ui-linux ./cmd/ui/
 	@echo "Built in $(BUILD_DIR)/: switchboard-signaling-linux, switchboard-rtpmanager-linux, switchboard-ui-linux"
 
 # Run targets
@@ -122,15 +122,15 @@ clean:
 
 docker-build-signaling:
 	@echo "Building signaling Docker image..."
-	@docker build -f deploy/docker/Dockerfile.signaling -t $(IMAGE_SIGNALING):$(IMAGE_TAG) .
+	@docker build --platform linux/amd64 -f deploy/docker/Dockerfile.signaling -t $(IMAGE_SIGNALING):$(IMAGE_TAG) .
 
 docker-build-rtpmanager:
 	@echo "Building rtpmanager Docker image..."
-	@docker build -f deploy/docker/Dockerfile.rtpmanager -t $(IMAGE_RTPMANAGER):$(IMAGE_TAG) .
+	@docker build --platform linux/amd64 -f deploy/docker/Dockerfile.rtpmanager -t $(IMAGE_RTPMANAGER):$(IMAGE_TAG) .
 
 docker-build-ui:
 	@echo "Building ui Docker image..."
-	@docker build -f deploy/docker/Dockerfile.ui -t $(IMAGE_UI):$(IMAGE_TAG) .
+	@docker build --platform linux/amd64 -f deploy/docker/Dockerfile.ui -t $(IMAGE_UI):$(IMAGE_TAG) .
 
 docker-build: docker-build-signaling docker-build-rtpmanager docker-build-ui
 	@echo "All Docker images built"
@@ -188,7 +188,7 @@ k8s-status:
 
 # Tail logs from all pods
 k8s-logs:
-	@kubectl logs -n switchboard -l app.kubernetes.io/name=switchboard --all-containers -f --prefix
+	@kubectl logs -n switchboard -l app.kubernetes.io/part-of=switchboard --all-containers -f --prefix --max-log-requests=10
 
 # Restart all deployments (useful after image updates)
 k8s-restart:

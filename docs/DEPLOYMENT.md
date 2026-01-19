@@ -90,6 +90,9 @@ docker run -d --name ui \
 | `BIND` | `0.0.0.0` | Bind address |
 | `DIALPLAN_PATH` | `/app/config/dialplan.json` | Dialplan configuration file |
 | `RTPMANAGER_ADDRS` | - | Comma-separated RTP Manager addresses |
+| `DATABASE_URL` | - | PostgreSQL connection string |
+| `REDIS_ADDR` | - | Redis address (host:port) |
+| `NATS_URL` | - | NATS connection URL |
 
 **RTP Manager:**
 | Variable | Default | Description |
@@ -140,10 +143,99 @@ deploy/k8s/
 ├── kustomization.yaml  # Orchestrates all resources
 ├── namespace.yaml      # switchboard namespace
 ├── configmap.yaml      # Dialplan configuration
+# Infrastructure
+├── postgres.yaml       # PostgreSQL database
+├── redis.yaml          # Redis cache
+├── nats.yaml           # NATS messaging
+# Application
 ├── signaling.yaml      # Signaling Deployment + Service
 ├── rtpmanager.yaml     # RTP Manager Deployment + Service
 └── ui.yaml             # UI Deployment + Service
 ```
+
+### Infrastructure Components
+
+The deployment includes three infrastructure services:
+
+#### PostgreSQL
+
+**Purpose**: Persistent storage for accounts, users, CDRs, and dialplan configuration.
+
+| Setting | Value |
+|---------|-------|
+| Image | `postgres:16-alpine` |
+| Storage | 5Gi PVC (local-path) |
+| Port | 5432 |
+| Database | `switchboard` |
+| Schema | `switchboard` |
+
+**Connection string:**
+```
+postgres://switchboard:switchboard-dev-password@postgres:5432/switchboard
+```
+
+**Pre-created tables:**
+- `switchboard.accounts` - Multi-tenant organizations
+- `switchboard.users` - SIP users and extensions
+- `switchboard.registrations` - SIP registration backup
+- `switchboard.dialplan_routes` - Call routing rules
+- `switchboard.cdrs` - Call Detail Records
+
+#### Redis
+
+**Purpose**: Fast caching for SIP registrations and call state.
+
+| Setting | Value |
+|---------|-------|
+| Image | `redis:7-alpine` |
+| Memory limit | 128MB |
+| Eviction | `allkeys-lru` |
+| Persistence | Disabled (dev) |
+| Port | 6379 |
+
+**Connection:**
+```
+redis:6379
+```
+
+**Data structures used:**
+- `reg:{aor}` - HASH for SIP registrations
+- `call:{call_id}` - HASH for active call state
+- `ratelimit:{type}:{id}` - Rate limiting counters
+
+#### NATS
+
+**Purpose**: Event streaming for call events and inter-service messaging.
+
+| Setting | Value |
+|---------|-------|
+| Image | `nats:2.10-alpine` |
+| JetStream | Enabled |
+| Memory store | 256MB |
+| File store | 1GB |
+| Client port | 4222 |
+| Monitor port | 8222 |
+
+**Connection:**
+```
+nats://nats:4222
+```
+
+**Subject hierarchy:**
+```
+switchboard.calls.{call_id}.{event}     # Call lifecycle events
+switchboard.registrations.{aor}.{event} # Registration events
+switchboard.sessions.{id}.{event}       # RTP session events
+switchboard.cdr.raw                     # CDR stream (JetStream)
+```
+
+### Infrastructure Resource Limits
+
+| Service | CPU Request | CPU Limit | Memory Request | Memory Limit |
+|---------|-------------|-----------|----------------|--------------|
+| PostgreSQL | 100m | 500m | 256Mi | 512Mi |
+| Redis | 50m | 200m | 64Mi | 256Mi |
+| NATS | 50m | 500m | 64Mi | 512Mi |
 
 ### Deploying to k3s
 
@@ -186,9 +278,13 @@ Expected output:
 ```
 === Pods ===
 NAME                          READY   STATUS    RESTARTS   AGE
-rtpmanager-xxxxx              1/1     Running   0          1m
-signaling-xxxxx               1/1     Running   0          1m
-ui-xxxxx                      1/1     Running   0          1m
+postgres-0                    1/1     Running   0          1m
+redis-0                       1/1     Running   0          1m
+nats-0                        1/1     Running   0          1m
+rtpmanager-0                  1/1     Running   0          1m
+rtpmanager-1                  1/1     Running   0          1m
+signaling-0                   1/1     Running   0          1m
+ui-0                          1/1     Running   0          1m
 ```
 
 View logs:
@@ -239,9 +335,45 @@ Adjust in the respective YAML files under `spec.template.spec.containers[0].reso
 
 All services have liveness and readiness probes configured:
 
+**Application:**
 - **Signaling**: HTTP GET `/api/v1/health` on port 8080
 - **RTP Manager**: TCP socket on port 9090
 - **UI**: HTTP GET `/health` on port 3000
+
+**Infrastructure:**
+- **PostgreSQL**: `pg_isready -U switchboard`
+- **Redis**: `redis-cli ping`
+- **NATS**: HTTP GET `/healthz` on port 8222
+
+### Scaling RTP Managers
+
+The RTP Manager runs as a StatefulSet, allowing multiple replicas on a single node with unique port ranges:
+
+| Pod | gRPC Port | RTP Ports |
+|-----|-----------|-----------|
+| rtpmanager-0 | 9090 | 10000-10099 |
+| rtpmanager-1 | 9091 | 10100-10199 |
+| rtpmanager-2 | 9092 | 10200-10299 |
+
+**Adjust replica count:**
+```yaml
+# In deploy/k8s/rtpmanager.yaml
+spec:
+  replicas: 2  # Change to desired count
+```
+
+**Update signaling to use all RTP Managers:**
+```yaml
+# In deploy/k8s/signaling.yaml
+- name: RTPMANAGER_ADDRS
+  value: "localhost:9090,localhost:9091,localhost:9092"
+```
+
+The signaling server's transport pool handles round-robin allocation with session affinity.
+
+**For multi-node production:**
+- Run one RTP Manager per node (all use port 9090)
+- Configure signaling with node IPs: `192.168.1.100:9090,192.168.1.101:9090`
 
 ### Audio Files
 

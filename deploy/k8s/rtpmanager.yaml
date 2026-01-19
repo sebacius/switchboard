@@ -1,16 +1,23 @@
-# Switchboard RTP Manager Deployment
+# Switchboard RTP Manager StatefulSet
 # Handles media (RTP streaming, audio playback, SDP generation)
+# Supports multiple replicas with unique port ranges per instance
+#
+# Port allocation (based on pod ordinal):
+#   rtpmanager-0: gRPC 9090, RTP 10000-10099
+#   rtpmanager-1: gRPC 9091, RTP 10100-10199
+#   rtpmanager-2: gRPC 9092, RTP 10200-10299
+#   ...
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: rtpmanager
-  namespace: switchboard
   labels:
     app.kubernetes.io/name: switchboard
     app.kubernetes.io/component: rtpmanager
 spec:
-  replicas: 1
+  serviceName: rtpmanager
+  replicas: 2  # Adjust for desired number of RTP Managers
   selector:
     matchLabels:
       app.kubernetes.io/name: switchboard
@@ -27,25 +34,38 @@ spec:
       containers:
         - name: rtpmanager
           image: switchboard-rtpmanager:latest
-          imagePullPolicy: Never  # Use locally imported images
-          ports:
-            - name: grpc
-              containerPort: 9090
-              protocol: TCP
-            # RTP ports 10000-10100 exposed via hostNetwork
+          imagePullPolicy: Never
+          # Use shell to calculate ports from pod ordinal
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Extract ordinal from pod name (rtpmanager-0 -> 0)
+              ORDINAL=${POD_NAME##*-}
+
+              # Calculate ports based on ordinal
+              export GRPC_PORT=$((9090 + ORDINAL))
+              export RTP_PORT_MIN=$((10000 + ORDINAL * 100))
+              export RTP_PORT_MAX=$((10000 + ORDINAL * 100 + 99))
+
+              echo "Starting RTP Manager $ORDINAL"
+              echo "  gRPC port: $GRPC_PORT"
+              echo "  RTP range: $RTP_PORT_MIN - $RTP_PORT_MAX"
+
+              exec /app/switchboard-rtpmanager
           env:
             - name: LOGLEVEL
               value: "debug"
-            - name: GRPC_PORT
-              value: "9090"
             - name: GRPC_BIND
               value: "0.0.0.0"
-            - name: RTP_PORT_MIN
-              value: "10000"
-            - name: RTP_PORT_MAX
-              value: "10100"
             - name: AUDIO_PATH
               value: "/app/audio"
+            # Pod name via Downward API (hostNetwork breaks HOSTNAME)
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # GRPC_PORT, RTP_PORT_MIN, RTP_PORT_MAX set by command script
             # ADVERTISE will be auto-detected from host network
           volumeMounts:
             - name: audio-files
@@ -58,15 +78,22 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "500m"
+          # Health probes - gRPC doesn't respond to HTTP, just check process is running
           livenessProbe:
-            tcpSocket:
-              port: 9090
-            initialDelaySeconds: 5
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "pgrep switchboard-rtpmanager"
+            initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
-            tcpSocket:
-              port: 9090
-            initialDelaySeconds: 2
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "pgrep switchboard-rtpmanager"
+            initialDelaySeconds: 5
             periodSeconds: 5
       volumes:
         - name: audio-files
@@ -74,18 +101,18 @@ spec:
             path: /opt/switchboard/audio
             type: DirectoryOrCreate
 ---
-# Service for internal gRPC communication
-# Note: With hostNetwork, signaling connects directly to host IP:9090
+# Headless service for StatefulSet DNS
+# Provides: rtpmanager-0.rtpmanager.switchboard.svc.cluster.local
 apiVersion: v1
 kind: Service
 metadata:
   name: rtpmanager
-  namespace: switchboard
   labels:
     app.kubernetes.io/name: switchboard
     app.kubernetes.io/component: rtpmanager
 spec:
   type: ClusterIP
+  clusterIP: None  # Headless service
   selector:
     app.kubernetes.io/name: switchboard
     app.kubernetes.io/component: rtpmanager

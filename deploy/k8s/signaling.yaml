@@ -1,15 +1,15 @@
-# Switchboard Signaling Server Deployment
+# Switchboard Signaling Server
 # Handles SIP protocol (INVITE, BYE, REGISTER)
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: signaling
-  namespace: switchboard
   labels:
     app.kubernetes.io/name: switchboard
     app.kubernetes.io/component: signaling
 spec:
+  serviceName: signaling
   replicas: 1
   selector:
     matchLabels:
@@ -47,9 +47,10 @@ spec:
               value: "0.0.0.0"
             - name: DIALPLAN_PATH
               value: "/app/config/dialplan.json"
-            # Connect to RTP Manager via localhost (both use hostNetwork)
+            # Connect to RTP Managers via localhost (all use hostNetwork)
+            # Port = 9090 + ordinal (rtpmanager-0=9090, rtpmanager-1=9091)
             - name: RTPMANAGER_ADDRS
-              value: "localhost:9090"
+              value: "localhost:9090,localhost:9091"
             # ADVERTISE will be auto-detected from host network
           volumeMounts:
             - name: dialplan-config
