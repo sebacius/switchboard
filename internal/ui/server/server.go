@@ -85,9 +85,9 @@ func (s *Server) Stop() error {
 }
 
 // handleHealth returns the health status of the UI server
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"status":"ok","uptime":%d}`, int64(time.Since(s.startTime).Seconds()))
+	_, _ = fmt.Fprintf(w, `{"status":"ok","uptime":%d}`, int64(time.Since(s.startTime).Seconds()))
 }
 
 // handleDashboard renders the main admin dashboard

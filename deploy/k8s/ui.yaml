@@ -1,15 +1,15 @@
-# Switchboard UI Server Deployment
+# Switchboard UI Server
 # Admin dashboard that aggregates data from signaling servers
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: ui
-  namespace: switchboard
   labels:
     app.kubernetes.io/name: switchboard
     app.kubernetes.io/component: ui
 spec:
+  serviceName: ui
   replicas: 1
   selector:
     matchLabels:

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
-
 	// NOTE: Uncomment when adding NATS dependency
 	// "encoding/json"
 	// "sync"
@@ -48,19 +47,19 @@ type NATSConfig struct {
 	// Connection timeout
 	ConnectTimeout time.Duration
 	// Reconnect settings
-	MaxReconnects     int
-	ReconnectWait     time.Duration
-	ReconnectJitter   time.Duration
+	MaxReconnects   int
+	ReconnectWait   time.Duration
+	ReconnectJitter time.Duration
 	// TLS settings
 	TLSCertFile string
 	TLSKeyFile  string
 	TLSCAFile   string
 	// Auth
-	NKeyFile   string
-	CredsFile  string
-	Token      string
-	User       string
-	Password   string
+	NKeyFile  string
+	CredsFile string
+	Token     string
+	User      string
+	Password  string
 }
 
 // DefaultNATSConfig returns sensible defaults for VoIP workloads.
@@ -110,15 +109,15 @@ func ConsumerConfigs() map[string]map[string]interface{} {
 	return map[string]map[string]interface{}{
 		// CDR processor - needs all events, durable, exactly-once
 		"cdr-processor": {
-			"durable_name":      "cdr-processor",
-			"filter_subject":    "switchboard.calls.>",
-			"ack_policy":        "explicit",
-			"ack_wait":          30 * time.Second,
-			"max_deliver":       5, // Retry failed processing
-			"max_ack_pending":   1000,
-			"deliver_policy":    "all",
-			"replay_policy":     "instant",
-			"sample_freq":       "100%",
+			"durable_name":    "cdr-processor",
+			"filter_subject":  "switchboard.calls.>",
+			"ack_policy":      "explicit",
+			"ack_wait":        30 * time.Second,
+			"max_deliver":     5, // Retry failed processing
+			"max_ack_pending": 1000,
+			"deliver_policy":  "all",
+			"replay_policy":   "instant",
+			"sample_freq":     "100%",
 		},
 		// Real-time dashboard - ephemeral, latest only
 		"dashboard": {

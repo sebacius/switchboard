@@ -44,12 +44,8 @@ func Load() *Config {
 
 	// Override with environment variables if set
 	if port := os.Getenv("UI_PORT"); port != "" {
-		var p int
-		if _, err := os.Stat(port); err == nil {
-			p, _ = stringToInt(port)
-			if p > 0 {
-				cfg.Port = p
-			}
+		if p := stringToInt(port); p > 0 {
+			cfg.Port = p
 		}
 	}
 	if bind := os.Getenv("UI_BIND"); bind != "" {
@@ -111,13 +107,13 @@ func parseBackends(s string) []Backend {
 	return backends
 }
 
-func stringToInt(s string) (int, error) {
+func stringToInt(s string) int {
 	var n int
 	for _, c := range s {
 		if c < '0' || c > '9' {
-			return 0, nil
+			return 0
 		}
 		n = n*10 + int(c-'0')
 	}
-	return n, nil
+	return n
 }

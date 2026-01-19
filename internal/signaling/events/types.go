@@ -28,16 +28,16 @@ const (
 type EndReason string
 
 const (
-	EndReasonNormal      EndReason = "normal"        // Normal hangup (BYE)
-	EndReasonBusy        EndReason = "busy"          // 486 Busy Here
-	EndReasonNoAnswer    EndReason = "no_answer"     // Timeout waiting for answer
-	EndReasonCancelled   EndReason = "cancelled"     // CANCEL from originator
-	EndReasonRejected    EndReason = "rejected"      // 4xx/5xx/6xx from destination
-	EndReasonUnavailable EndReason = "unavailable"   // Destination unreachable
-	EndReasonError       EndReason = "error"         // Internal error
-	EndReasonTimeout     EndReason = "timeout"       // ACK timeout, etc.
-	EndReasonTransfer    EndReason = "transfer"      // REFER transfer
-	EndReasonMediaError  EndReason = "media_error"   // RTP/media failure
+	EndReasonNormal      EndReason = "normal"      // Normal hangup (BYE)
+	EndReasonBusy        EndReason = "busy"        // 486 Busy Here
+	EndReasonNoAnswer    EndReason = "no_answer"   // Timeout waiting for answer
+	EndReasonCanceled    EndReason = "canceled"    // CANCEL from originator
+	EndReasonRejected    EndReason = "rejected"    // 4xx/5xx/6xx from destination
+	EndReasonUnavailable EndReason = "unavailable" // Destination unreachable
+	EndReasonError       EndReason = "error"       // Internal error
+	EndReasonTimeout     EndReason = "timeout"     // ACK timeout, etc.
+	EndReasonTransfer    EndReason = "transfer"    // REFER transfer
+	EndReasonMediaError  EndReason = "media_error" // RTP/media failure
 )
 
 // LegRole identifies which leg of a B2BUA call
@@ -90,9 +90,9 @@ type BaseEvent struct {
 	NodeID string `json:"node_id,omitempty"`
 }
 
-func (e *BaseEvent) Type() EventType    { return e.EventType }
+func (e *BaseEvent) Type() EventType      { return e.EventType }
 func (e *BaseEvent) Timestamp() time.Time { return e.EventTime }
-func (e *BaseEvent) CallID() string     { return e.CallUUID }
+func (e *BaseEvent) CallID() string       { return e.CallUUID }
 
 // Subject returns the NATS subject for routing
 // Format: switchboard.calls.<call_uuid>.<event_type_suffix>
@@ -117,9 +117,9 @@ type MediaInfo struct {
 	LocalPort     int      `json:"local_port"`
 	RemoteAddr    string   `json:"remote_addr,omitempty"`
 	RemotePort    int      `json:"remote_port,omitempty"`
-	Codecs        []string `json:"codecs,omitempty"`        // Offered/negotiated codecs
+	Codecs        []string `json:"codecs,omitempty"`         // Offered/negotiated codecs
 	SelectedCodec string   `json:"selected_codec,omitempty"` // Final codec
-	SSRC          uint32   `json:"ssrc,omitempty"`          // RTP SSRC
+	SSRC          uint32   `json:"ssrc,omitempty"`           // RTP SSRC
 	RTPSessionID  string   `json:"rtp_session_id,omitempty"` // RTP Manager session ID
 }
 
@@ -130,11 +130,11 @@ type CallReceivedEvent struct {
 	From         Endpoint  `json:"from"`
 	To           Endpoint  `json:"to"`
 	RequestURI   string    `json:"request_uri"`
-	SourceIP     string    `json:"source_ip"`      // Where INVITE came from
+	SourceIP     string    `json:"source_ip"` // Where INVITE came from
 	SourcePort   int       `json:"source_port"`
 	DialplanName string    `json:"dialplan_name,omitempty"` // Matched dialplan
 	DialplanID   string    `json:"dialplan_id,omitempty"`
-	UserAgent    string    `json:"user_agent,omitempty"`    // User-Agent header
+	UserAgent    string    `json:"user_agent,omitempty"` // User-Agent header
 	// SDP offer info (if present)
 	OfferedCodecs []string `json:"offered_codecs,omitempty"`
 }
@@ -143,10 +143,10 @@ type CallReceivedEvent struct {
 type CallDialingEvent struct {
 	BaseEvent
 	// Destination being dialed
-	Destination   Endpoint `json:"destination"`
-	DialString    string   `json:"dial_string"`    // Original dial string
-	DialTimeout   int      `json:"dial_timeout"`   // Timeout in seconds
-	CallerID      Endpoint `json:"caller_id"`      // Outbound caller ID
+	Destination Endpoint `json:"destination"`
+	DialString  string   `json:"dial_string"`  // Original dial string
+	DialTimeout int      `json:"dial_timeout"` // Timeout in seconds
+	CallerID    Endpoint `json:"caller_id"`    // Outbound caller ID
 	// Which leg A this is bridging to
 	LinkedCallUUID string `json:"linked_call_uuid,omitempty"`
 }
@@ -157,7 +157,7 @@ type CallRingingEvent struct {
 	// SIP response code (180 or 183)
 	ResponseCode int `json:"response_code"`
 	// Early media present?
-	EarlyMedia bool      `json:"early_media"`
+	EarlyMedia bool       `json:"early_media"`
 	MediaInfo  *MediaInfo `json:"media_info,omitempty"`
 }
 
@@ -195,10 +195,10 @@ type CallEndedEvent struct {
 	// Who initiated the hangup
 	HangupSource string `json:"hangup_source,omitempty"` // "local", "remote", "system"
 	// CDR-ready duration fields (in milliseconds)
-	SetupDurationMs int64 `json:"setup_duration_ms"`       // INVITE to 200 OK
-	RingDurationMs  int64 `json:"ring_duration_ms"`        // First ring to answer
-	TalkDurationMs  int64 `json:"talk_duration_ms"`        // Answer to hangup
-	TotalDurationMs int64 `json:"total_duration_ms"`       // INVITE to BYE
+	SetupDurationMs int64 `json:"setup_duration_ms"` // INVITE to 200 OK
+	RingDurationMs  int64 `json:"ring_duration_ms"`  // First ring to answer
+	TalkDurationMs  int64 `json:"talk_duration_ms"`  // Answer to hangup
+	TotalDurationMs int64 `json:"total_duration_ms"` // INVITE to BYE
 	// Billing/CDR fields
 	BillableDurationMs int64  `json:"billable_duration_ms"` // Talk time for billing
 	DispositionCode    string `json:"disposition_code"`     // ANSWERED, NO_ANSWER, BUSY, etc.

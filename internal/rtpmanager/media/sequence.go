@@ -35,22 +35,13 @@ func (s *SequenceTracker) Update(seq uint16) (extended uint32, lost int) {
 	udiff := seq - s.lastSeq
 	diff := int16(udiff)
 
-	if diff > 0 {
-		// Forward jump - may have lost packets
-		if diff > 1 {
-			lost = int(diff) - 1
-			s.lost += uint64(lost)
-		}
-	} else if diff < 0 && udiff > 0x8000 {
-		// Large forward jump in uint16 space but negative in int16 space
-		// means sequence wrapped around (rollover from 65535 to 0)
-		// e.g., lastSeq=65530, seq=5: udiff=11, diff=11 (positive, handled above)
-		// e.g., lastSeq=5, seq=65530: udiff=65525, diff=-11 (this branch)
-		// This is actually a late/reordered packet from before rollover
-		// Don't increment cycles for reordered packets
-	} else if diff < 0 {
-		// Small negative diff means out-of-order packet - no action needed
+	if diff > 0 && diff > 1 {
+		// Forward jump - lost packets
+		lost = int(diff) - 1
+		s.lost += uint64(lost)
 	}
+	// Note: diff < 0 means out-of-order or wrapped packet - no action needed
+	// Large udiff (>0x8000) with negative diff indicates late packet from before rollover
 
 	// Check for rollover: if lastSeq was high and new seq is low
 	if s.lastSeq > 0xF000 && seq < 0x1000 {

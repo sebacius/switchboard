@@ -39,7 +39,7 @@ func (e *ExecutionError) Unwrap() error {
 // DialError provides details when dial fails.
 type DialError struct {
 	Target    string
-	SIPCode   int    // 0 if not a SIP error
+	SIPCode   int // 0 if not a SIP error
 	SIPReason string
 	Cause     error
 }

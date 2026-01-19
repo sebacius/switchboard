@@ -126,7 +126,7 @@ func (s *LocalService) streamAudio(ctx context.Context, req PlayRequest, codecCf
 	if err != nil {
 		return fmt.Errorf("failed to bind to local RTP port %d: %w", req.LocalPort, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Remote client's RTP endpoint
 	clientAddr := &net.UDPAddr{
@@ -156,7 +156,7 @@ func (s *LocalService) streamAudio(ctx context.Context, req PlayRequest, codecCf
 		// Check for cancellation (BYE received or Stop() called)
 		select {
 		case <-ctx.Done():
-			slog.Info("[Media] Playback cancelled", "call_id", req.CallID, "frames_sent", framesSent)
+			slog.Info("[Media] Playback canceled", "call_id", req.CallID, "frames_sent", framesSent)
 			return nil
 		default:
 		}

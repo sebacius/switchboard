@@ -39,7 +39,7 @@ func main() {
 		slog.Error("Failed to create signaling server", "error", err)
 		os.Exit(1)
 	}
-	defer swboard.Close()
+	defer func() { _ = swboard.Close() }()
 
 	run(swboard, cfg)
 }

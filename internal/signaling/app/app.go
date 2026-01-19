@@ -11,8 +11,8 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/api"
 	"github.com/sebas/switchboard/internal/signaling/b2bua"
 	"github.com/sebas/switchboard/internal/signaling/config"
-	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/dialog"
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 	"github.com/sebas/switchboard/internal/signaling/routing"
@@ -43,12 +43,12 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	}
 	uas, err := sipgo.NewServer(ua)
 	if err != nil {
-		ua.Close()
+		_ = ua.Close()
 		return nil, fmt.Errorf("failed to create server: %w", err)
 	}
 	uac, err := sipgo.NewClient(ua)
 	if err != nil {
-		ua.Close()
+		_ = ua.Close()
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
 
@@ -90,7 +90,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	}
 	mediaTransport, err := mediaclient.NewPool(poolCfg)
 	if err != nil {
-		ua.Close()
+		_ = ua.Close()
 		locStore.Close()
 		return nil, fmt.Errorf("failed to create RTP Manager pool: %w", err)
 	}
@@ -108,9 +108,9 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	}
 	dp, err := dialplan.New(dialplanPath, slog.Default())
 	if err != nil {
-		ua.Close()
+		_ = ua.Close()
 		locStore.Close()
-		mediaTransport.Close()
+		_ = mediaTransport.Close()
 		return nil, fmt.Errorf("failed to load dialplan: %w", err)
 	}
 	slog.Info("Dialplan loaded", "path", dialplanPath, "routes", dp.RouteCount())
@@ -246,7 +246,7 @@ func (p *SwitchBoard) Close() error {
 	dialogs := p.dialogMgr.List()
 	for _, dlg := range dialogs {
 		if !dlg.IsTerminated() {
-			p.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
+			_ = p.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
 		}
 	}
 
@@ -257,7 +257,7 @@ func (p *SwitchBoard) Close() error {
 
 	// Close transport
 	if p.transport != nil {
-		p.transport.Close()
+		_ = p.transport.Close()
 	}
 
 	// Close location store
@@ -266,7 +266,7 @@ func (p *SwitchBoard) Close() error {
 	}
 
 	if p.apiServer != nil {
-		p.apiServer.Stop()
+		_ = p.apiServer.Stop()
 	}
 	if p.ua != nil {
 		return p.ua.Close()

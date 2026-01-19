@@ -53,10 +53,10 @@ type OriginateResult struct {
 
 // Originator handles outbound call initiation.
 type Originator struct {
-	cfg   OriginatorConfig
-	mu    sync.RWMutex
-	legs  map[string]*legImpl // Indexed by B-leg Call-ID
-	aToB  map[string]string   // A-leg Call-ID -> B-leg Call-ID mapping
+	cfg  OriginatorConfig
+	mu   sync.RWMutex
+	legs map[string]*legImpl // Indexed by B-leg Call-ID
+	aToB map[string]string   // A-leg Call-ID -> B-leg Call-ID mapping
 }
 
 // NewOriginator creates a new Originator.
@@ -148,7 +148,7 @@ func (o *Originator) Originate(ctx context.Context, req OriginateRequest) (*Orig
 	var originateSuccess bool
 	defer func() {
 		if !originateSuccess {
-			// Use background context since the original ctx may be cancelled
+			// Use background context since the original ctx may be canceled
 			o.destroyMediaSession(context.Background(), bleg)
 		}
 	}()
@@ -206,7 +206,7 @@ func (o *Originator) buildINVITE(bleg *legImpl, targetURI, localTag string, req 
 
 	// To header - their identity (no tag yet)
 	var toURI sip.Uri
-	sip.ParseUri(targetURI, &toURI)
+	_ = sip.ParseUri(targetURI, &toURI) // Error already handled during requestURI parsing above
 	toHdr := &sip.ToHeader{
 		Address: toURI,
 		Params:  sip.NewParams(),
@@ -247,9 +247,9 @@ func (o *Originator) buildINVITE(bleg *legImpl, targetURI, localTag string, req 
 }
 
 // executeINVITE sends the INVITE and handles the complete response flow.
-func (o *Originator) executeINVITE(ctx context.Context, bleg *legImpl, invite *sip.Request, localTag string, timeout time.Duration) *OriginateResult {
+func (o *Originator) executeINVITE(ctx context.Context, bleg *legImpl, invite *sip.Request, _ string, timeout time.Duration) *OriginateResult {
 	// Transition to Ringing state (we're about to send INVITE)
-	bleg.TransitionTo(LegStateCreated)
+	_ = bleg.TransitionTo(LegStateCreated)
 
 	// Create timeout context
 	dialCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -258,7 +258,7 @@ func (o *Originator) executeINVITE(ctx context.Context, bleg *legImpl, invite *s
 	// Send INVITE via sipgo client transaction
 	tx, err := o.cfg.Client.TransactionRequest(dialCtx, invite)
 	if err != nil {
-		bleg.TransitionTo(LegStateFailed)
+		_ = bleg.TransitionTo(LegStateFailed)
 		bleg.SetSIPResponse(503, "Transaction failed")
 		return &OriginateResult{
 			Success:   false,
@@ -280,8 +280,8 @@ func (o *Originator) executeINVITE(ctx context.Context, bleg *legImpl, invite *s
 			// Timeout or cancellation
 			if ctx.Err() != nil {
 				// Parent context canceled (A leg hung up)
-				o.sendCANCEL(bleg, invite, tx)
-				bleg.TransitionTo(LegStateFailed)
+				_ = o.sendCANCEL(bleg, invite, tx)
+				_ = bleg.TransitionTo(LegStateFailed)
 				bleg.SetTerminationCause(TerminationCauseCancel)
 				return &OriginateResult{
 					Success:   false,
@@ -291,8 +291,8 @@ func (o *Originator) executeINVITE(ctx context.Context, bleg *legImpl, invite *s
 				}
 			}
 			// Dial timeout
-			o.sendCANCEL(bleg, invite, tx)
-			bleg.TransitionTo(LegStateFailed)
+			_ = o.sendCANCEL(bleg, invite, tx)
+			_ = bleg.TransitionTo(LegStateFailed)
 			bleg.SetTerminationCause(TerminationCauseTimeout)
 			return &OriginateResult{
 				Success:   false,
@@ -304,7 +304,7 @@ func (o *Originator) executeINVITE(ctx context.Context, bleg *legImpl, invite *s
 		case resp := <-tx.Responses():
 			if resp == nil {
 				// Transaction ended without response
-				bleg.TransitionTo(LegStateFailed)
+				_ = bleg.TransitionTo(LegStateFailed)
 				return &OriginateResult{
 					Success:   false,
 					SIPCode:   408,
@@ -364,13 +364,13 @@ func (o *Originator) handleResponse(ctx context.Context, bleg *legImpl, resp *si
 
 	case statusCode == 180 || statusCode == 181:
 		// 180 Ringing / 181 Call Being Forwarded
-		bleg.TransitionTo(LegStateRinging)
+		_ = bleg.TransitionTo(LegStateRinging)
 		slog.Info("[Originate] Ringing", "bleg_call_id", bleg.callID)
 		return nil
 
 	case statusCode == 183:
 		// 183 Session Progress - early media
-		bleg.TransitionTo(LegStateEarlyMedia)
+		_ = bleg.TransitionTo(LegStateEarlyMedia)
 
 		// Extract SDP for early media
 		if resp.Body() != nil {
@@ -390,7 +390,7 @@ func (o *Originator) handleResponse(ctx context.Context, bleg *legImpl, resp *si
 
 	case statusCode >= 300 && statusCode < 400:
 		// 3xx Redirect - treat as failure for now
-		bleg.TransitionTo(LegStateFailed)
+		_ = bleg.TransitionTo(LegStateFailed)
 		bleg.SetSIPResponse(statusCode, resp.Reason)
 		bleg.SetTerminationCause(TerminationCauseRejected)
 		return &OriginateResult{
@@ -455,7 +455,7 @@ func (o *Originator) handle2xx(ctx context.Context, bleg *legImpl, resp *sip.Res
 		// Still mark as answered - ACK failure doesn't negate the 200 OK
 	}
 
-	bleg.TransitionTo(LegStateAnswered)
+	_ = bleg.TransitionTo(LegStateAnswered)
 
 	slog.Info("[Originate] Call answered",
 		"bleg_call_id", bleg.callID,
@@ -473,7 +473,7 @@ func (o *Originator) handle2xx(ctx context.Context, bleg *legImpl, resp *sip.Res
 // handleFailure processes a failure response.
 func (o *Originator) handleFailure(bleg *legImpl, resp *sip.Response) *OriginateResult {
 	bleg.SetSIPResponse(int(resp.StatusCode), resp.Reason)
-	bleg.TransitionTo(LegStateFailed)
+	_ = bleg.TransitionTo(LegStateFailed)
 	bleg.SetTerminationCause(TerminationCauseRejected)
 
 	slog.Info("[Originate] Call rejected",
@@ -493,7 +493,7 @@ func (o *Originator) handleFailure(bleg *legImpl, resp *sip.Response) *Originate
 // Per RFC 3261 Section 13.2.2.4, ACK for 2xx is a new request (not part of INVITE transaction).
 // The Request-URI MUST be set from the Contact header of the 2xx response.
 // Per RFC 3261 Section 17.1.1.3, ACK for 2xx is NOT a transaction - it's sent directly via transport.
-func (o *Originator) sendACK(bleg *legImpl, resp *sip.Response, invite *sip.Request, tx sip.ClientTransaction) error {
+func (o *Originator) sendACK(bleg *legImpl, resp *sip.Response, invite *sip.Request, _ sip.ClientTransaction) error {
 	// Per RFC 3261 Section 13.2.2.4: The Request-URI of the ACK MUST be set to
 	// the remote target URI (Contact header from the 2xx response).
 	requestURI := invite.Recipient
@@ -539,7 +539,7 @@ func (o *Originator) sendACK(bleg *legImpl, resp *sip.Response, invite *sip.Requ
 			if received, ok := via.Params.Get("received"); ok {
 				rport := via.Port
 				if rportStr, ok := via.Params.Get("rport"); ok {
-					fmt.Sscanf(rportStr, "%d", &rport)
+					_, _ = fmt.Sscanf(rportStr, "%d", &rport)
 				}
 				destAddr = fmt.Sprintf("%s:%d", received, rport)
 			} else {
@@ -589,8 +589,8 @@ func (o *Originator) sendACK(bleg *legImpl, resp *sip.Response, invite *sip.Requ
 }
 
 // sendCANCEL sends a CANCEL for an in-progress INVITE.
-func (o *Originator) sendCANCEL(bleg *legImpl, invite *sip.Request, tx sip.ClientTransaction) error {
-	bleg.TransitionTo(LegStateFailed)
+func (o *Originator) sendCANCEL(bleg *legImpl, invite *sip.Request, _ sip.ClientTransaction) error {
+	_ = bleg.TransitionTo(LegStateFailed)
 
 	// Build CANCEL from original INVITE
 	cancelReq := sip.NewRequest(sip.CANCEL, invite.Recipient)
@@ -753,7 +753,7 @@ func (o *Originator) SendBYE(leg Leg) error {
 // destroyMediaSession releases the media session.
 func (o *Originator) destroyMediaSession(ctx context.Context, bleg *legImpl) {
 	if bleg.sessionID != "" {
-		o.cfg.Transport.DestroySession(ctx, bleg.sessionID, mediaclient.TerminateReasonError)
+		_ = o.cfg.Transport.DestroySession(ctx, bleg.sessionID, mediaclient.TerminateReasonError)
 	}
 }
 
@@ -859,7 +859,7 @@ func (o *Originator) HandleIncomingBYE(req *sip.Request, tx sip.ServerTransactio
 	}
 
 	// Terminate the leg - this will trigger the cleanup callback
-	bleg.Hangup(context.Background(), TerminationCauseRemoteBYE)
+	_ = bleg.Hangup(context.Background(), TerminationCauseRemoteBYE)
 
 	return true
 }

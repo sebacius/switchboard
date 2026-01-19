@@ -148,7 +148,7 @@ func (s *callService) Dial(ctx context.Context, target string, timeout time.Dura
 	leg := origResult.Leg
 	if err := leg.WaitForState(dialCtx, LegStateAnswered); err != nil {
 		// Clean up on failure
-		leg.Hangup(context.Background(), TerminationCauseError)
+		_ = leg.Hangup(context.Background(), TerminationCauseError)
 		return nil, &DialError{
 			Target:      target,
 			ResolvedURI: result.PrimaryContact().URI,
@@ -189,13 +189,13 @@ func (s *callService) DialAndBridge(ctx context.Context, legA Leg, target string
 	// Step 2: Create bridge
 	bridge, err := s.CreateBridge(legA, legB, WithAutoHangup(true))
 	if err != nil {
-		legB.Hangup(ctx, TerminationCauseError)
+		_ = legB.Hangup(ctx, TerminationCauseError)
 		return nil, err
 	}
 
 	// Step 3: Start bridge
 	if err := bridge.Start(ctx); err != nil {
-		legB.Hangup(ctx, TerminationCauseError)
+		_ = legB.Hangup(ctx, TerminationCauseError)
 		return nil, err
 	}
 
@@ -215,7 +215,7 @@ func (s *callService) DialAndBridge(ctx context.Context, legA Leg, target string
 	_, err = bridge.WaitForTermination(bridgeCtx)
 	if err != nil && bridgeCtx.Err() != nil {
 		// A-leg context was canceled (A-leg hung up or dialplan ended)
-		bridge.Stop(true)
+		_ = bridge.Stop(true)
 	}
 
 	slog.Info("[CallService] Bridge terminated",

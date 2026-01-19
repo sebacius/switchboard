@@ -1,0 +1,269 @@
+# PostgreSQL StatefulSet for Switchboard
+# Single-node development deployment
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credentials
+  labels:
+    app.kubernetes.io/name: switchboard
+    app.kubernetes.io/component: postgres
+type: Opaque
+stringData:
+  POSTGRES_USER: "switchboard"
+  POSTGRES_PASSWORD: "switchboard-dev-password"
+  POSTGRES_DB: "switchboard"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  labels:
+    app.kubernetes.io/name: switchboard
+    app.kubernetes.io/component: postgres
+data:
+  init.sql: |
+    -- Enable required extensions
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+    -- Create schema for VoIP data
+    CREATE SCHEMA IF NOT EXISTS switchboard;
+
+    -- Accounts table (tenants/organizations)
+    CREATE TABLE IF NOT EXISTS switchboard.accounts (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        name VARCHAR(255) NOT NULL,
+        domain VARCHAR(255) UNIQUE NOT NULL,
+        enabled BOOLEAN DEFAULT true,
+        max_concurrent_calls INTEGER DEFAULT 10,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    -- Users/Extensions table
+    CREATE TABLE IF NOT EXISTS switchboard.users (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        account_id UUID NOT NULL REFERENCES switchboard.accounts(id) ON DELETE CASCADE,
+        username VARCHAR(64) NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        display_name VARCHAR(255),
+        extension VARCHAR(16),
+        enabled BOOLEAN DEFAULT true,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(account_id, username),
+        UNIQUE(account_id, extension)
+    );
+    CREATE INDEX idx_users_username ON switchboard.users(username);
+    CREATE INDEX idx_users_extension ON switchboard.users(account_id, extension);
+
+    -- SIP Registrations table (persistent backup of Redis cache)
+    CREATE TABLE IF NOT EXISTS switchboard.registrations (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID REFERENCES switchboard.users(id) ON DELETE CASCADE,
+        aor VARCHAR(255) NOT NULL,
+        contact VARCHAR(512) NOT NULL,
+        user_agent VARCHAR(255),
+        source_ip INET,
+        source_port INTEGER,
+        expires_at TIMESTAMPTZ NOT NULL,
+        registered_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(aor, contact)
+    );
+    CREATE INDEX idx_registrations_aor ON switchboard.registrations(aor);
+    CREATE INDEX idx_registrations_expires ON switchboard.registrations(expires_at);
+
+    -- Dialplan Routes table
+    CREATE TABLE IF NOT EXISTS switchboard.dialplan_routes (
+        id VARCHAR(64) PRIMARY KEY,
+        account_id UUID REFERENCES switchboard.accounts(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        pattern VARCHAR(64) NOT NULL,
+        priority INTEGER DEFAULT 100,
+        enabled BOOLEAN DEFAULT true,
+        actions JSONB NOT NULL,
+        metadata JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX idx_dialplan_routes_pattern ON switchboard.dialplan_routes(pattern);
+    CREATE INDEX idx_dialplan_routes_priority ON switchboard.dialplan_routes(priority);
+
+    -- Call Detail Records (CDRs)
+    CREATE TABLE IF NOT EXISTS switchboard.cdrs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        call_id VARCHAR(255) NOT NULL UNIQUE,
+        account_id UUID REFERENCES switchboard.accounts(id),
+
+        -- Caller information
+        caller_user_id UUID REFERENCES switchboard.users(id),
+        caller_number VARCHAR(64),
+        caller_name VARCHAR(255),
+        caller_ip INET,
+
+        -- Callee information
+        callee_user_id UUID REFERENCES switchboard.users(id),
+        callee_number VARCHAR(64),
+        callee_name VARCHAR(255),
+
+        -- Call timing
+        invite_time TIMESTAMPTZ NOT NULL,
+        ring_time TIMESTAMPTZ,
+        answer_time TIMESTAMPTZ,
+        end_time TIMESTAMPTZ,
+        duration_seconds INTEGER DEFAULT 0,
+        ring_duration_seconds INTEGER DEFAULT 0,
+
+        -- Call disposition
+        disposition VARCHAR(32) NOT NULL,
+        hangup_cause VARCHAR(64),
+        hangup_by VARCHAR(16),
+
+        -- Quality metrics
+        rtp_packets_sent BIGINT,
+        rtp_packets_recv BIGINT,
+        rtp_packets_lost BIGINT,
+        rtp_jitter_ms REAL,
+        mos_score REAL,
+
+        -- Routing information
+        route_id VARCHAR(64),
+        signaling_server VARCHAR(255),
+        rtp_manager VARCHAR(255),
+
+        -- Flexible metadata
+        metadata JSONB,
+
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
+    CREATE INDEX idx_cdrs_call_id ON switchboard.cdrs(call_id);
+    CREATE INDEX idx_cdrs_account_time ON switchboard.cdrs(account_id, invite_time DESC);
+    CREATE INDEX idx_cdrs_caller ON switchboard.cdrs(caller_number, invite_time DESC);
+    CREATE INDEX idx_cdrs_callee ON switchboard.cdrs(callee_number, invite_time DESC);
+    CREATE INDEX idx_cdrs_time ON switchboard.cdrs(invite_time DESC);
+
+    -- Insert default account for development
+    INSERT INTO switchboard.accounts (id, name, domain, enabled, max_concurrent_calls)
+    VALUES ('00000000-0000-0000-0000-000000000001', 'Default Account', 'switchboard.local', true, 100)
+    ON CONFLICT DO NOTHING;
+
+    -- Function to auto-update updated_at timestamp
+    CREATE OR REPLACE FUNCTION switchboard.update_updated_at()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        NEW.updated_at = NOW();
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    -- Apply triggers
+    CREATE TRIGGER accounts_updated_at BEFORE UPDATE ON switchboard.accounts
+        FOR EACH ROW EXECUTE FUNCTION switchboard.update_updated_at();
+    CREATE TRIGGER users_updated_at BEFORE UPDATE ON switchboard.users
+        FOR EACH ROW EXECUTE FUNCTION switchboard.update_updated_at();
+    CREATE TRIGGER dialplan_routes_updated_at BEFORE UPDATE ON switchboard.dialplan_routes
+        FOR EACH ROW EXECUTE FUNCTION switchboard.update_updated_at();
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  labels:
+    app.kubernetes.io/name: switchboard
+    app.kubernetes.io/component: postgres
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: local-path
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: switchboard
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: switchboard
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: switchboard
+        app.kubernetes.io/component: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: postgres-credentials
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - switchboard
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - switchboard
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: postgres-data
+        - name: init-scripts
+          configMap:
+            name: postgres-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app.kubernetes.io/name: switchboard
+    app.kubernetes.io/component: postgres
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: switchboard
+    app.kubernetes.io/component: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP

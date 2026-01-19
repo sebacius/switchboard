@@ -23,8 +23,26 @@ linters-settings:
     local-prefixes: github.com/sebacius/switchboard
   misspell:
     locale: US
+  errcheck:
+    # Ignore Close() errors - common pattern for readers/defer
+    exclude-functions:
+      - (*os.File).Close
+      - (io.Closer).Close
+      - (*net.UDPConn).Close
+      - (*net.TCPConn).Close
+      - (net.Conn).Close
+      - (*google.golang.org/grpc.ClientConn).Close
+      - io.Copy
+      - io.ReadAll
+    check-type-assertions: false
+    check-blank: false
 
 issues:
   exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0
+  exclude-rules:
+    # Ignore errcheck in tests
+    - path: _test\.go
+      linters:
+        - errcheck

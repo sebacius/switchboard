@@ -52,7 +52,7 @@ func main() {
 		slog.Error("Failed to create RTP Manager server", "error", err)
 		os.Exit(1)
 	}
-	defer rtpSrv.Close()
+	defer func() { _ = rtpSrv.Close() }()
 
 	// Create gRPC server with logging interceptors and keepalive settings
 	grpcServer := grpc.NewServer(

@@ -78,12 +78,12 @@ func TestCallEndedEventCDRFields(t *testing.T) {
 		SIPResponse(200, "OK").
 		HangupSource("remote").
 		Durations(
-			5*time.Second,  // setup
-			2*time.Second,  // ring
+			5*time.Second,   // setup
+			2*time.Second,   // ring
 			120*time.Second, // talk
 			127*time.Second, // total
 		).
-		BillableDuration(120 * time.Second).
+		BillableDuration(120*time.Second).
 		Disposition(DispositionAnswered).
 		MediaStats(6000, 5900, 10, 20).
 		Build()

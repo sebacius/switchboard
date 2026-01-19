@@ -120,7 +120,7 @@ const (
 	TerminationCauseNone TerminationCause = iota
 	// TerminationCauseNormal indicates a normal hangup (BYE sent/received).
 	TerminationCauseNormal
-	// TerminationCauseCancel indicates the call was cancelled before answer.
+	// TerminationCauseCancel indicates the call was canceled before answer.
 	TerminationCauseCancel
 	// TerminationCauseRejected indicates the call was rejected (4xx/6xx).
 	TerminationCauseRejected

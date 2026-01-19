@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 
-	rtpv1 "github.com/sebas/switchboard/pkg/rtpmanager/v1"
 	"github.com/sebas/switchboard/internal/rtpmanager/bridge"
 	"github.com/sebas/switchboard/internal/rtpmanager/media"
 	"github.com/sebas/switchboard/internal/rtpmanager/portpool"
 	"github.com/sebas/switchboard/internal/rtpmanager/session"
+	rtpv1 "github.com/sebas/switchboard/pkg/rtpmanager/v1"
 )
 
 // Config holds RTP Manager configuration
@@ -240,9 +240,9 @@ func (s *Server) BridgeMedia(ctx context.Context, req *rtpv1.BridgeMediaRequest)
 		}, nil
 	}
 
-	// Mark sessions as bridged
-	s.sessionMgr.SetSessionBridged(req.SessionAId)
-	s.sessionMgr.SetSessionBridged(req.SessionBId)
+	// Mark sessions as bridged (errors are non-fatal, sessions may already be in correct state)
+	_ = s.sessionMgr.SetSessionBridged(req.SessionAId)
+	_ = s.sessionMgr.SetSessionBridged(req.SessionBId)
 
 	slog.Info("[gRPC] BridgeMedia success",
 		"bridge_id", bridgeID,

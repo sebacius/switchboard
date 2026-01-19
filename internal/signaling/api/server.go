@@ -22,13 +22,13 @@ type RegistrationProvider interface {
 
 // Server provides HTTP API for the SIP proxy (headless, API only)
 type Server struct {
-	addr         string
-	httpServer   *http.Server
+	addr          string
+	httpServer    *http.Server
 	registrations RegistrationProvider
-	dialogMgr    dialog.DialogStore
-	sessionsMu   sync.RWMutex
-	sessions     map[string]*SessionRecord
-	startTime    time.Time
+	dialogMgr     dialog.DialogStore
+	sessionsMu    sync.RWMutex
+	sessions      map[string]*SessionRecord
+	startTime     time.Time
 }
 
 // SessionRecord tracks an active RTP session
@@ -342,4 +342,3 @@ func (s *Server) writeJSON(w http.ResponseWriter, v interface{}) {
 		slog.Error("[API] Failed to encode JSON", "error", err)
 	}
 }
-

@@ -375,10 +375,10 @@ func (b *bridgeImpl) Stop(hangupLegs bool) error {
 	if hangupLegs {
 		ctx := context.Background()
 		if b.legA.GetState() == LegStateAnswered {
-			b.legA.Hangup(ctx, TerminationCauseBridgePeer)
+			_ = b.legA.Hangup(ctx, TerminationCauseBridgePeer)
 		}
 		if b.legB.GetState() == LegStateAnswered {
-			b.legB.Hangup(ctx, TerminationCauseBridgePeer)
+			_ = b.legB.Hangup(ctx, TerminationCauseBridgePeer)
 		}
 	}
 
@@ -469,7 +469,7 @@ func (b *bridgeImpl) handleLegTerminated(legName string, cause TerminationCause)
 	)
 
 	// Stop the bridge (which will hangup the other leg if autoHangup is true)
-	b.Stop(b.autoHangup)
+	_ = b.Stop(b.autoHangup)
 }
 
 func (b *bridgeImpl) notifyTerminated(cause TerminationCause) {
