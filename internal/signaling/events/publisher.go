@@ -90,10 +90,10 @@ func (p *LoggingPublisher) Close() error {
 // ChannelPublisher publishes to an in-memory channel. Used for testing
 // and for local event processing (e.g., CDR generation).
 type ChannelPublisher struct {
-	mu       sync.RWMutex
-	ch       chan Event
-	bufSize  int
-	closed   bool
+	mu        sync.RWMutex
+	ch        chan Event
+	bufSize   int
+	closed    bool
 	dropCount int64
 }
 

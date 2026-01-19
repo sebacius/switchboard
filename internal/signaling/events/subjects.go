@@ -21,13 +21,13 @@ const (
 	SubjectPrefix = "switchboard"
 
 	// Call event subjects
-	SubjectCalls         = SubjectPrefix + ".calls"
-	SubjectCallReceived  = "received"
-	SubjectCallDialing   = "dialing"
-	SubjectCallRinging   = "ringing"
-	SubjectCallAnswered  = "answered"
-	SubjectCallBridged   = "bridged"
-	SubjectCallEnded     = "ended"
+	SubjectCalls        = SubjectPrefix + ".calls"
+	SubjectCallReceived = "received"
+	SubjectCallDialing  = "dialing"
+	SubjectCallRinging  = "ringing"
+	SubjectCallAnswered = "answered"
+	SubjectCallBridged  = "bridged"
+	SubjectCallEnded    = "ended"
 
 	// CDR subjects
 	SubjectCDRRaw   = SubjectPrefix + ".cdr.raw"

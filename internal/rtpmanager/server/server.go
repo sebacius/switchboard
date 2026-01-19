@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 
-	rtpv1 "github.com/sebas/switchboard/pkg/rtpmanager/v1"
 	"github.com/sebas/switchboard/internal/rtpmanager/bridge"
 	"github.com/sebas/switchboard/internal/rtpmanager/media"
 	"github.com/sebas/switchboard/internal/rtpmanager/portpool"
 	"github.com/sebas/switchboard/internal/rtpmanager/session"
+	rtpv1 "github.com/sebas/switchboard/pkg/rtpmanager/v1"
 )
 
 // Config holds RTP Manager configuration

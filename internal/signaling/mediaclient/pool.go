@@ -11,13 +11,13 @@ import (
 
 // PoolConfig holds configuration for the RTP manager pool
 type PoolConfig struct {
-	Addresses             []string
-	ConnectTimeout        time.Duration
-	KeepaliveInterval     time.Duration
-	KeepaliveTimeout      time.Duration
-	HealthCheckInterval   time.Duration
-	UnhealthyThreshold    int // Number of failed health checks before marking unhealthy
-	HealthyThreshold      int // Number of successful health checks before marking healthy
+	Addresses           []string
+	ConnectTimeout      time.Duration
+	KeepaliveInterval   time.Duration
+	KeepaliveTimeout    time.Duration
+	HealthCheckInterval time.Duration
+	UnhealthyThreshold  int // Number of failed health checks before marking unhealthy
+	HealthyThreshold    int // Number of successful health checks before marking healthy
 }
 
 // DefaultPoolConfig returns sensible defaults
@@ -425,9 +425,7 @@ func (p *Pool) Stats() PoolStats {
 			Address: m.address,
 			Healthy: m.healthy.Load(),
 		}
-		if m.transport != nil {
-			// Could add more stats like active sessions per member
-		}
+		// TODO: Could add more stats like active sessions per member if m.transport != nil
 		if memberStats.Healthy {
 			stats.HealthyMembers++
 		}

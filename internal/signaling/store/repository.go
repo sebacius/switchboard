@@ -98,13 +98,13 @@ type Profile struct {
 	Password    string    `json:"-"`            // SIP auth password (not in JSON)
 	PasswordHA1 string    `json:"-"`            // HA1 hash for digest auth
 	Enabled     bool      `json:"enabled"`
-	CallerID    string    `json:"caller_id,omitempty"`   // Override caller ID number
-	Mailbox     string    `json:"mailbox,omitempty"`     // Voicemail box
-	Context     string    `json:"context,omitempty"`     // Dialplan context
-	MaxCalls    int       `json:"max_calls,omitempty"`   // Concurrent call limit
-	Codecs      []string  `json:"codecs,omitempty"`      // Allowed codecs
-	NAT         bool      `json:"nat,omitempty"`         // NAT handling enabled
-	Metadata    string    `json:"metadata,omitempty"`    // JSON blob for custom fields
+	CallerID    string    `json:"caller_id,omitempty"` // Override caller ID number
+	Mailbox     string    `json:"mailbox,omitempty"`   // Voicemail box
+	Context     string    `json:"context,omitempty"`   // Dialplan context
+	MaxCalls    int       `json:"max_calls,omitempty"` // Concurrent call limit
+	Codecs      []string  `json:"codecs,omitempty"`    // Allowed codecs
+	NAT         bool      `json:"nat,omitempty"`       // NAT handling enabled
+	Metadata    string    `json:"metadata,omitempty"`  // JSON blob for custom fields
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }

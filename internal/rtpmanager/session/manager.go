@@ -16,20 +16,20 @@ import (
 
 // Session represents an active media session
 type Session struct {
-	ID            string
-	CallID        string
-	LocalAddr     string
-	LocalPort     int
-	RTCPPort      int
-	RemoteAddr    string
-	RemotePort    int
-	Codec         string
-	State         rtpv1.SessionState
-	CreatedAt     time.Time
-	ctx           context.Context
-	cancel        context.CancelFunc
-	playbackDone  chan struct{}
-	mu            sync.RWMutex
+	ID           string
+	CallID       string
+	LocalAddr    string
+	LocalPort    int
+	RTCPPort     int
+	RemoteAddr   string
+	RemotePort   int
+	Codec        string
+	State        rtpv1.SessionState
+	CreatedAt    time.Time
+	ctx          context.Context
+	cancel       context.CancelFunc
+	playbackDone chan struct{}
+	mu           sync.RWMutex
 }
 
 // Manager manages media sessions

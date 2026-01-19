@@ -53,10 +53,10 @@ type OriginateResult struct {
 
 // Originator handles outbound call initiation.
 type Originator struct {
-	cfg   OriginatorConfig
-	mu    sync.RWMutex
-	legs  map[string]*legImpl // Indexed by B-leg Call-ID
-	aToB  map[string]string   // A-leg Call-ID -> B-leg Call-ID mapping
+	cfg  OriginatorConfig
+	mu   sync.RWMutex
+	legs map[string]*legImpl // Indexed by B-leg Call-ID
+	aToB map[string]string   // A-leg Call-ID -> B-leg Call-ID mapping
 }
 
 // NewOriginator creates a new Originator.
@@ -148,7 +148,7 @@ func (o *Originator) Originate(ctx context.Context, req OriginateRequest) (*Orig
 	var originateSuccess bool
 	defer func() {
 		if !originateSuccess {
-			// Use background context since the original ctx may be cancelled
+			// Use background context since the original ctx may be canceled
 			o.destroyMediaSession(context.Background(), bleg)
 		}
 	}()

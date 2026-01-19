@@ -23,9 +23,9 @@ type Endpoint struct {
 
 // Bridge represents a bidirectional RTP relay between two sessions.
 type Bridge struct {
-	ID        string
-	SessionA  *Endpoint
-	SessionB  *Endpoint
+	ID       string
+	SessionA *Endpoint
+	SessionB *Endpoint
 
 	ctx    context.Context
 	cancel context.CancelFunc

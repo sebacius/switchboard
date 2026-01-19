@@ -41,7 +41,7 @@ func (d *DTMFReader) SetMinDuration(samples uint16) {
 // ReadDigit blocks until a complete DTMF digit is detected.
 // A digit is complete when an end-of-event packet is received
 // with duration >= minDuration.
-// Returns the digit rune or an error if the context is cancelled or reading fails.
+// Returns the digit rune or an error if the context is canceled or reading fails.
 func (d *DTMFReader) ReadDigit(ctx context.Context) (rune, error) {
 	for {
 		select {
@@ -111,7 +111,7 @@ func (d *DTMFReader) processPacket(pkt *rtp.Packet) (rune, bool) {
 }
 
 // ReadDigits continuously reads digits and sends them to the provided channel.
-// Stops when context is cancelled or an error occurs.
+// Stops when context is canceled or an error occurs.
 // Closes the channel when done.
 func (d *DTMFReader) ReadDigits(ctx context.Context, digits chan<- rune) error {
 	defer close(digits)

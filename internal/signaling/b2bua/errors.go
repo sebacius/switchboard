@@ -121,9 +121,9 @@ func (e *StateTransitionError) Unwrap() error {
 
 // LookupError indicates a target resolution failure.
 type LookupError struct {
-	Target  string
-	Reason  string
-	Cause   error
+	Target string
+	Reason string
+	Cause  error
 }
 
 // Error returns the error message.
