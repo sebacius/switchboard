@@ -101,7 +101,9 @@ func ReadWAVFile(filePath string) (*AudioFile, error) {
 			}
 
 			// Skip byte rate and block align
-			file.Seek(6, 1)
+			if _, err := file.Seek(6, 1); err != nil {
+				return nil, fmt.Errorf("failed to seek past byte rate: %w", err)
+			}
 
 			if err := binary.Read(file, binary.LittleEndian, &audioFile.BitsPerSample); err != nil {
 				return nil, fmt.Errorf("failed to read bits per sample: %w", err)
@@ -121,7 +123,9 @@ func ReadWAVFile(filePath string) (*AudioFile, error) {
 
 		default:
 			// Skip unknown chunks
-			file.Seek(int64(chunkSize), 1)
+			if _, err := file.Seek(int64(chunkSize), 1); err != nil {
+				return nil, fmt.Errorf("failed to skip chunk: %w", err)
+			}
 		}
 	}
 

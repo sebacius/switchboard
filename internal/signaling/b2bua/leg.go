@@ -584,7 +584,7 @@ func (l *legImpl) Hangup(ctx context.Context, cause TerminationCause) error {
 }
 
 func (l *legImpl) Destroy() {
-	l.Hangup(context.Background(), TerminationCauseNormal)
+	_ = l.Hangup(context.Background(), TerminationCauseNormal)
 }
 
 // --- Event Callbacks ---

@@ -285,7 +285,7 @@ func (h *RegisterHandler) sendQueryResponse(tx sip.ServerTransaction, req *sip.R
 }
 
 // sendOKWithBindings sends 200 OK with updated binding info.
-func (h *RegisterHandler) sendOKWithBindings(tx sip.ServerTransaction, req *sip.Request, aor string, binding *location.Binding) error {
+func (h *RegisterHandler) sendOKWithBindings(tx sip.ServerTransaction, req *sip.Request, aor string, _ *location.Binding) error {
 	res := sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil)
 
 	// Add received/rport to Via per RFC 3581 for NAT traversal

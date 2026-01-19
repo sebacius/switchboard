@@ -180,7 +180,7 @@ func (h *MultiLevelHandler) Handle(ctx context.Context, record slog.Record) erro
 	formattedLog := "[" + timestamp + "] [" + strings.ToUpper(levelStr) + "] " + message + "\n"
 	for out, outLevel := range h.outputs {
 		if record.Level >= outLevel && out != nil {
-			out.Write([]byte(formattedLog))
+			_, _ = out.Write([]byte(formattedLog))
 		}
 	}
 
@@ -250,7 +250,7 @@ func (h *customHandler) Handle(ctx context.Context, record slog.Record) error {
 		formattedLog := "[" + timestamp + "] [" + strings.ToUpper(levelStr) + "] " + message + "\n"
 		for _, out := range h.outs {
 			if out != nil {
-				out.Write([]byte(formattedLog))
+				_, _ = out.Write([]byte(formattedLog))
 			}
 		}
 	}

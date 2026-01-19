@@ -134,7 +134,7 @@ func (m *Manager) SendOK(d *Dialog, sdpBody []byte) error {
 
 	// Send 200 OK with SDP
 	if err := session.RespondSDP(sdpBody); err != nil {
-		session.Close()
+		_ = session.Close()
 		return fmt.Errorf("failed to send 200 OK: %w", err)
 	}
 
@@ -204,7 +204,7 @@ func (m *Manager) HandleIncomingBYE(req *sip.Request, tx sip.ServerTransaction) 
 	if !exists {
 		// Dialog not found, respond 481 Call/Transaction Does Not Exist
 		resp := sip.NewResponseFromRequest(req, 481, "Call/Transaction Does Not Exist", nil)
-		tx.Respond(resp)
+		_ = tx.Respond(resp)
 		return fmt.Errorf("dialog not found for BYE: %s", callID)
 	}
 
@@ -242,7 +242,7 @@ func (m *Manager) HandleIncomingCANCEL(req *sip.Request, tx sip.ServerTransactio
 	if !exists {
 		// CANCEL for unknown dialog
 		resp := sip.NewResponseFromRequest(req, 481, "Call/Transaction Does Not Exist", nil)
-		tx.Respond(resp)
+		_ = tx.Respond(resp)
 		return fmt.Errorf("dialog not found for CANCEL: %s", callID)
 	}
 
@@ -251,7 +251,7 @@ func (m *Manager) HandleIncomingCANCEL(req *sip.Request, tx sip.ServerTransactio
 		// CANCEL only valid before dialog confirmed
 		slog.Warn("[Dialog] CANCEL in unexpected state", "call_id", callID, "state", state)
 		resp := sip.NewResponseFromRequest(req, 481, "Call/Transaction Does Not Exist", nil)
-		tx.Respond(resp)
+		_ = tx.Respond(resp)
 		return nil
 	}
 
@@ -264,7 +264,7 @@ func (m *Manager) HandleIncomingCANCEL(req *sip.Request, tx sip.ServerTransactio
 	// Send 487 Request Terminated for the original INVITE
 	if d.Transaction != nil {
 		terminated := sip.NewResponseFromRequest(d.InviteRequest, 487, "Request Terminated", nil)
-		d.Transaction.Respond(terminated)
+		_ = d.Transaction.Respond(terminated)
 	}
 
 	// Cancel context
@@ -334,7 +334,7 @@ func (m *Manager) terminate(d *Dialog, reason TerminateReason) {
 
 	// Close sipgo session
 	if d.Session != nil {
-		d.Session.Close()
+		_ = d.Session.Close()
 	}
 
 	// Notify callback

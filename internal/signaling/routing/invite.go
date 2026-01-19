@@ -79,8 +79,8 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	if err != nil {
 		slog.Error("Failed to extract SDP info", "error", err)
 		notAcceptable := sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable - invalid SDP", nil)
-		tx.Respond(notAcceptable)
-		h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonError)
+		_ = tx.Respond(notAcceptable)
+		_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonError)
 		return
 	}
 
@@ -94,8 +94,8 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	if err != nil {
 		slog.Error("Failed to create media session", "error", err)
 		notAcceptable := sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable - "+err.Error(), nil)
-		tx.Respond(notAcceptable)
-		h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonError)
+		_ = tx.Respond(notAcceptable)
+		_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonError)
 		return
 	}
 
@@ -121,8 +121,8 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	// Send 200 OK (this also creates the sipgo session)
 	if err := h.dialogMgr.SendOK(dlg, sessionResult.SDPBody); err != nil {
 		slog.Error("Failed to send 200 OK", "error", err)
-		h.transport.DestroySession(context.Background(), sessionResult.SessionID, mediaclient.TerminateReasonError)
-		h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonError)
+		_ = h.transport.DestroySession(context.Background(), sessionResult.SessionID, mediaclient.TerminateReasonError)
+		_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonError)
 		return
 	}
 
@@ -249,6 +249,6 @@ func (h *InviteHandler) executeDialplan(dlg *dialog.Dialog, destination string) 
 	// Terminate dialog after dialplan completes (if not already terminated)
 	if !dlg.IsTerminated() {
 		slog.Info("[Routing] Dialplan complete, terminating dialog", "call_id", dlg.CallID)
-		h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
+		_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
 	}
 }

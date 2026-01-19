@@ -126,7 +126,7 @@ func (s *LocalService) streamAudio(ctx context.Context, req PlayRequest, codecCf
 	if err != nil {
 		return fmt.Errorf("failed to bind to local RTP port %d: %w", req.LocalPort, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Remote client's RTP endpoint
 	clientAddr := &net.UDPAddr{

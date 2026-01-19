@@ -240,9 +240,9 @@ func (s *Server) BridgeMedia(ctx context.Context, req *rtpv1.BridgeMediaRequest)
 		}, nil
 	}
 
-	// Mark sessions as bridged
-	s.sessionMgr.SetSessionBridged(req.SessionAId)
-	s.sessionMgr.SetSessionBridged(req.SessionBId)
+	// Mark sessions as bridged (errors are non-fatal, sessions may already be in correct state)
+	_ = s.sessionMgr.SetSessionBridged(req.SessionAId)
+	_ = s.sessionMgr.SetSessionBridged(req.SessionBId)
 
 	slog.Info("[gRPC] BridgeMedia success",
 		"bridge_id", bridgeID,

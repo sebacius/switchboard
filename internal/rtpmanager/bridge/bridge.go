@@ -147,7 +147,7 @@ func (b *Bridge) bindSockets() error {
 	addrB := &net.UDPAddr{Port: b.SessionB.LocalPort, IP: net.IPv4zero}
 	connB, err := net.ListenUDP("udp", addrB)
 	if err != nil {
-		connA.Close()
+		_ = connA.Close()
 		return fmt.Errorf("bind B port %d: %w", b.SessionB.LocalPort, err)
 	}
 	b.SessionB.conn = connB
@@ -289,7 +289,8 @@ func (m *Manager) DestroyBridge(bridgeID string) error {
 		return fmt.Errorf("bridge not found: %s", bridgeID)
 	}
 
-	return m.destroyBridgeLocked(bridge)
+	m.destroyBridgeLocked(bridge)
+	return nil
 }
 
 // DestroyBySession finds and destroys the bridge containing a session.
@@ -307,19 +308,20 @@ func (m *Manager) DestroyBySession(sessionID string) (string, error) {
 		return bridgeID, nil
 	}
 
-	return bridgeID, m.destroyBridgeLocked(bridge)
+	m.destroyBridgeLocked(bridge)
+	return bridgeID, nil
 }
 
 // destroyBridgeLocked tears down a bridge (must hold lock).
-func (m *Manager) destroyBridgeLocked(bridge *Bridge) error {
+func (m *Manager) destroyBridgeLocked(bridge *Bridge) {
 	bridge.active.Store(false)
 	bridge.cancel()
 
 	if bridge.SessionA.conn != nil {
-		bridge.SessionA.conn.Close()
+		_ = bridge.SessionA.conn.Close()
 	}
 	if bridge.SessionB.conn != nil {
-		bridge.SessionB.conn.Close()
+		_ = bridge.SessionB.conn.Close()
 	}
 
 	delete(m.sessionMap, bridge.SessionA.SessionID)
@@ -334,8 +336,6 @@ func (m *Manager) destroyBridgeLocked(bridge *Bridge) error {
 		"bytes_a2b", stats.BytesA2B,
 		"bytes_b2a", stats.BytesB2A,
 	)
-
-	return nil
 }
 
 // GetBridge returns a bridge by ID.

@@ -266,8 +266,8 @@ func (m *Manager) DestroySession(sessionID string) error {
 	// Cancel context to stop any playback
 	sess.cancel()
 
-	// Stop media playback
-	m.mediaService.Stop(sess.CallID)
+	// Stop media playback (best effort - error is not critical during cleanup)
+	_ = m.mediaService.Stop(sess.CallID)
 
 	// Release ports
 	m.portPool.Release(sess.LocalPort)
@@ -391,7 +391,7 @@ func (m *Manager) CloseAll() {
 
 	for _, sess := range m.sessions {
 		sess.cancel()
-		m.mediaService.Stop(sess.CallID)
+		_ = m.mediaService.Stop(sess.CallID)
 		m.portPool.Release(sess.LocalPort)
 	}
 	m.sessions = make(map[string]*Session)
