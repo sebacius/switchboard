@@ -11,6 +11,7 @@ import (
 
 	"github.com/sebas/switchboard/internal/signaling/dialog"
 	"github.com/sebas/switchboard/internal/signaling/location"
+	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 )
 
 // RegistrationProvider provides registration data for the API.
@@ -20,12 +21,19 @@ type RegistrationProvider interface {
 	GetAllBindings(aor string) []*location.Binding
 }
 
+// RtpManagerProvider provides RTP manager pool stats for the API.
+// Implemented by mediaclient.Pool via StatsProvider interface.
+type RtpManagerProvider interface {
+	Stats() mediaclient.PoolStats
+}
+
 // Server provides HTTP API for the SIP proxy (headless, API only)
 type Server struct {
 	addr          string
 	httpServer    *http.Server
 	registrations RegistrationProvider
 	dialogMgr     dialog.DialogStore
+	rtpManagers   RtpManagerProvider
 	sessionsMu    sync.RWMutex
 	sessions      map[string]*SessionRecord
 	startTime     time.Time
@@ -42,11 +50,12 @@ type SessionRecord struct {
 }
 
 // NewServer creates a new API server (headless, API only - no UI)
-func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog.DialogStore) *Server {
+func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog.DialogStore, rtpManagers RtpManagerProvider) *Server {
 	s := &Server{
 		addr:          addr,
 		registrations: registrations,
 		dialogMgr:     dialogMgr,
+		rtpManagers:   rtpManagers,
 		sessions:      make(map[string]*SessionRecord),
 		startTime:     time.Now(),
 	}
@@ -67,6 +76,9 @@ func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog
 
 	// Sessions (RTP)
 	mux.HandleFunc("/api/v1/sessions", s.handleSessions)
+
+	// RTP Managers
+	mux.HandleFunc("/api/v1/rtpmanagers", s.handleRtpManagers)
 
 	// Admin
 	mux.HandleFunc("/api/v1/shutdown", s.handleShutdown)
@@ -323,6 +335,45 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, sessions)
+}
+
+// --- RTP Managers ---
+
+func (s *Server) handleRtpManagers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.rtpManagers == nil {
+		// No RTP manager pool configured
+		response := map[string]interface{}{
+			"total_members":   0,
+			"healthy_members": 0,
+			"active_sessions": 0,
+			"members":         []interface{}{},
+		}
+		s.writeJSON(w, response)
+		return
+	}
+
+	stats := s.rtpManagers.Stats()
+
+	members := make([]map[string]interface{}, 0, len(stats.Members))
+	for _, m := range stats.Members {
+		members = append(members, map[string]interface{}{
+			"address": m.Address,
+			"healthy": m.Healthy,
+		})
+	}
+
+	response := map[string]interface{}{
+		"total_members":   stats.TotalMembers,
+		"healthy_members": stats.HealthyMembers,
+		"active_sessions": stats.ActiveSessions,
+		"members":         members,
+	}
+	s.writeJSON(w, response)
 }
 
 // --- Admin ---

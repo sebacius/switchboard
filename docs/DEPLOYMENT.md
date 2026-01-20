@@ -150,7 +150,9 @@ deploy/k8s/
 # Application
 ├── signaling.yaml      # Signaling Deployment + Service
 ├── rtpmanager.yaml     # RTP Manager Deployment + Service
-└── ui.yaml             # UI Deployment + Service
+├── ui.yaml             # UI Deployment + Service
+# Tools
+└── dashboard.yaml      # Kubernetes Dashboard (optional)
 ```
 
 ### Infrastructure Components
@@ -300,6 +302,7 @@ make k8s-logs
 | UI Dashboard | `http://<node-ip>:3000` |
 | SIP | `<node-ip>:5060` (UDP/TCP) |
 | REST API | `http://<node-ip>:8080/api/v1/` |
+| Kubernetes Dashboard | `https://<node-ip>:8443` |
 
 ### Updating Deployment
 
@@ -449,14 +452,33 @@ kubectl apply -k deploy/k8s/
 kubectl exec -n switchboard <pod> -- netstat -tlnp
 ```
 
+## Kubernetes Dashboard
+
+A Kubernetes Dashboard pod is included for development and debugging. It provides a web UI to inspect cluster resources.
+
+**Access URL:** `https://<node-ip>:8443`
+
+**Get authentication token:**
+```bash
+kubectl -n switchboard get secret dashboard-admin-token -o jsonpath='{.data.token}' | base64 -d
+```
+
+The dashboard runs with `cluster-admin` privileges within the switchboard namespace. This is suitable for development but should be restricted in production environments.
+
 ## Makefile Reference
 
 | Target | Description |
 |--------|-------------|
 | `make docker-build` | Build all Docker images |
+| `make docker-build-signaling` | Build signaling Docker image only |
+| `make docker-build-rtpmanager` | Build rtpmanager Docker image only |
+| `make docker-build-ui` | Build UI Docker image only |
 | `make docker-save` | Save images to tar files |
 | `make k8s-load` | Load images into k3s |
 | `make k8s-deploy` | Full deploy (load + apply) |
+| `make k8s-deploy-signaling` | Build, load, and restart signaling only |
+| `make k8s-deploy-rtpmanager` | Build, load, and restart rtpmanager only |
+| `make k8s-deploy-ui` | Build, load, and restart UI only |
 | `make k8s-delete` | Remove all resources |
 | `make k8s-status` | Show deployment status |
 | `make k8s-logs` | Tail logs from all pods |

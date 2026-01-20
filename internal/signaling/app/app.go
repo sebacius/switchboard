@@ -98,8 +98,9 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Create dialog manager (single source of truth for call state)
 	dialogMgr := dialog.NewManager(uac, dialogUA)
 
-	// Create API server with register handler and dialog manager
-	apiServer := api.NewServer("0.0.0.0:8080", registerHandler, dialogMgr)
+	// Create API server with register handler, dialog manager, and RTP manager stats
+	// Pool implements mediaclient.StatsProvider which satisfies api.RtpManagerProvider
+	apiServer := api.NewServer("0.0.0.0:8080", registerHandler, dialogMgr, mediaTransport)
 
 	// Load dialplan configuration
 	dialplanPath := cfg.DialplanPath

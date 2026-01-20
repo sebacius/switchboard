@@ -53,6 +53,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	mux.HandleFunc("/admin/partials/registrations", s.handleRegistrationsPartial)
 	mux.HandleFunc("/admin/partials/dialogs", s.handleDialogsPartial)
 	mux.HandleFunc("/admin/partials/sessions", s.handleSessionsPartial)
+	mux.HandleFunc("/admin/partials/rtpmanagers", s.handleRtpManagersPartial)
 
 	// Health check
 	mux.HandleFunc("/health", s.handleHealth)
@@ -155,6 +156,16 @@ func (s *Server) handleSessionsPartial(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleRtpManagersPartial renders the RTP managers section partial for HTMX
+func (s *Server) handleRtpManagersPartial(w http.ResponseWriter, r *http.Request) {
+	data := s.buildTemplateData(r.Context())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.RenderRtpManagers(w, data); err != nil {
+		slog.Error("[UI] Failed to render rtpmanagers partial", "error", err)
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+	}
+}
+
 // buildTemplateData fetches data from all backends and aggregates it
 func (s *Server) buildTemplateData(ctx context.Context) TemplateData {
 	uptime := time.Since(s.startTime)
@@ -168,6 +179,7 @@ func (s *Server) buildTemplateData(ctx context.Context) TemplateData {
 		},
 		Stats:         StatsData{},
 		Backends:      make([]BackendData, 0, len(s.clients)),
+		RtpManagers:   make([]RtpManagerData, 0),
 		Registrations: make([]RegistrationData, 0),
 		Dialogs:       make([]DialogData, 0),
 		Sessions:      make([]SessionData, 0),
@@ -295,6 +307,27 @@ func (s *Server) fetchBackendData(ctx context.Context, c *client.Client, data *T
 				ServerPort: sess.ServerPort,
 				Duration:   formatDuration(sess.Duration),
 				Status:     sess.Status,
+			})
+		}
+		mu.Unlock()
+	}
+
+	// Fetch RTP managers
+	rtpManagers, err := c.RtpManagers(ctx)
+	if err != nil {
+		slog.Debug("[UI] Backend rtpmanagers fetch failed", "backend", backendName, "error", err)
+	} else {
+		mu.Lock()
+		for _, m := range rtpManagers.Members {
+			status := "Unhealthy"
+			if m.Healthy {
+				status = "Healthy"
+			}
+			data.RtpManagers = append(data.RtpManagers, RtpManagerData{
+				Server:  backendName,
+				Address: m.Address,
+				Healthy: m.Healthy,
+				Status:  status,
 			})
 		}
 		mu.Unlock()

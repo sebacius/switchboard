@@ -3,7 +3,9 @@
 	test-register test-multi test-api test-deregister \
 	run-ui \
 	docker-build docker-build-signaling docker-build-rtpmanager docker-build-ui \
-	docker-save docker-load k8s-deploy k8s-delete k8s-status k8s-logs
+	docker-save docker-save-signaling docker-save-rtpmanager docker-save-ui \
+	k8s-deploy k8s-delete k8s-status k8s-logs \
+	k8s-deploy-signaling k8s-deploy-rtpmanager k8s-deploy-ui
 
 # Docker image names
 IMAGE_SIGNALING ?= switchboard-signaling
@@ -39,15 +41,20 @@ help:
 	@echo "  make proto            - Regenerate gRPC code from proto files"
 	@echo ""
 	@echo "DOCKER:"
-	@echo "  make docker-build     - Build all Docker images"
-	@echo "  make docker-save      - Save images to tar files (for k3s import)"
-	@echo "  make docker-load      - Load images into k3s (requires k3s)"
+	@echo "  make docker-build           - Build all Docker images"
+	@echo "  make docker-build-signaling - Build signaling Docker image"
+	@echo "  make docker-build-rtpmanager- Build rtpmanager Docker image"
+	@echo "  make docker-build-ui        - Build UI Docker image"
+	@echo "  make docker-save            - Save all images to tar files"
 	@echo ""
 	@echo "KUBERNETES (k3s):"
-	@echo "  make k8s-deploy       - Deploy to Kubernetes (build + load + apply)"
-	@echo "  make k8s-delete       - Delete all Switchboard resources"
-	@echo "  make k8s-status       - Show deployment status"
-	@echo "  make k8s-logs         - Tail logs from all pods"
+	@echo "  make k8s-deploy             - Deploy all to Kubernetes"
+	@echo "  make k8s-deploy-signaling   - Build & deploy signaling only"
+	@echo "  make k8s-deploy-rtpmanager  - Build & deploy rtpmanager only"
+	@echo "  make k8s-deploy-ui          - Build & deploy UI only"
+	@echo "  make k8s-delete             - Delete all Switchboard resources"
+	@echo "  make k8s-status             - Show deployment status"
+	@echo "  make k8s-logs               - Tail logs from all pods"
 	@echo ""
 	@echo "TESTING:"
 	@echo "  make test-register    - Register single user"
@@ -143,6 +150,15 @@ docker-save: $(BUILD_DIR)
 	@docker save $(IMAGE_UI):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-ui.tar
 	@echo "Saved to $(BUILD_DIR)/: switchboard-signaling.tar, switchboard-rtpmanager.tar, switchboard-ui.tar"
 
+docker-save-signaling: $(BUILD_DIR)
+	@docker save $(IMAGE_SIGNALING):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-signaling.tar
+
+docker-save-rtpmanager: $(BUILD_DIR)
+	@docker save $(IMAGE_RTPMANAGER):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-rtpmanager.tar
+
+docker-save-ui: $(BUILD_DIR)
+	@docker save $(IMAGE_UI):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-ui.tar
+
 docker: docker-build docker-save
 	@echo "Docker build, save, and load complete"
 
@@ -193,8 +209,30 @@ k8s-logs:
 # Restart all deployments (useful after image updates)
 k8s-restart:
 	@echo "Restarting deployments..."
-	@kubectl rollout restart deployment -n switchboard
-	@kubectl rollout status deployment -n switchboard
+	@kubectl rollout restart statefulset -n switchboard
+	@kubectl rollout status statefulset -n switchboard
+
+# Individual service deployment targets
+k8s-deploy-signaling: docker-build-signaling docker-save-signaling
+	@echo "Loading signaling image into k3s..."
+	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-signaling.tar
+	@echo "Restarting signaling..."
+	@kubectl rollout restart statefulset/signaling -n switchboard
+	@kubectl rollout status statefulset/signaling -n switchboard
+
+k8s-deploy-rtpmanager: docker-build-rtpmanager docker-save-rtpmanager
+	@echo "Loading rtpmanager image into k3s..."
+	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-rtpmanager.tar
+	@echo "Restarting rtpmanager..."
+	@kubectl rollout restart statefulset/rtpmanager -n switchboard
+	@kubectl rollout status statefulset/rtpmanager -n switchboard
+
+k8s-deploy-ui: docker-build-ui docker-save-ui
+	@echo "Loading ui image into k3s..."
+	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-ui.tar
+	@echo "Restarting ui..."
+	@kubectl rollout restart statefulset/ui -n switchboard
+	@kubectl rollout status statefulset/ui -n switchboard
 
 # ============================================================================
 # Testing targets
