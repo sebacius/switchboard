@@ -11,12 +11,13 @@ var templatesFS embed.FS
 
 // Templates holds all parsed templates
 type Templates struct {
-	dashboard       *template.Template
-	statsPartial    *template.Template
-	backendsPartial *template.Template
-	regsPartial     *template.Template
-	dialogPartial   *template.Template
-	sessPartial     *template.Template
+	dashboard          *template.Template
+	statsPartial       *template.Template
+	backendsPartial    *template.Template
+	rtpmanagersPartial *template.Template
+	regsPartial        *template.Template
+	dialogPartial      *template.Template
+	sessPartial        *template.Template
 }
 
 // TemplateData holds data for rendering templates
@@ -25,6 +26,7 @@ type TemplateData struct {
 	Health        HealthData
 	Stats         StatsData
 	Backends      []BackendData
+	RtpManagers   []RtpManagerData
 	Registrations []RegistrationData
 	Dialogs       []DialogData
 	Sessions      []SessionData
@@ -93,6 +95,14 @@ type SessionData struct {
 	Status     string
 }
 
+// RtpManagerData holds RTP manager info for display
+type RtpManagerData struct {
+	Server  string // Backend server name (signaling server)
+	Address string // RTP manager address
+	Healthy bool
+	Status  string // "Healthy" or "Unhealthy"
+}
+
 // NewTemplates parses and returns all templates
 func NewTemplates() (*Templates, error) {
 	t := &Templates{}
@@ -112,6 +122,11 @@ func NewTemplates() (*Templates, error) {
 	}
 
 	t.backendsPartial, err = template.New("backends.html").ParseFS(templatesFS, "templates/backends.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.rtpmanagersPartial, err = template.New("rtpmanagers.html").ParseFS(templatesFS, "templates/rtpmanagers.html")
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +162,11 @@ func (t *Templates) RenderStats(w io.Writer, data TemplateData) error {
 // RenderBackends renders the backends partial
 func (t *Templates) RenderBackends(w io.Writer, data TemplateData) error {
 	return t.backendsPartial.Execute(w, data)
+}
+
+// RenderRtpManagers renders the RTP managers partial
+func (t *Templates) RenderRtpManagers(w io.Writer, data TemplateData) error {
+	return t.rtpmanagersPartial.Execute(w, data)
 }
 
 // RenderRegistrations renders the registrations partial

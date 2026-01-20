@@ -15,6 +15,7 @@ The Signaling Server exposes a REST API on port 8080 (configurable via `API_PORT
 | GET | `/api/v1/registrations` | SIP registrations |
 | GET | `/api/v1/dialogs` | Active SIP dialogs |
 | GET | `/api/v1/sessions` | Active RTP sessions |
+| GET | `/api/v1/rtpmanagers` | Connected RTP managers |
 
 ### Health Check
 
@@ -182,6 +183,44 @@ Returns all active RTP sessions.
 | `rtp_manager` | string | RTP Manager handling this session |
 | `created_at` | string | ISO 8601 creation timestamp |
 
+### RTP Managers
+
+```
+GET /api/v1/rtpmanagers
+```
+
+Returns information about connected RTP Managers and their health status.
+
+**Response:**
+```json
+{
+  "rtp_managers": [
+    {
+      "address": "localhost:9090",
+      "healthy": true,
+      "active_sessions": 5,
+      "available_ports": 95,
+      "last_check": "2026-01-15T10:30:00Z"
+    },
+    {
+      "address": "localhost:9091",
+      "healthy": true,
+      "active_sessions": 3,
+      "available_ports": 97,
+      "last_check": "2026-01-15T10:30:00Z"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `address` | string | RTP Manager gRPC address |
+| `healthy` | bool | Health check status |
+| `active_sessions` | int | Number of active RTP sessions |
+| `available_ports` | int | Number of available RTP ports |
+| `last_check` | string | ISO 8601 timestamp of last health check |
+
 ## UI Server API
 
 The UI Server provides an HTML dashboard on port 3000 (configurable via `UI_PORT`).
@@ -190,14 +229,25 @@ The UI Server provides an HTML dashboard on port 3000 (configurable via `UI_PORT
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/` | Main dashboard |
+| GET | `/` | Main dashboard (sidebar navigation) |
 | GET | `/health` | Health check |
 | GET | `/admin/partials/stats` | HTMX partial for stats |
 | GET | `/admin/partials/registrations` | HTMX partial for registrations |
 | GET | `/admin/partials/dialogs` | HTMX partial for dialogs |
 | GET | `/admin/partials/sessions` | HTMX partial for sessions |
+| GET | `/admin/partials/rtpmanagers` | HTMX partial for RTP managers |
 
 The HTMX partials are used for live updates without full page refresh.
+
+### Dashboard Sections
+
+The UI dashboard includes a sidebar with the following sections:
+
+- **Overview** - System statistics and health summary
+- **Registrations** - Active SIP registrations
+- **Dialogs** - Current SIP dialogs
+- **Sessions** - Active RTP sessions
+- **RTP Managers** - Connected media servers with health status
 
 ## gRPC Protocol
 

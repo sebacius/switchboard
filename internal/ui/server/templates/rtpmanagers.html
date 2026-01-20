@@ -1,0 +1,25 @@
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    {{if not .RtpManagers}}
+    <div class="col-span-full text-center text-slate-500 py-4">
+        No RTP managers connected
+    </div>
+    {{else}}
+    {{range .RtpManagers}}
+    <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
+        <div class="flex items-center justify-between">
+            <div>
+                <p class="text-sm font-medium text-white">{{.Address}}</p>
+                {{if $.MultiBackend}}
+                <p class="text-xs text-slate-400">via {{.Server}}</p>
+                {{end}}
+            </div>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
+                {{if .Healthy}}bg-emerald-500/20 text-emerald-400
+                {{else}}bg-red-500/20 text-red-400{{end}}">
+                {{.Status}}
+            </span>
+        </div>
+    </div>
+    {{end}}
+    {{end}}
+</div>

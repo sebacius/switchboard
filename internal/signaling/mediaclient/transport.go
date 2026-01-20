@@ -65,6 +65,11 @@ type BridgeInfo struct {
 	SessionBID string
 }
 
+// StatsProvider provides pool statistics (optional interface)
+type StatsProvider interface {
+	Stats() PoolStats
+}
+
 // Transport abstracts media service communication.
 // Implementations: LocalTransport (in-process), GRPCTransport (remote)
 type Transport interface {

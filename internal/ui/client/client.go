@@ -113,6 +113,21 @@ func (c *Client) Sessions(ctx context.Context) ([]types.Session, error) {
 	return sessions, nil
 }
 
+// RtpManagers fetches RTP manager pool status from the signaling server
+func (c *Client) RtpManagers(ctx context.Context) (*types.RtpManagersResponse, error) {
+	resp, err := c.get(ctx, "/api/v1/rtpmanagers")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var managers types.RtpManagersResponse
+	if err := json.NewDecoder(resp.Body).Decode(&managers); err != nil {
+		return nil, fmt.Errorf("decode rtpmanagers: %w", err)
+	}
+	return &managers, nil
+}
+
 // get performs an HTTP GET request
 func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)

@@ -16,6 +16,8 @@ resources:
   - rtpmanager.yaml
   - signaling.yaml
   - ui.yaml
+  # Tools
+  - dashboard.yaml
 
 labels:
   - pairs:

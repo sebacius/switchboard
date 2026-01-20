@@ -56,3 +56,17 @@ type Session struct {
 	Duration   int    `json:"duration"`
 	Status     string `json:"status"`
 }
+
+// RtpManager represents an RTP manager instance
+type RtpManager struct {
+	Address string `json:"address"`
+	Healthy bool   `json:"healthy"`
+}
+
+// RtpManagersResponse is the response from /api/v1/rtpmanagers
+type RtpManagersResponse struct {
+	TotalMembers   int          `json:"total_members"`
+	HealthyMembers int          `json:"healthy_members"`
+	ActiveSessions int          `json:"active_sessions"`
+	Members        []RtpManager `json:"members"`
+}

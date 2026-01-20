@@ -356,6 +356,7 @@ What logic lives where in the Switchboard codebase.
 - `GET /api/v1/registrations` - all bindings
 - `GET /api/v1/dialogs` - active dialogs
 - `GET /api/v1/sessions` - RTP sessions
+- `GET /api/v1/rtpmanagers` - connected RTP managers with health status
 - `SessionRecorder` - tracks session info
 
 ---
@@ -517,9 +518,10 @@ What logic lives where in the Switchboard codebase.
 **HTTP server**
 - `Server` struct
 - Route registration
-- `handleIndex()` - main dashboard
-- `handlePartial*()` - HTMX partials
-- Data aggregation from backends
+- `handleIndex()` - main dashboard with sidebar navigation
+- `handlePartial*()` - HTMX partials for live updates
+- Data aggregation from multiple signaling backends
+- Dashboard sections: Overview, Registrations, Dialogs, Sessions, RTP Managers
 
 ### `internal/ui/server/templates.go`
 **HTML templates**
@@ -532,6 +534,7 @@ What logic lives where in the Switchboard codebase.
 - `Client` struct
 - `GetStats()`, `GetRegistrations()`
 - `GetDialogs()`, `GetSessions()`
+- `GetRtpManagers()` - fetches connected RTP managers
 - Error handling
 
 ### `internal/ui/config/config.go`
