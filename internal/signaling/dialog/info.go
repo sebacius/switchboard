@@ -12,6 +12,7 @@ type Info struct {
 	LocalTag  string `json:"local_tag"`
 	RemoteTag string `json:"remote_tag"`
 	DialogID  string `json:"dialog_id"` // Composite: CallID + LocalTag + RemoteTag
+	Direction string `json:"direction"` // "inbound" or "outbound"
 
 	// URIs
 	LocalURI  string `json:"local_uri"`  // Our URI (To header in our response)
@@ -55,6 +56,7 @@ func (d *Dialog) ToInfo() *Info {
 		CallID:          d.CallID,
 		LocalTag:        d.LocalTag,
 		RemoteTag:       d.RemoteTag,
+		Direction:       d.Direction.String(),
 		State:           d.State.String(),
 		StateChangedAt:  d.StateChangedAt.Format(time.RFC3339),
 		CreatedAt:       d.CreatedAt.Format(time.RFC3339),

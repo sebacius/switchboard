@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<scenario name="UAC - call, send BYE">
+  <send><![CDATA[
+INVITE sip:[field1]@[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+From: <sip:[field0]@[remote_ip]>;tag=uac[call_number]
+To: <sip:[field1]@[remote_ip]>
+Call-ID: call-[call_number]@[local_ip]
+CSeq: 1 INVITE
+Contact: <sip:[field0]@[local_ip]:[local_port];transport=[transport]>
+Max-Forwards: 70
+Content-Type: application/sdp
+Content-Length: [len]
+
+v=0
+o=sipp 0 0 IN IP4 [local_ip]
+s=-
+c=IN IP4 [local_ip]
+t=0 0
+m=audio 5000 RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+  ]]></send>
+
+  <recv response="100" optional="true"/>
+  <recv response="180" optional="true"/>
+  <recv response="200" rtd="true"/>
+
+  <send><![CDATA[
+ACK [last_Request-URI] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+From: [last_From:]
+To: [last_To:]
+Call-ID: [last_Call-ID]
+CSeq: 1 ACK
+Max-Forwards: 70
+Content-Length: 0
+  ]]></send>
+
+  <pause milliseconds="1500"/>
+
+  <send><![CDATA[
+BYE [last_Request-URI] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+From: [last_From:]
+To: [last_To:]
+Call-ID: [last_Call-ID]
+CSeq: 2 BYE
+Max-Forwards: 70
+Content-Length: 0
+  ]]></send>
+
+  <recv response="200"/>
+</scenario>

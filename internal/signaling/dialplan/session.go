@@ -222,13 +222,43 @@ func (s *sessionImpl) Dial(ctx context.Context, target string, timeout time.Dura
 	// It sends BYE to the caller via the dialog manager
 	aLeg, err := s.callService.AdoptInboundLeg(s.dialog, s.sessionID,
 		b2bua.WithTeardownHandler(func(leg b2bua.Leg) {
+			cause := leg.GetTerminationCause()
+			dialogState := s.dialog.GetState()
+			s.logger.Info("[Session] A-leg teardown handler invoked",
+				"call_id", s.callID,
+				"cause", cause.String(),
+				"dialog_state", dialogState.String(),
+				"dialog_terminated", s.dialog.IsTerminated(),
+				"dialogMgr_nil", s.dialogMgr == nil,
+			)
+			// Don't send BYE if the remote party initiated (they sent BYE to us)
+			if cause == b2bua.TerminationCauseRemoteBYE {
+				s.logger.Debug("[Session] Skipping A-leg teardown BYE - remote initiated",
+					"call_id", s.callID,
+				)
+				return
+			}
 			if s.dialogMgr != nil && !s.dialog.IsTerminated() {
+				s.logger.Info("[Session] Sending BYE to A-leg via dialogMgr.Terminate",
+					"call_id", s.callID,
+					"dialog_state", dialogState.String(),
+				)
 				if err := s.dialogMgr.Terminate(s.callID, dialog.ReasonLocalBYE); err != nil {
 					s.logger.Warn("[Session] A-leg teardown BYE failed",
 						"call_id", s.callID,
 						"error", err,
 					)
+				} else {
+					s.logger.Info("[Session] A-leg BYE sent successfully",
+						"call_id", s.callID,
+					)
 				}
+			} else {
+				s.logger.Debug("[Session] Skipping A-leg teardown BYE - dialogMgr nil or dialog terminated",
+					"call_id", s.callID,
+					"dialogMgr_nil", s.dialogMgr == nil,
+					"dialog_terminated", s.dialog.IsTerminated(),
+				)
 			}
 		}),
 	)

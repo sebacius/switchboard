@@ -128,6 +128,59 @@ func (c *Client) RtpManagers(ctx context.Context) (*types.RtpManagersResponse, e
 	return &managers, nil
 }
 
+// DrainStatus represents the status of a drain operation
+type DrainStatus struct {
+	NodeID            string `json:"node_id"`
+	State             string `json:"state"`
+	Mode              string `json:"mode"`
+	InitialSessions   int    `json:"initial_sessions"`
+	RemainingSessions int    `json:"remaining_sessions"`
+	StartedAt         string `json:"started_at,omitempty"`
+}
+
+// StartDrain initiates a drain operation on an RTP manager node
+func (c *Client) StartDrain(ctx context.Context, nodeID, mode string) (*DrainStatus, error) {
+	path := fmt.Sprintf("/api/v1/rtpmanagers/%s/drain?mode=%s", nodeID, mode)
+	resp, err := c.post(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var status DrainStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("decode drain status: %w", err)
+	}
+	return &status, nil
+}
+
+// GetDrainStatus fetches the current drain status for an RTP manager node
+func (c *Client) GetDrainStatus(ctx context.Context, nodeID string) (*DrainStatus, error) {
+	path := fmt.Sprintf("/api/v1/rtpmanagers/%s/drain", nodeID)
+	resp, err := c.get(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var status DrainStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("decode drain status: %w", err)
+	}
+	return &status, nil
+}
+
+// CancelDrain cancels an in-progress drain operation
+func (c *Client) CancelDrain(ctx context.Context, nodeID string) error {
+	path := fmt.Sprintf("/api/v1/rtpmanagers/%s/drain", nodeID)
+	resp, err := c.delete(ctx, path)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
 // get performs an HTTP GET request
 func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
@@ -141,6 +194,46 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	return resp, nil
+}
+
+// post performs an HTTP POST request
+func (c *Client) post(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	return resp, nil
+}
+
+// delete performs an HTTP DELETE request
+func (c *Client) delete(ctx context.Context, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		resp.Body.Close()
 		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}

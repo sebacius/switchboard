@@ -368,15 +368,73 @@ spec:
 **Update signaling to use all RTP Managers:**
 ```yaml
 # In deploy/k8s/signaling.yaml
+# Format: nodeId=address,nodeId=address (node IDs match pod names)
 - name: RTPMANAGER_ADDRS
-  value: "localhost:9090,localhost:9091,localhost:9092"
+  value: "rtpmanager-0=localhost:9090,rtpmanager-1=localhost:9091,rtpmanager-2=localhost:9092"
 ```
 
 The signaling server's transport pool handles round-robin allocation with session affinity.
 
 **For multi-node production:**
 - Run one RTP Manager per node (all use port 9090)
-- Configure signaling with node IPs: `192.168.1.100:9090,192.168.1.101:9090`
+- Configure signaling with node IPs: `rtp1=192.168.1.100:9090,rtp2=192.168.1.101:9090`
+
+### Graceful Drain
+
+When scaling down RTP Managers or performing maintenance, use the graceful drain feature to migrate active sessions to other nodes without dropping calls.
+
+**How it works:**
+1. RTP Manager pod receives termination signal (e.g., scale down)
+2. PreStop hook calls the signaling server's drain API
+3. Signaling server marks the node as "draining" (no new sessions)
+4. Active sessions are migrated to healthy nodes via SIP re-INVITE
+5. Once all sessions are migrated, the pod shuts down
+
+**Automatic drain (Kubernetes):**
+
+The RTP Manager StatefulSet includes a PreStop hook that automatically triggers drain:
+
+```yaml
+lifecycle:
+  preStop:
+    exec:
+      command:
+        - /bin/sh
+        - -c
+        - |
+          curl -s -X POST "${SIGNALING_API_URL}/api/v1/rtpmanagers/${RTP_NODE_ID}/drain?mode=graceful"
+          # Wait for drain completion...
+```
+
+The `terminationGracePeriodSeconds` is set to 300 seconds to allow time for session migration.
+
+**Manual drain:**
+
+To manually drain a node before maintenance:
+
+```bash
+# Start drain
+curl -X POST "http://signaling:8080/api/v1/rtpmanagers/rtpmanager-0/drain?mode=graceful"
+
+# Check status
+curl "http://signaling:8080/api/v1/rtpmanagers/rtpmanager-0/drain"
+
+# Cancel if needed
+curl -X DELETE "http://signaling:8080/api/v1/rtpmanagers/rtpmanager-0/drain"
+```
+
+**Drain modes:**
+
+| Mode | Behavior |
+|------|----------|
+| `graceful` (default) | Waits for playback to complete, keeps failed sessions on old node |
+| `aggressive` | Terminates failed sessions, guarantees drain completion |
+
+**Best practices:**
+- Always scale down one RTP Manager at a time
+- Monitor drain status before proceeding with shutdown
+- Use `graceful` mode for planned maintenance
+- Use `aggressive` mode only for urgent node removal
 
 ### Audio Files
 

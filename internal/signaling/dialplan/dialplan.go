@@ -50,15 +50,6 @@ func (d *Dialplan) Match(destination string) (*Route, bool) {
 	return routes.Match(destination)
 }
 
-// Routes returns a copy of all routes for inspection.
-func (d *Dialplan) Routes() []*Route {
-	routes := d.routes.Load()
-	if routes == nil {
-		return nil
-	}
-	return *routes
-}
-
 // Reload reloads configuration from the file.
 // Thread-safe: atomic swap after successful parse.
 func (d *Dialplan) Reload() error {

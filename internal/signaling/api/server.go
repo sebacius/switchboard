@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sebas/switchboard/internal/signaling/dialog"
+	"github.com/sebas/switchboard/internal/signaling/drain"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 )
@@ -27,6 +29,14 @@ type RtpManagerProvider interface {
 	Stats() mediaclient.PoolStats
 }
 
+// DrainProvider provides drain operations for the API.
+// Implemented by drain.Coordinator.
+type DrainProvider interface {
+	StartDrain(ctx context.Context, req drain.DrainRequest) (*drain.DrainStatus, error)
+	GetDrainStatus(nodeID string) (*drain.DrainStatus, error)
+	CancelDrain(nodeID string) error
+}
+
 // Server provides HTTP API for the SIP proxy (headless, API only)
 type Server struct {
 	addr          string
@@ -34,6 +44,7 @@ type Server struct {
 	registrations RegistrationProvider
 	dialogMgr     dialog.DialogStore
 	rtpManagers   RtpManagerProvider
+	drainProvider DrainProvider
 	sessionsMu    sync.RWMutex
 	sessions      map[string]*SessionRecord
 	startTime     time.Time
@@ -79,6 +90,7 @@ func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog
 
 	// RTP Managers
 	mux.HandleFunc("/api/v1/rtpmanagers", s.handleRtpManagers)
+	mux.HandleFunc("/api/v1/rtpmanagers/", s.handleRtpManagerDrain)
 
 	// Admin
 	mux.HandleFunc("/api/v1/shutdown", s.handleShutdown)
@@ -362,8 +374,11 @@ func (s *Server) handleRtpManagers(w http.ResponseWriter, r *http.Request) {
 	members := make([]map[string]interface{}, 0, len(stats.Members))
 	for _, m := range stats.Members {
 		members = append(members, map[string]interface{}{
-			"address": m.Address,
-			"healthy": m.Healthy,
+			"node_id":       m.NodeID,
+			"address":       m.Address,
+			"healthy":       m.Healthy,
+			"drain_state":   m.DrainState.String(),
+			"session_count": m.SessionCount,
 		})
 	}
 
@@ -374,6 +389,142 @@ func (s *Server) handleRtpManagers(w http.ResponseWriter, r *http.Request) {
 		"members":         members,
 	}
 	s.writeJSON(w, response)
+}
+
+// SetDrainProvider sets the drain coordinator for drain API endpoints
+func (s *Server) SetDrainProvider(dp DrainProvider) {
+	s.drainProvider = dp
+}
+
+// handleRtpManagerDrain handles drain operations for specific RTP managers
+// POST /api/v1/rtpmanagers/{nodeId}/drain - Start drain
+// GET /api/v1/rtpmanagers/{nodeId}/drain - Get drain status
+// DELETE /api/v1/rtpmanagers/{nodeId}/drain - Cancel drain
+func (s *Server) handleRtpManagerDrain(w http.ResponseWriter, r *http.Request) {
+	// Parse node ID and endpoint from path
+	// Expected paths:
+	// - /api/v1/rtpmanagers/{nodeId}/drain
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/rtpmanagers/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) != 2 || parts[1] != "drain" {
+		http.Error(w, "Invalid path. Expected /api/v1/rtpmanagers/{nodeId}/drain", http.StatusNotFound)
+		return
+	}
+
+	nodeID := parts[0]
+	if nodeID == "" {
+		http.Error(w, "Node ID required", http.StatusBadRequest)
+		return
+	}
+
+	if s.drainProvider == nil {
+		http.Error(w, "Drain not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPost:
+		s.handleStartDrain(w, r, nodeID)
+	case http.MethodGet:
+		s.handleGetDrainStatus(w, nodeID)
+	case http.MethodDelete:
+		s.handleCancelDrain(w, nodeID)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleStartDrain initiates drain for a node
+func (s *Server) handleStartDrain(w http.ResponseWriter, r *http.Request, nodeID string) {
+	// Parse mode from query param
+	mode := drain.DrainModeGraceful
+	if modeParam := r.URL.Query().Get("mode"); modeParam != "" {
+		switch modeParam {
+		case "graceful":
+			mode = drain.DrainModeGraceful
+		case "aggressive":
+			mode = drain.DrainModeAggressive
+		default:
+			http.Error(w, "Invalid mode. Use 'graceful' or 'aggressive'", http.StatusBadRequest)
+			return
+		}
+	}
+
+	req := drain.DrainRequest{
+		NodeID: nodeID,
+		Mode:   mode,
+	}
+
+	// Use background context, NOT r.Context()!
+	// The HTTP request completes immediately, but drain runs in background.
+	// If we use r.Context(), it gets canceled when the response is sent,
+	// which would abort the drain operation before any migrations can happen.
+	status, err := s.drainProvider.StartDrain(context.Background(), req)
+	if err != nil {
+		slog.Error("[API] Failed to start drain", "node_id", nodeID, "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+	s.writeJSON(w, map[string]interface{}{
+		"message":        "Drain started",
+		"node_id":        status.NodeID,
+		"mode":           status.Mode,
+		"total_sessions": status.TotalSessions,
+	})
+}
+
+// handleGetDrainStatus returns the current drain status
+func (s *Server) handleGetDrainStatus(w http.ResponseWriter, nodeID string) {
+	status, err := s.drainProvider.GetDrainStatus(nodeID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	response := map[string]interface{}{
+		"node_id":          status.NodeID,
+		"state":            status.State.String(),
+		"mode":             status.Mode,
+		"total_sessions":   status.TotalSessions,
+		"waiting_playback": status.WaitingPlayback,
+		"migrated_count":   status.MigratedCount,
+		"failed_count":     status.FailedCount,
+	}
+
+	if !status.StartedAt.IsZero() {
+		response["started_at"] = status.StartedAt.Format(time.RFC3339)
+		response["elapsed_seconds"] = int(time.Since(status.StartedAt).Seconds())
+	}
+
+	if len(status.Errors) > 0 {
+		errors := make([]map[string]interface{}, 0, len(status.Errors))
+		for _, e := range status.Errors {
+			errors = append(errors, map[string]interface{}{
+				"session_id": e.SessionID,
+				"error":      e.Error,
+				"timestamp":  e.Timestamp.Format(time.RFC3339),
+			})
+		}
+		response["errors"] = errors
+	}
+
+	s.writeJSON(w, response)
+}
+
+// handleCancelDrain cancels an in-progress drain
+func (s *Server) handleCancelDrain(w http.ResponseWriter, nodeID string) {
+	if err := s.drainProvider.CancelDrain(nodeID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.writeJSON(w, map[string]interface{}{
+		"message": "Drain canceled",
+		"node_id": nodeID,
+	})
 }
 
 // --- Admin ---

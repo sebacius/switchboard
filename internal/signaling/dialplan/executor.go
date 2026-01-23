@@ -137,16 +137,6 @@ func (e *Executor) ExecuteRoute(ctx context.Context, session CallSession, route 
 	return nil
 }
 
-// Registry returns the action registry for extension.
-func (e *Executor) Registry() *ActionRegistry {
-	return e.registry
-}
-
-// Dialplan returns the underlying dialplan for inspection.
-func (e *Executor) Dialplan() *Dialplan {
-	return e.dialplan
-}
-
 // substituteVars replaces ${variable} placeholders in the params JSON with session values.
 // Supported variables:
 //   - ${destination} - dialed number (To URI user part)

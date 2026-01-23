@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -106,17 +107,8 @@ func (i *BridgeInfo) Duration() time.Duration {
 type BridgeOption func(*bridgeOptions)
 
 type bridgeOptions struct {
-	id           string
-	autoHangup   bool
-	onTerminated func(TerminationCause)
-	transport    mediaclient.Transport
-}
-
-// WithBridgeID sets a custom bridge ID.
-func WithBridgeID(id string) BridgeOption {
-	return func(o *bridgeOptions) {
-		o.id = id
-	}
+	autoHangup bool
+	transport  mediaclient.Transport
 }
 
 // WithAutoHangup configures whether legs should be hung up on termination.
@@ -124,13 +116,6 @@ func WithBridgeID(id string) BridgeOption {
 func WithAutoHangup(enable bool) BridgeOption {
 	return func(o *bridgeOptions) {
 		o.autoHangup = enable
-	}
-}
-
-// WithBridgeOnTerminated sets a termination callback during creation.
-func WithBridgeOnTerminated(fn func(TerminationCause)) BridgeOption {
-	return func(o *bridgeOptions) {
-		o.onTerminated = fn
 	}
 }
 
@@ -175,16 +160,17 @@ type bridgeImpl struct {
 	bytesA2B   int64
 	bytesB2A   int64
 
-	// Lifecycle
-	ctx    context.Context
-	cancel context.CancelFunc
+	// Lifecycle - Using done channel pattern instead of storing context
+	done      chan struct{}
+	closeOnce sync.Once
 
 	// Options
 	autoHangup bool
 
-	// Callbacks
-	terminatedCallbacks  []func(cause TerminationCause)
+	// Callbacks - using map with unique IDs to fix unregister bug
+	terminatedCallbacks  map[uint64]func(cause TerminationCause)
 	callbackMu           sync.Mutex
+	callbackIDCounter    atomic.Uint64
 	terminationWaiters   chan struct{}
 	terminationWaitersMu sync.Mutex
 }
@@ -202,29 +188,45 @@ func NewBridge(legA, legB Leg, opts ...BridgeOption) (Bridge, error) {
 		opt(options)
 	}
 
-	id := options.id
-	if id == "" {
-		id = "bridge-" + uuid.New().String()
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
+	id := "bridge-" + uuid.New().String()
 
 	bridge := &bridgeImpl{
-		id:                 id,
-		legA:               legA,
-		legB:               legB,
-		state:              BridgeStateCreated,
-		createdAt:          time.Now(),
-		autoHangup:         options.autoHangup,
-		transport:          options.transport,
-		ctx:                ctx,
-		cancel:             cancel,
-		terminationWaiters: make(chan struct{}),
+		id:                  id,
+		legA:                legA,
+		legB:                legB,
+		state:               BridgeStateCreated,
+		createdAt:           time.Now(),
+		autoHangup:          options.autoHangup,
+		transport:           options.transport,
+		done:                make(chan struct{}),
+		terminatedCallbacks: make(map[uint64]func(cause TerminationCause)),
+		terminationWaiters:  make(chan struct{}),
 	}
 
-	if options.onTerminated != nil {
-		bridge.terminatedCallbacks = append(bridge.terminatedCallbacks, options.onTerminated)
-	}
+	// Register leg termination monitoring immediately at creation time.
+	// This ensures we catch termination even if Start() hasn't been called yet,
+	// preventing race conditions where a leg terminates before callbacks are registered.
+	slog.Info("[Bridge] Registering leg termination callbacks",
+		"bridge_id", id,
+		"leg_a_id", legA.ID(),
+		"leg_a_call_id", legA.CallID(),
+		"leg_b_id", legB.ID(),
+		"leg_b_call_id", legB.CallID(),
+	)
+	legA.OnTerminated(func(cause TerminationCause) {
+		slog.Info("[Bridge] A-leg termination callback invoked",
+			"bridge_id", bridge.id,
+			"cause", cause.String(),
+		)
+		bridge.handleLegTerminated("leg_a", cause)
+	})
+	legB.OnTerminated(func(cause TerminationCause) {
+		slog.Info("[Bridge] B-leg termination callback invoked",
+			"bridge_id", bridge.id,
+			"cause", cause.String(),
+		)
+		bridge.handleLegTerminated("leg_b", cause)
+	})
 
 	return bridge, nil
 }
@@ -323,13 +325,8 @@ func (b *bridgeImpl) Start(ctx context.Context) error {
 	b.state = BridgeStateActive
 	b.startedAt = time.Now()
 
-	// Set up leg termination monitoring
-	b.legA.OnTerminated(func(cause TerminationCause) {
-		b.handleLegTerminated("leg_a", cause)
-	})
-	b.legB.OnTerminated(func(cause TerminationCause) {
-		b.handleLegTerminated("leg_b", cause)
-	})
+	// Note: Leg termination monitoring is set up in NewBridge() to avoid race conditions
+	// where a leg terminates before Start() is called.
 
 	slog.Info("[Bridge] Started",
 		"bridge_id", b.id,
@@ -374,12 +371,54 @@ func (b *bridgeImpl) Stop(hangupLegs bool) error {
 	// Hangup legs if requested
 	if hangupLegs {
 		ctx := context.Background()
-		if b.legA.GetState() == LegStateAnswered {
-			_ = b.legA.Hangup(ctx, TerminationCauseBridgePeer)
+		legAState := b.legA.GetState()
+		legBState := b.legB.GetState()
+		slog.Info("[Bridge] Stop() checking leg states for hangup",
+			"bridge_id", b.id,
+			"leg_a_id", b.legA.ID(),
+			"leg_a_state", legAState.String(),
+			"leg_b_id", b.legB.ID(),
+			"leg_b_state", legBState.String(),
+			"auto_hangup", hangupLegs,
+		)
+		if legAState == LegStateAnswered {
+			slog.Info("[Bridge] Hanging up A-leg",
+				"bridge_id", b.id,
+				"leg_a_id", b.legA.ID(),
+			)
+			if err := b.legA.Hangup(ctx, TerminationCauseBridgePeer); err != nil {
+				slog.Warn("[Bridge] A-leg hangup returned error",
+					"bridge_id", b.id,
+					"error", err,
+				)
+			}
+		} else {
+			slog.Debug("[Bridge] Skipping A-leg hangup - not in Answered state",
+				"bridge_id", b.id,
+				"leg_a_state", legAState.String(),
+			)
 		}
-		if b.legB.GetState() == LegStateAnswered {
-			_ = b.legB.Hangup(ctx, TerminationCauseBridgePeer)
+		if legBState == LegStateAnswered {
+			slog.Info("[Bridge] Hanging up B-leg",
+				"bridge_id", b.id,
+				"leg_b_id", b.legB.ID(),
+			)
+			if err := b.legB.Hangup(ctx, TerminationCauseBridgePeer); err != nil {
+				slog.Warn("[Bridge] B-leg hangup returned error",
+					"bridge_id", b.id,
+					"error", err,
+				)
+			}
+		} else {
+			slog.Debug("[Bridge] Skipping B-leg hangup - not in Answered state",
+				"bridge_id", b.id,
+				"leg_b_state", legBState.String(),
+			)
 		}
+	} else {
+		slog.Debug("[Bridge] Stop() skipping hangup - auto_hangup disabled",
+			"bridge_id", b.id,
+		)
 	}
 
 	b.mu.Lock()
@@ -394,8 +433,10 @@ func (b *bridgeImpl) Stop(hangupLegs bool) error {
 	cause := b.terminationCause
 	b.mu.Unlock()
 
-	// Cancel context to signal goroutines
-	b.cancel()
+	// Close done channel to signal goroutines (only once)
+	b.closeOnce.Do(func() {
+		close(b.done)
+	})
 
 	// Notify waiters
 	b.terminationWaitersMu.Lock()
@@ -440,17 +481,32 @@ func (b *bridgeImpl) WaitForTermination(ctx context.Context) (TerminationCause, 
 
 // --- Event Callbacks ---
 
+// OnTerminated registers a callback for termination.
+// Uses map-based registration with unique IDs to fix the bug where
+// unregistering a callback could cause index issues.
 func (b *bridgeImpl) OnTerminated(fn func(cause TerminationCause)) {
+	id := b.callbackIDCounter.Add(1)
+
 	b.callbackMu.Lock()
-	b.terminatedCallbacks = append(b.terminatedCallbacks, fn)
+	b.terminatedCallbacks[id] = fn
 	b.callbackMu.Unlock()
 }
 
 // --- Internal Methods ---
 
 func (b *bridgeImpl) handleLegTerminated(legName string, cause TerminationCause) {
+	slog.Debug("[Bridge] handleLegTerminated called",
+		"bridge_id", b.id,
+		"leg_name", legName,
+		"cause", cause.String(),
+	)
+
 	b.mu.Lock()
 	if b.state == BridgeStateTerminated || b.state == BridgeStateTerminating {
+		slog.Debug("[Bridge] handleLegTerminated skipping - already terminating",
+			"bridge_id", b.id,
+			"state", b.state.String(),
+		)
 		b.mu.Unlock()
 		return
 	}
@@ -474,8 +530,11 @@ func (b *bridgeImpl) handleLegTerminated(legName string, cause TerminationCause)
 
 func (b *bridgeImpl) notifyTerminated(cause TerminationCause) {
 	b.callbackMu.Lock()
-	callbacks := make([]func(cause TerminationCause), len(b.terminatedCallbacks))
-	copy(callbacks, b.terminatedCallbacks)
+	// Copy callbacks to slice for iteration (safe to iterate after unlock)
+	callbacks := make([]func(cause TerminationCause), 0, len(b.terminatedCallbacks))
+	for _, fn := range b.terminatedCallbacks {
+		callbacks = append(callbacks, fn)
+	}
 	b.callbackMu.Unlock()
 
 	for _, fn := range callbacks {

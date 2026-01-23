@@ -12,6 +12,10 @@ type DialogStore interface {
 	// Returns the dialog and any error.
 	CreateFromInvite(req *sip.Request, tx sip.ServerTransaction) (*Dialog, error)
 
+	// RegisterOutbound registers an outbound dialog after receiving 200 OK.
+	// Called when we initiated the INVITE and received a successful response.
+	RegisterOutbound(invite *sip.Request, resp *sip.Response) (*Dialog, error)
+
 	// SendTrying sends 100 Trying and transitions to Early state.
 	SendTrying(d *Dialog) error
 
@@ -35,6 +39,9 @@ type DialogStore interface {
 
 	// Get retrieves a dialog by Call-ID.
 	Get(callID string) (*Dialog, bool)
+
+	// FindBySessionID finds a dialog by its RTP session ID.
+	FindBySessionID(sessionID string) (*Dialog, bool)
 
 	// List returns all dialogs (including terminated ones pending cleanup).
 	List() []*Dialog

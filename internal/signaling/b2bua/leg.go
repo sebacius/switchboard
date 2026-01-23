@@ -2,7 +2,9 @@ package b2bua
 
 import (
 	"context"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -167,51 +169,11 @@ func (i *LegInfo) TalkDuration() time.Duration {
 type LegOption func(*legOptions)
 
 type legOptions struct {
-	id         string
-	earlyMedia bool
-	sdpOffer   []byte
-	onRinging  func(Leg)
-	onAnswered func(Leg)
-	callerID   string
-	callerName string
-	onTeardown func(Leg) // Called when leg is being torn down (before state change)
-}
-
-// WithLegID sets a custom leg ID instead of generating one.
-func WithLegID(id string) LegOption {
-	return func(o *legOptions) {
-		o.id = id
-	}
-}
-
-// WithEarlyMedia enables early media (183 Session Progress).
-// When enabled, media session is created before 200 OK.
-func WithEarlyMedia(enable bool) LegOption {
-	return func(o *legOptions) {
-		o.earlyMedia = enable
-	}
-}
-
-// WithSDPOffer provides the SDP offer for outbound legs.
-// If not provided, a new SDP will be generated.
-func WithSDPOffer(sdp []byte) LegOption {
-	return func(o *legOptions) {
-		o.sdpOffer = sdp
-	}
-}
-
-// WithOnRinging sets a callback when leg enters Ringing state.
-func WithOnRinging(fn func(Leg)) LegOption {
-	return func(o *legOptions) {
-		o.onRinging = fn
-	}
-}
-
-// WithOnAnswered sets a callback when leg enters Answered state.
-func WithOnAnswered(fn func(Leg)) LegOption {
-	return func(o *legOptions) {
-		o.onAnswered = fn
-	}
+	callerID      string
+	callerName    string
+	onTeardown    func(Leg) // Called when leg is being torn down (before state change)
+	aLegSessionID string    // A-leg session ID for bridging on same RTP manager
+	aLegCallID    string    // A-leg Call-ID for BridgeMapper lookup (drain migration)
 }
 
 // WithCallerID sets the caller ID (From URI user part) for outbound legs.
@@ -237,6 +199,24 @@ func WithCallerName(callerName string) LegOption {
 func WithTeardownHandler(fn func(Leg)) LegOption {
 	return func(o *legOptions) {
 		o.onTeardown = fn
+	}
+}
+
+// WithALegSessionID sets the A-leg's RTP session ID for the B-leg.
+// This ensures the B-leg is created on the same RTP manager as the A-leg,
+// which is required for RTP bridging.
+func WithALegSessionID(sessionID string) LegOption {
+	return func(o *legOptions) {
+		o.aLegSessionID = sessionID
+	}
+}
+
+// WithALegCallID sets the A-leg's SIP Call-ID for the B-leg.
+// This is used by the BridgeMapper to associate A-leg and B-leg dialogs,
+// enabling the drain/migration feature to migrate both legs together.
+func WithALegCallID(callID string) LegOption {
+	return func(o *legOptions) {
+		o.aLegCallID = callID
 	}
 }
 
@@ -285,18 +265,26 @@ type legImpl struct {
 	// Outbound dialog state (for sending BYE)
 	// These are populated from the 200 OK response
 	remoteContactURI string // Contact header from 200 OK - used as Request-URI for BYE
+	remoteToURI      string // To header URI from INVITE - used as To header in BYE
+	localFromURI     string // From header URI from INVITE - used as From header in BYE
 	remoteTag        string // Tag from To header in 200 OK
 	localTag         string // Our From tag
 
-	// Lifecycle
-	ctx    context.Context
-	cancel context.CancelFunc
+	// Lifecycle - Using done channel pattern instead of storing context
+	// This follows Go best practices: contexts are for passing to functions,
+	// done channels are for signaling termination in long-lived objects
+	done      chan struct{}
+	closeOnce sync.Once
 
-	// Callbacks
-	stateChangeCallbacks  []func(old, new LegState)
-	terminatedCallbacks   []func(cause TerminationCause)
-	stateChangeCallbackMu sync.Mutex
-	onTeardown            func(Leg) // Called before teardown to send SIP BYE
+	// State change notification - replaces polling in WaitForState
+	stateChanged chan struct{}
+
+	// Callbacks - using map with unique IDs to fix unregister bug
+	stateChangeCallbacks map[uint64]func(old, new LegState)
+	terminatedCallbacks  map[uint64]func(cause TerminationCause)
+	callbackMu           sync.Mutex
+	callbackIDCounter    atomic.Uint64
+	onTeardown           func(Leg) // Called before teardown to send SIP BYE
 }
 
 // NewInboundLeg creates a leg from an existing inbound dialog.
@@ -311,15 +299,7 @@ func NewInboundLeg(dlg *dialog.Dialog, sessionID string, opts ...LegOption) (Leg
 		opt(options)
 	}
 
-	id := options.id
-	if id == "" {
-		id = "leg-" + uuid.New().String()
-	}
-
-	// Derive the leg's context from the dialog's context.
-	// This ensures that when the dialog is terminated (e.g., caller sends BYE),
-	// the leg's context is also canceled, allowing proper teardown propagation.
-	ctx, cancel := context.WithCancel(dlg.Context())
+	id := "leg-" + uuid.New().String()
 
 	// Determine initial state based on dialog state
 	// If the dialog has already sent 200 OK, the leg is answered
@@ -338,19 +318,25 @@ func NewInboundLeg(dlg *dialog.Dialog, sessionID string, opts ...LegOption) (Leg
 	}
 
 	leg := &legImpl{
-		id:         id,
-		callID:     dlg.CallID,
-		direction:  LegDirectionInbound,
-		state:      initialState,
-		dialog:     dlg,
-		sessionID:  sessionID,
-		createdAt:  now,
-		ringingAt:  now,
-		answeredAt: answeredAt,
-		ctx:        ctx,
-		cancel:     cancel,
-		onTeardown: options.onTeardown,
+		id:                   id,
+		callID:               dlg.CallID,
+		direction:            LegDirectionInbound,
+		state:                initialState,
+		dialog:               dlg,
+		sessionID:            sessionID,
+		createdAt:            now,
+		ringingAt:            now,
+		answeredAt:           answeredAt,
+		done:                 make(chan struct{}),
+		stateChanged:         make(chan struct{}),
+		stateChangeCallbacks: make(map[uint64]func(old, new LegState)),
+		terminatedCallbacks:  make(map[uint64]func(cause TerminationCause)),
+		onTeardown:           options.onTeardown,
 	}
+
+	// Monitor dialog context for termination (e.g., caller sends BYE)
+	// This ensures the leg is destroyed when the dialog terminates
+	go leg.monitorDialogContext(dlg.Context())
 
 	// Extract SIP addressing from dialog
 	// Extract From/To URIs from the INVITE request
@@ -383,23 +369,20 @@ func NewOutboundLeg(callID, targetURI string, opts ...LegOption) (Leg, error) {
 		opt(options)
 	}
 
-	id := options.id
-	if id == "" {
-		id = "leg-" + uuid.New().String()
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
+	id := "leg-" + uuid.New().String()
 
 	leg := &legImpl{
-		id:         id,
-		callID:     callID,
-		direction:  LegDirectionOutbound,
-		state:      LegStateCreated,
-		toURI:      targetURI,
-		createdAt:  time.Now(),
-		ctx:        ctx,
-		cancel:     cancel,
-		onTeardown: options.onTeardown,
+		id:                   id,
+		callID:               callID,
+		direction:            LegDirectionOutbound,
+		state:                LegStateCreated,
+		toURI:                targetURI,
+		createdAt:            time.Now(),
+		done:                 make(chan struct{}),
+		stateChanged:         make(chan struct{}),
+		stateChangeCallbacks: make(map[uint64]func(old, new LegState)),
+		terminatedCallbacks:  make(map[uint64]func(cause TerminationCause)),
+		onTeardown:           options.onTeardown,
 	}
 
 	return leg, nil
@@ -434,12 +417,13 @@ func (l *legImpl) GetTerminationCause() TerminationCause {
 }
 
 func (l *legImpl) WaitForState(ctx context.Context, target LegState) error {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
 	for {
 		l.mu.RLock()
 		current := l.state
+		// Get the current stateChanged channel under the same lock
+		// This prevents race conditions where state changes between
+		// checking state and waiting on channel
+		stateChangedCh := l.stateChanged
 		l.mu.RUnlock()
 
 		// Check if we've reached the target state
@@ -455,12 +439,14 @@ func (l *legImpl) WaitForState(ctx context.Context, target LegState) error {
 			return ErrLegTerminated
 		}
 
+		// Wait for state change, context cancellation, or leg destruction
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-l.ctx.Done():
+		case <-l.done:
 			return ErrLegTerminated
-		case <-ticker.C:
+		case <-stateChangedCh:
+			// State changed, loop back to check
 			continue
 		}
 	}
@@ -480,8 +466,16 @@ func (l *legImpl) SessionID() string {
 	return l.sessionID
 }
 
+// Context returns a context that is canceled when the leg is destroyed.
+// This is derived from the done channel, following Go best practices
+// of not storing contexts in structs.
 func (l *legImpl) Context() context.Context {
-	return l.ctx
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-l.done
+		cancel()
+	}()
+	return ctx
 }
 
 // --- Info Method ---
@@ -550,8 +544,19 @@ func (l *legImpl) Answer(ctx context.Context) error {
 }
 
 func (l *legImpl) Hangup(ctx context.Context, cause TerminationCause) error {
+	slog.Debug("[Leg] Hangup called",
+		"leg_id", l.id,
+		"call_id", l.callID,
+		"direction", l.direction.String(),
+		"cause", cause.String(),
+	)
+
 	l.mu.Lock()
 	if l.state.IsTerminal() {
+		slog.Debug("[Leg] Hangup skipping - already terminal",
+			"leg_id", l.id,
+			"state", l.state.String(),
+		)
 		l.mu.Unlock()
 		return nil // Already terminated, safe to call multiple times
 	}
@@ -571,11 +576,24 @@ func (l *legImpl) Hangup(ctx context.Context, cause TerminationCause) error {
 	// This is called AFTER marking state to prevent infinite recursion
 	// if the handler calls Hangup again
 	if teardownFn != nil {
+		slog.Debug("[Leg] Calling teardown handler",
+			"leg_id", l.id,
+			"call_id", l.callID,
+		)
 		teardownFn(l)
+		slog.Debug("[Leg] Teardown handler completed",
+			"leg_id", l.id,
+		)
+	} else {
+		slog.Debug("[Leg] No teardown handler registered",
+			"leg_id", l.id,
+		)
 	}
 
-	// Cancel context to signal goroutines
-	l.cancel()
+	// Close done channel to signal goroutines (only once)
+	l.closeOnce.Do(func() {
+		close(l.done)
+	})
 
 	l.notifyStateChange(oldState, LegStateDestroyed)
 	l.notifyTerminated(cause)
@@ -589,28 +607,32 @@ func (l *legImpl) Destroy() {
 
 // --- Event Callbacks ---
 
+// OnStateChange registers a callback for state transitions.
+// Returns a function to unregister the callback.
+// Uses map-based registration with unique IDs to fix the bug where
+// unregistering a callback could cause index issues.
 func (l *legImpl) OnStateChange(fn func(old, new LegState)) func() {
-	l.stateChangeCallbackMu.Lock()
-	l.stateChangeCallbacks = append(l.stateChangeCallbacks, fn)
-	idx := len(l.stateChangeCallbacks) - 1
-	l.stateChangeCallbackMu.Unlock()
+	id := l.callbackIDCounter.Add(1)
+
+	l.callbackMu.Lock()
+	l.stateChangeCallbacks[id] = fn
+	l.callbackMu.Unlock()
 
 	return func() {
-		l.stateChangeCallbackMu.Lock()
-		if idx < len(l.stateChangeCallbacks) {
-			l.stateChangeCallbacks = append(
-				l.stateChangeCallbacks[:idx],
-				l.stateChangeCallbacks[idx+1:]...,
-			)
-		}
-		l.stateChangeCallbackMu.Unlock()
+		l.callbackMu.Lock()
+		delete(l.stateChangeCallbacks, id)
+		l.callbackMu.Unlock()
 	}
 }
 
+// OnTerminated registers a callback for termination.
+// Called once when leg reaches Destroyed state.
 func (l *legImpl) OnTerminated(fn func(cause TerminationCause)) {
-	l.stateChangeCallbackMu.Lock()
-	l.terminatedCallbacks = append(l.terminatedCallbacks, fn)
-	l.stateChangeCallbackMu.Unlock()
+	id := l.callbackIDCounter.Add(1)
+
+	l.callbackMu.Lock()
+	l.terminatedCallbacks[id] = fn
+	l.callbackMu.Unlock()
 }
 
 // --- Internal Methods ---
@@ -636,9 +658,17 @@ func (l *legImpl) TransitionTo(newState LegState) error {
 		l.terminatedAt = time.Now()
 	}
 
+	// Signal state change by replacing the channel (broadcast pattern)
+	// Any goroutine waiting on the old channel will be woken up
+	oldCh := l.stateChanged
+	l.stateChanged = make(chan struct{})
+
 	// Release lock before notifying callbacks to prevent deadlock
 	// if callbacks try to access the leg (e.g., call GetState())
 	l.mu.Unlock()
+
+	// Close old channel to wake up any waiting goroutines
+	close(oldCh)
 
 	l.notifyStateChange(oldState, newState)
 	return nil
@@ -647,7 +677,7 @@ func (l *legImpl) TransitionTo(newState LegState) error {
 // SetDialog sets the SIP dialog for this leg.
 func (l *legImpl) SetDialog(dlg *dialog.Dialog) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	direction := l.direction
 	l.dialog = dlg
 
 	if dlg != nil {
@@ -664,6 +694,14 @@ func (l *legImpl) SetDialog(dlg *dialog.Dialog) {
 				l.remoteURI = contact.Address.String()
 			}
 		}
+	}
+	l.mu.Unlock()
+
+	// For outbound legs, start monitoring the dialog context for termination.
+	// Inbound legs start monitoring in NewInboundLeg().
+	// This ensures the B-leg is destroyed when the remote party sends BYE.
+	if dlg != nil && direction == LegDirectionOutbound {
+		go l.monitorDialogContext(dlg.Context())
 	}
 }
 
@@ -708,19 +746,26 @@ func (l *legImpl) SetTerminationCause(cause TerminationCause) {
 
 // SetOutboundDialogState stores the dialog state needed to send BYE for outbound legs.
 // This should be called when the 200 OK is received.
-func (l *legImpl) SetOutboundDialogState(remoteContactURI, remoteTag, localTag string) {
+// - remoteContactURI: Contact header from 200 OK (used as Request-URI in BYE)
+// - remoteToURI: To header URI from INVITE (used as To header in BYE)
+// - localFromURI: From header URI from INVITE (used as From header in BYE)
+// - remoteTag: Tag from To header in 200 OK
+// - localTag: Our From tag from INVITE
+func (l *legImpl) SetOutboundDialogState(remoteContactURI, remoteToURI, localFromURI, remoteTag, localTag string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.remoteContactURI = remoteContactURI
+	l.remoteToURI = remoteToURI
+	l.localFromURI = localFromURI
 	l.remoteTag = remoteTag
 	l.localTag = localTag
 }
 
 // GetOutboundDialogState returns the dialog state for sending BYE.
-func (l *legImpl) GetOutboundDialogState() (remoteContactURI, remoteTag, localTag string) {
+func (l *legImpl) GetOutboundDialogState() (remoteContactURI, remoteToURI, localFromURI, remoteTag, localTag string) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return l.remoteContactURI, l.remoteTag, l.localTag
+	return l.remoteContactURI, l.remoteToURI, l.localFromURI, l.remoteTag, l.localTag
 }
 
 // SetTeardownHandler sets the teardown callback.
@@ -733,10 +778,13 @@ func (l *legImpl) SetTeardownHandler(fn func(Leg)) {
 
 // notifyStateChange invokes registered state change callbacks.
 func (l *legImpl) notifyStateChange(old, new LegState) {
-	l.stateChangeCallbackMu.Lock()
-	callbacks := make([]func(old, new LegState), len(l.stateChangeCallbacks))
-	copy(callbacks, l.stateChangeCallbacks)
-	l.stateChangeCallbackMu.Unlock()
+	l.callbackMu.Lock()
+	// Copy callbacks to slice for iteration (safe to iterate after unlock)
+	callbacks := make([]func(old, new LegState), 0, len(l.stateChangeCallbacks))
+	for _, fn := range l.stateChangeCallbacks {
+		callbacks = append(callbacks, fn)
+	}
+	l.callbackMu.Unlock()
 
 	for _, fn := range callbacks {
 		fn(old, new)
@@ -745,13 +793,41 @@ func (l *legImpl) notifyStateChange(old, new LegState) {
 
 // notifyTerminated invokes registered termination callbacks.
 func (l *legImpl) notifyTerminated(cause TerminationCause) {
-	l.stateChangeCallbackMu.Lock()
-	callbacks := make([]func(cause TerminationCause), len(l.terminatedCallbacks))
-	copy(callbacks, l.terminatedCallbacks)
-	l.stateChangeCallbackMu.Unlock()
+	l.callbackMu.Lock()
+	// Copy callbacks to slice for iteration (safe to iterate after unlock)
+	callbacks := make([]func(cause TerminationCause), 0, len(l.terminatedCallbacks))
+	for _, fn := range l.terminatedCallbacks {
+		callbacks = append(callbacks, fn)
+	}
+	numCallbacks := len(callbacks)
+	l.callbackMu.Unlock()
 
-	for _, fn := range callbacks {
+	slog.Debug("[Leg] Notifying termination callbacks",
+		"leg_id", l.id,
+		"call_id", l.callID,
+		"cause", cause.String(),
+		"num_callbacks", numCallbacks,
+	)
+
+	for i, fn := range callbacks {
+		slog.Debug("[Leg] Invoking termination callback",
+			"leg_id", l.id,
+			"callback_index", i,
+		)
 		fn(cause)
+	}
+}
+
+// monitorDialogContext monitors the dialog's context for termination.
+// When the dialog context is canceled (e.g., BYE received), the leg is destroyed.
+func (l *legImpl) monitorDialogContext(dlgCtx context.Context) {
+	select {
+	case <-dlgCtx.Done():
+		// Dialog was terminated, destroy the leg
+		_ = l.Hangup(context.Background(), TerminationCauseRemoteBYE)
+	case <-l.done:
+		// Leg was destroyed by other means, stop monitoring
+		return
 	}
 }
 

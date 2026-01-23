@@ -9,8 +9,40 @@ import (
 	"time"
 )
 
+// DrainState represents the lifecycle state of a pool member
+type DrainState uint32
+
+const (
+	// StateActive - member is accepting new sessions
+	StateActive DrainState = iota
+	// StateDraining - member is not accepting new sessions, migrating existing
+	StateDraining
+	// StateDisabled - member is fully drained and removed from rotation
+	StateDisabled
+)
+
+// String returns the string representation of DrainState
+func (s DrainState) String() string {
+	switch s {
+	case StateActive:
+		return "active"
+	case StateDraining:
+		return "draining"
+	case StateDisabled:
+		return "disabled"
+	default:
+		return "unknown"
+	}
+}
+
 // PoolConfig holds configuration for the RTP manager pool
 type PoolConfig struct {
+	// NodeAddresses maps node ID to address (e.g., "rtpmanager-0" -> "localhost:9090")
+	// If empty, Addresses is used with auto-generated IDs
+	NodeAddresses map[string]string
+
+	// Addresses is deprecated, use NodeAddresses instead
+	// If NodeAddresses is empty, these addresses get auto-generated IDs (node-0, node-1, etc.)
 	Addresses           []string
 	ConnectTimeout      time.Duration
 	KeepaliveInterval   time.Duration
@@ -34,35 +66,60 @@ func DefaultPoolConfig() PoolConfig {
 
 // poolMember represents a single RTP manager in the pool
 type poolMember struct {
-	address      string
+	id           string // Node ID (e.g., "rtpmanager-0")
+	address      string // Network address (e.g., "localhost:9090")
 	transport    *GRPCTransport
 	healthy      atomic.Bool
+	drainState   atomic.Uint32 // DrainState
 	failCount    atomic.Int32
 	successCount atomic.Int32
 }
 
+// DrainState returns the current drain state
+func (m *poolMember) DrainState() DrainState {
+	return DrainState(m.drainState.Load())
+}
+
+// SetDrainState atomically updates drain state
+func (m *poolMember) SetDrainState(state DrainState) {
+	m.drainState.Store(uint32(state))
+}
+
 // Pool manages multiple RTP managers with load balancing and health checking
 type Pool struct {
-	mu            sync.RWMutex
-	members       []*poolMember
-	sessionToAddr map[string]string // sessionID -> member address (affinity)
-	nextIndex     atomic.Uint64     // for round-robin
-	config        PoolConfig
-	stopCh        chan struct{}
-	wg            sync.WaitGroup
+	mu             sync.RWMutex
+	members        []*poolMember
+	membersByID    map[string]*poolMember         // nodeID -> member (fast lookup)
+	sessionToNode  map[string]string              // sessionID -> nodeID (affinity)
+	nodeToSessions map[string]map[string]struct{} // nodeID -> set of sessionIDs (reverse index)
+	nextIndex      atomic.Uint64                  // for round-robin
+	config         PoolConfig
+	stopCh         chan struct{}
+	wg             sync.WaitGroup
 }
 
 // NewPool creates a new RTP manager pool
 func NewPool(cfg PoolConfig) (*Pool, error) {
-	if len(cfg.Addresses) == 0 {
-		return nil, fmt.Errorf("no RTP manager addresses provided")
+	// Build node addresses map - either from NodeAddresses or auto-generate from Addresses
+	nodeAddresses := cfg.NodeAddresses
+	if len(nodeAddresses) == 0 {
+		if len(cfg.Addresses) == 0 {
+			return nil, fmt.Errorf("no RTP manager addresses provided")
+		}
+		// Auto-generate node IDs
+		nodeAddresses = make(map[string]string, len(cfg.Addresses))
+		for i, addr := range cfg.Addresses {
+			nodeAddresses[fmt.Sprintf("node-%d", i)] = addr
+		}
 	}
 
 	p := &Pool{
-		members:       make([]*poolMember, 0, len(cfg.Addresses)),
-		sessionToAddr: make(map[string]string),
-		config:        cfg,
-		stopCh:        make(chan struct{}),
+		members:        make([]*poolMember, 0, len(nodeAddresses)),
+		membersByID:    make(map[string]*poolMember, len(nodeAddresses)),
+		sessionToNode:  make(map[string]string),
+		nodeToSessions: make(map[string]map[string]struct{}),
+		config:         cfg,
+		stopCh:         make(chan struct{}),
 	}
 
 	// Create connections to all RTP managers
@@ -72,27 +129,31 @@ func NewPool(cfg PoolConfig) (*Pool, error) {
 		KeepaliveTimeout:  cfg.KeepaliveTimeout,
 	}
 
-	for _, addr := range cfg.Addresses {
+	for nodeID, addr := range nodeAddresses {
 		grpcCfg.Address = addr
 		transport, err := NewGRPCTransport(grpcCfg)
 		if err != nil {
-			slog.Warn("[Pool] Failed to connect to RTP manager", "address", addr, "error", err)
+			slog.Warn("[Pool] Failed to connect to RTP manager", "node_id", nodeID, "address", addr, "error", err)
 			// Continue - we'll mark it unhealthy and retry via health checks
 			member := &poolMember{
+				id:      nodeID,
 				address: addr,
 			}
 			member.healthy.Store(false)
 			p.members = append(p.members, member)
+			p.membersByID[nodeID] = member
 			continue
 		}
 
 		member := &poolMember{
+			id:        nodeID,
 			address:   addr,
 			transport: transport,
 		}
 		member.healthy.Store(true)
 		p.members = append(p.members, member)
-		slog.Info("[Pool] Connected to RTP manager", "address", addr)
+		p.membersByID[nodeID] = member
+		slog.Info("[Pool] Connected to RTP manager", "node_id", nodeID, "address", addr)
 	}
 
 	// Check we have at least one healthy member
@@ -183,53 +244,196 @@ func (p *Pool) checkMemberHealth(member *poolMember) bool {
 	return member.transport.Ready()
 }
 
-// selectMember picks a healthy member using round-robin
+// ErrNoAvailableMembers is returned when no RTP managers are available for new sessions
+var ErrNoAvailableMembers = fmt.Errorf("no available RTP managers")
+
+// selectMember picks a healthy, active member using round-robin
 func (p *Pool) selectMember() (*poolMember, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	// Count healthy members
-	healthyMembers := make([]*poolMember, 0)
+	// Filter to healthy, active members only (skip draining/disabled)
+	availableMembers := make([]*poolMember, 0)
 	for _, m := range p.members {
-		if m.healthy.Load() && m.transport != nil {
-			healthyMembers = append(healthyMembers, m)
+		if m.healthy.Load() && m.transport != nil && m.DrainState() == StateActive {
+			availableMembers = append(availableMembers, m)
 		}
 	}
 
-	if len(healthyMembers) == 0 {
-		return nil, fmt.Errorf("no healthy RTP managers available")
+	if len(availableMembers) == 0 {
+		return nil, ErrNoAvailableMembers
 	}
 
 	// Round-robin selection
-	idx := p.nextIndex.Add(1) % uint64(len(healthyMembers))
-	return healthyMembers[idx], nil
-}
-
-// getMemberByAddress returns the member for a specific address
-func (p *Pool) getMemberByAddress(addr string) *poolMember {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	for _, m := range p.members {
-		if m.address == addr {
-			return m
-		}
-	}
-	return nil
+	idx := p.nextIndex.Add(1) % uint64(len(availableMembers))
+	return availableMembers[idx], nil
 }
 
 // getMemberForSession returns the member that owns a session (affinity)
 func (p *Pool) getMemberForSession(sessionID string) (*poolMember, bool) {
 	p.mu.RLock()
-	addr, ok := p.sessionToAddr[sessionID]
+	nodeID, ok := p.sessionToNode[sessionID]
 	p.mu.RUnlock()
 
 	if !ok {
 		return nil, false
 	}
 
-	member := p.getMemberByAddress(addr)
+	member := p.GetMemberByID(nodeID)
 	return member, member != nil
+}
+
+// GetMemberByID returns the member for a specific node ID
+func (p *Pool) GetMemberByID(nodeID string) *poolMember {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.membersByID[nodeID]
+}
+
+// trackSession adds session tracking in both directions (requires lock held)
+func (p *Pool) trackSession(sessionID, nodeID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.sessionToNode[sessionID] = nodeID
+
+	if p.nodeToSessions[nodeID] == nil {
+		p.nodeToSessions[nodeID] = make(map[string]struct{})
+	}
+	p.nodeToSessions[nodeID][sessionID] = struct{}{}
+}
+
+// untrackSession removes session tracking in both directions (requires lock held)
+func (p *Pool) untrackSession(sessionID string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if nodeID, ok := p.sessionToNode[sessionID]; ok {
+		delete(p.sessionToNode, sessionID)
+		if sessions, exists := p.nodeToSessions[nodeID]; exists {
+			delete(sessions, sessionID)
+			if len(sessions) == 0 {
+				delete(p.nodeToSessions, nodeID)
+			}
+		}
+	}
+}
+
+// SessionsOnNode returns all session IDs on a specific node
+func (p *Pool) SessionsOnNode(nodeID string) []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	sessions, ok := p.nodeToSessions[nodeID]
+	if !ok {
+		return nil
+	}
+
+	result := make([]string, 0, len(sessions))
+	for sessionID := range sessions {
+		result = append(result, sessionID)
+	}
+	return result
+}
+
+// StartDrain initiates drain for a node, marking it as draining
+func (p *Pool) StartDrain(nodeID string) error {
+	member := p.GetMemberByID(nodeID)
+	if member == nil {
+		return fmt.Errorf("node not found: %s", nodeID)
+	}
+
+	// Only allow transitioning from Active to Draining
+	if member.DrainState() != StateActive {
+		return fmt.Errorf("node %s is not in active state (current: %s)", nodeID, member.DrainState())
+	}
+
+	member.SetDrainState(StateDraining)
+	slog.Info("[Pool] Node drain started", "node_id", nodeID)
+	return nil
+}
+
+// CompleteDrain marks a node as fully drained (disabled)
+func (p *Pool) CompleteDrain(nodeID string) error {
+	member := p.GetMemberByID(nodeID)
+	if member == nil {
+		return fmt.Errorf("node not found: %s", nodeID)
+	}
+
+	if member.DrainState() != StateDraining {
+		return fmt.Errorf("node %s is not in draining state (current: %s)", nodeID, member.DrainState())
+	}
+
+	member.SetDrainState(StateDisabled)
+	slog.Info("[Pool] Node drain completed", "node_id", nodeID)
+	return nil
+}
+
+// CancelDrain cancels drain and returns node to active state
+// Also used to re-enable a disabled node
+func (p *Pool) CancelDrain(nodeID string) error {
+	member := p.GetMemberByID(nodeID)
+	if member == nil {
+		return fmt.Errorf("node not found: %s", nodeID)
+	}
+
+	currentState := member.DrainState()
+	if currentState == StateActive {
+		return fmt.Errorf("node %s is already active", nodeID)
+	}
+
+	member.SetDrainState(StateActive)
+	if currentState == StateDraining {
+		slog.Info("[Pool] Node drain canceled", "node_id", nodeID)
+	} else {
+		slog.Info("[Pool] Node re-enabled", "node_id", nodeID)
+	}
+	return nil
+}
+
+// CreateSessionOnNode creates a session on a specific node (for migration)
+func (p *Pool) CreateSessionOnNode(ctx context.Context, nodeID string, info SessionInfo) (*SessionResult, error) {
+	member := p.GetMemberByID(nodeID)
+	if member == nil {
+		return nil, fmt.Errorf("node not found: %s", nodeID)
+	}
+
+	if !member.healthy.Load() || member.transport == nil {
+		return nil, fmt.Errorf("node %s is not healthy", nodeID)
+	}
+
+	// Allow creating on draining nodes for migration purposes (only block disabled)
+	if member.DrainState() == StateDisabled {
+		return nil, fmt.Errorf("node %s is disabled", nodeID)
+	}
+
+	result, err := member.transport.CreateSession(ctx, info)
+	if err != nil {
+		member.failCount.Add(1)
+		return nil, fmt.Errorf("CreateSession on %s failed: %w", member.address, err)
+	}
+
+	p.trackSession(result.SessionID, member.id)
+
+	slog.Debug("[Pool] Session created on specific node",
+		"session_id", result.SessionID,
+		"node_id", member.id,
+		"rtp_manager", member.address,
+	)
+
+	return result, nil
+}
+
+// ListNodes returns all node IDs in the pool
+func (p *Pool) ListNodes() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	nodes := make([]string, 0, len(p.members))
+	for _, m := range p.members {
+		nodes = append(nodes, m.id)
+	}
+	return nodes
 }
 
 // CreateSession implements Transport.CreateSession with load balancing
@@ -246,13 +450,12 @@ func (p *Pool) CreateSession(ctx context.Context, info SessionInfo) (*SessionRes
 		return nil, fmt.Errorf("CreateSession on %s failed: %w", member.address, err)
 	}
 
-	// Track session affinity
-	p.mu.Lock()
-	p.sessionToAddr[result.SessionID] = member.address
-	p.mu.Unlock()
+	// Track session affinity (both directions)
+	p.trackSession(result.SessionID, member.id)
 
 	slog.Debug("[Pool] Session created",
 		"session_id", result.SessionID,
+		"node_id", member.id,
 		"rtp_manager", member.address,
 	)
 
@@ -268,10 +471,8 @@ func (p *Pool) DestroySession(ctx context.Context, sessionID string, reason Term
 
 	err := member.transport.DestroySession(ctx, sessionID, reason)
 
-	// Remove affinity tracking
-	p.mu.Lock()
-	delete(p.sessionToAddr, sessionID)
-	p.mu.Unlock()
+	// Remove affinity tracking (both directions)
+	p.untrackSession(sessionID)
 
 	return err
 }
@@ -309,13 +510,46 @@ func (p *Pool) CreateSessionPendingRemote(ctx context.Context, callID string, co
 		return nil, fmt.Errorf("CreateSessionPendingRemote on %s failed: %w", member.address, err)
 	}
 
-	// Track session affinity
-	p.mu.Lock()
-	p.sessionToAddr[result.SessionID] = member.address
-	p.mu.Unlock()
+	// Track session affinity (both directions)
+	p.trackSession(result.SessionID, member.id)
 
 	slog.Debug("[Pool] Session created (pending remote)",
 		"session_id", result.SessionID,
+		"node_id", member.id,
+		"rtp_manager", member.address,
+	)
+
+	return result, nil
+}
+
+// CreateSessionPendingRemoteOnNode creates a session on the same node as a peer session.
+// Used for B2BUA B-leg to ensure both legs are on the same RTP manager for bridging.
+func (p *Pool) CreateSessionPendingRemoteOnNode(ctx context.Context, peerSessionID, callID string, codecs []string) (*SessionResult, error) {
+	// Find which node the peer session is on
+	member, ok := p.getMemberForSession(peerSessionID)
+	if !ok {
+		// Peer session not found, fall back to round-robin
+		slog.Warn("[Pool] Peer session not found, using round-robin",
+			"peer_session_id", peerSessionID,
+			"call_id", callID,
+		)
+		return p.CreateSessionPendingRemote(ctx, callID, codecs)
+	}
+
+	// Create session on the same node
+	result, err := member.transport.CreateSessionPendingRemote(ctx, callID, codecs)
+	if err != nil {
+		member.failCount.Add(1)
+		return nil, fmt.Errorf("CreateSessionPendingRemote on %s failed: %w", member.address, err)
+	}
+
+	// Track session affinity
+	p.trackSession(result.SessionID, member.id)
+
+	slog.Debug("[Pool] Session created on same node as peer",
+		"session_id", result.SessionID,
+		"peer_session_id", peerSessionID,
+		"node_id", member.id,
 		"rtp_manager", member.address,
 	)
 
@@ -416,17 +650,24 @@ func (p *Pool) Stats() PoolStats {
 
 	stats := PoolStats{
 		TotalMembers:   len(p.members),
-		ActiveSessions: len(p.sessionToAddr),
+		ActiveSessions: len(p.sessionToNode),
 		Members:        make([]MemberStats, 0, len(p.members)),
 	}
 
 	for _, m := range p.members {
-		memberStats := MemberStats{
-			Address: m.address,
-			Healthy: m.healthy.Load(),
+		sessionCount := 0
+		if sessions, ok := p.nodeToSessions[m.id]; ok {
+			sessionCount = len(sessions)
 		}
-		// TODO: Could add more stats like active sessions per member if m.transport != nil
-		if memberStats.Healthy {
+
+		memberStats := MemberStats{
+			NodeID:       m.id,
+			Address:      m.address,
+			Healthy:      m.healthy.Load(),
+			DrainState:   m.DrainState(),
+			SessionCount: sessionCount,
+		}
+		if memberStats.Healthy && memberStats.DrainState == StateActive {
 			stats.HealthyMembers++
 		}
 		stats.Members = append(stats.Members, memberStats)
@@ -445,6 +686,9 @@ type PoolStats struct {
 
 // MemberStats holds stats for a single pool member
 type MemberStats struct {
-	Address string
-	Healthy bool
+	NodeID       string
+	Address      string
+	Healthy      bool
+	DrainState   DrainState
+	SessionCount int
 }

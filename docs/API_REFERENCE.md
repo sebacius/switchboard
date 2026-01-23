@@ -194,20 +194,23 @@ Returns information about connected RTP Managers and their health status.
 **Response:**
 ```json
 {
-  "rtp_managers": [
+  "total_members": 2,
+  "healthy_members": 2,
+  "active_sessions": 8,
+  "members": [
     {
+      "node_id": "rtpmanager-0",
       "address": "localhost:9090",
       "healthy": true,
-      "active_sessions": 5,
-      "available_ports": 95,
-      "last_check": "2026-01-15T10:30:00Z"
+      "drain_state": "active",
+      "session_count": 5
     },
     {
+      "node_id": "rtpmanager-1",
       "address": "localhost:9091",
       "healthy": true,
-      "active_sessions": 3,
-      "available_ports": 97,
-      "last_check": "2026-01-15T10:30:00Z"
+      "drain_state": "active",
+      "session_count": 3
     }
   ]
 }
@@ -215,11 +218,87 @@ Returns information about connected RTP Managers and their health status.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `node_id` | string | Unique node identifier (e.g., "rtpmanager-0") |
 | `address` | string | RTP Manager gRPC address |
 | `healthy` | bool | Health check status |
-| `active_sessions` | int | Number of active RTP sessions |
-| `available_ports` | int | Number of available RTP ports |
-| `last_check` | string | ISO 8601 timestamp of last health check |
+| `drain_state` | string | Drain state: "active", "draining", or "disabled" |
+| `session_count` | int | Number of active RTP sessions on this node |
+
+### RTP Manager Drain
+
+The drain feature allows graceful removal of RTP managers by migrating active sessions to other nodes.
+
+#### Start Drain
+
+```
+POST /api/v1/rtpmanagers/{nodeId}/drain?mode=graceful
+```
+
+Initiates drain for the specified node. The node is marked as "draining" and will not accept new sessions. Existing sessions are migrated to other healthy nodes via SIP re-INVITE.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `mode` | string | "graceful" | Drain mode: "graceful" (waits, keeps failed on old) or "aggressive" (terminates failed) |
+
+**Response (202 Accepted):**
+```json
+{
+  "message": "Drain started",
+  "node_id": "rtpmanager-0",
+  "mode": "graceful",
+  "total_sessions": 5
+}
+```
+
+#### Get Drain Status
+
+```
+GET /api/v1/rtpmanagers/{nodeId}/drain
+```
+
+Returns the current drain status for a node.
+
+**Response:**
+```json
+{
+  "node_id": "rtpmanager-0",
+  "state": "draining",
+  "mode": "graceful",
+  "total_sessions": 5,
+  "waiting_playback": 1,
+  "migrated_count": 3,
+  "failed_count": 0,
+  "started_at": "2026-01-15T10:30:00Z",
+  "elapsed_seconds": 45
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `state` | string | Drain state: "active", "draining", or "disabled" |
+| `mode` | string | Drain mode used |
+| `total_sessions` | int | Total sessions when drain started |
+| `waiting_playback` | int | Sessions waiting for audio playback to complete |
+| `migrated_count` | int | Successfully migrated sessions |
+| `failed_count` | int | Failed migration attempts |
+| `errors` | array | List of session errors (if any) |
+
+#### Cancel Drain
+
+```
+DELETE /api/v1/rtpmanagers/{nodeId}/drain
+```
+
+Cancels an in-progress drain and returns the node to active state.
+
+**Response:**
+```json
+{
+  "message": "Drain cancelled",
+  "node_id": "rtpmanager-0"
+}
+```
 
 ## UI Server API
 
