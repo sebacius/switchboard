@@ -469,9 +469,9 @@ func (s *Server) handleStartDrain(w http.ResponseWriter, r *http.Request, nodeID
 
 	w.WriteHeader(http.StatusAccepted)
 	s.writeJSON(w, map[string]interface{}{
-		"message":     "Drain started",
-		"node_id":     status.NodeID,
-		"mode":        status.Mode,
+		"message":        "Drain started",
+		"node_id":        status.NodeID,
+		"mode":           status.Mode,
 		"total_sessions": status.TotalSessions,
 	})
 }
@@ -522,7 +522,7 @@ func (s *Server) handleCancelDrain(w http.ResponseWriter, nodeID string) {
 	}
 
 	s.writeJSON(w, map[string]interface{}{
-		"message": "Drain cancelled",
+		"message": "Drain canceled",
 		"node_id": nodeID,
 	})
 }

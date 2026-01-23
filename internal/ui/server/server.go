@@ -446,7 +446,7 @@ func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 		// Return an error toast/message via HTMX
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `<div class="text-red-400 text-sm">Failed to start drain: %s</div>`, err.Error())
+		_, _ = fmt.Fprintf(w, `<div class="text-red-400 text-sm">Failed to start drain: %s</div>`, err.Error())
 		return
 	}
 
@@ -495,7 +495,7 @@ func (s *Server) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 		slog.Error("[UI] Failed to cancel drain", "server", server, "nodeId", nodeID, "error", err)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `<div class="text-red-400 text-sm">Failed to cancel drain: %s</div>`, err.Error())
+		_, _ = fmt.Fprintf(w, `<div class="text-red-400 text-sm">Failed to cancel drain: %s</div>`, err.Error())
 		return
 	}
 

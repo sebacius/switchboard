@@ -130,12 +130,12 @@ func (c *Client) RtpManagers(ctx context.Context) (*types.RtpManagersResponse, e
 
 // DrainStatus represents the status of a drain operation
 type DrainStatus struct {
-	NodeID           string `json:"node_id"`
-	State            string `json:"state"`
-	Mode             string `json:"mode"`
-	InitialSessions  int    `json:"initial_sessions"`
-	RemainingSessions int   `json:"remaining_sessions"`
-	StartedAt        string `json:"started_at,omitempty"`
+	NodeID            string `json:"node_id"`
+	State             string `json:"state"`
+	Mode              string `json:"mode"`
+	InitialSessions   int    `json:"initial_sessions"`
+	RemainingSessions int    `json:"remaining_sessions"`
+	StartedAt         string `json:"started_at,omitempty"`
 }
 
 // StartDrain initiates a drain operation on an RTP manager node

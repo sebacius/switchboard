@@ -89,10 +89,10 @@ func (m *poolMember) SetDrainState(state DrainState) {
 type Pool struct {
 	mu             sync.RWMutex
 	members        []*poolMember
-	membersByID    map[string]*poolMember        // nodeID -> member (fast lookup)
-	sessionToNode  map[string]string             // sessionID -> nodeID (affinity)
+	membersByID    map[string]*poolMember         // nodeID -> member (fast lookup)
+	sessionToNode  map[string]string              // sessionID -> nodeID (affinity)
 	nodeToSessions map[string]map[string]struct{} // nodeID -> set of sessionIDs (reverse index)
-	nextIndex      atomic.Uint64                 // for round-robin
+	nextIndex      atomic.Uint64                  // for round-robin
 	config         PoolConfig
 	stopCh         chan struct{}
 	wg             sync.WaitGroup
@@ -384,7 +384,7 @@ func (p *Pool) CancelDrain(nodeID string) error {
 
 	member.SetDrainState(StateActive)
 	if currentState == StateDraining {
-		slog.Info("[Pool] Node drain cancelled", "node_id", nodeID)
+		slog.Info("[Pool] Node drain canceled", "node_id", nodeID)
 	} else {
 		slog.Info("[Pool] Node re-enabled", "node_id", nodeID)
 	}

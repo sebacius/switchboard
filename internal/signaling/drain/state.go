@@ -35,20 +35,20 @@ func DefaultDrainTimeout(mode DrainMode) time.Duration {
 
 // DrainStatus represents the current state of a drain operation
 type DrainStatus struct {
-	NodeID          string                   `json:"node_id"`
-	State           mediaclient.DrainState   `json:"state"`
-	Mode            DrainMode                `json:"mode"`
-	StartedAt       time.Time                `json:"started_at"`
-	TotalSessions   int                      `json:"total_sessions"`
-	WaitingPlayback int                      `json:"waiting_playback"`
-	MigratedCount   int                      `json:"migrated_count"`
-	FailedCount     int                      `json:"failed_count"`
-	Errors          []SessionError           `json:"errors,omitempty"`
+	NodeID          string                 `json:"node_id"`
+	State           mediaclient.DrainState `json:"state"`
+	Mode            DrainMode              `json:"mode"`
+	StartedAt       time.Time              `json:"started_at"`
+	TotalSessions   int                    `json:"total_sessions"`
+	WaitingPlayback int                    `json:"waiting_playback"`
+	MigratedCount   int                    `json:"migrated_count"`
+	FailedCount     int                    `json:"failed_count"`
+	Errors          []SessionError         `json:"errors,omitempty"`
 }
 
 // SessionError records an error during session migration
 type SessionError struct {
-	SessionID string `json:"session_id"`
-	Error     string `json:"error"`
+	SessionID string    `json:"session_id"`
+	Error     string    `json:"error"`
 	Timestamp time.Time `json:"timestamp"`
 }

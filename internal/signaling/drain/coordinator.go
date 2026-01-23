@@ -314,7 +314,7 @@ func (c *Coordinator) CancelDrain(nodeID string) error {
 	// Remove from active drains
 	delete(c.activeDrains, nodeID)
 
-	slog.Info("[DrainCoordinator] Drain cancelled",
+	slog.Info("[DrainCoordinator] Drain canceled",
 		"node_id", nodeID)
 
 	return nil
