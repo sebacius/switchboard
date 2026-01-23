@@ -36,6 +36,7 @@ type Registration struct {
 // Dialog represents a SIP dialog (call)
 type Dialog struct {
 	CallID          string `json:"call_id"`
+	Direction       string `json:"direction"`
 	State           string `json:"state"`
 	LocalURI        string `json:"local_uri"`
 	RemoteURI       string `json:"remote_uri"`

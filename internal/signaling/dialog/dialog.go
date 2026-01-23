@@ -116,7 +116,8 @@ func NewDialog(req *sip.Request, tx sip.ServerTransaction) *Dialog {
 
 	callID := ""
 	if req.CallID() != nil {
-		callID = req.CallID().String()
+		// Cast to string directly - .String() adds "Call-ID: " prefix
+		callID = string(*req.CallID())
 	}
 
 	remoteTag := ""
@@ -158,7 +159,8 @@ func NewOutboundDialog(invite *sip.Request, resp *sip.Response) *Dialog {
 
 	callID := ""
 	if invite.CallID() != nil {
-		callID = invite.CallID().String()
+		// Cast to string directly - .String() adds "Call-ID: " prefix
+		callID = string(*invite.CallID())
 	}
 
 	// Our local tag is from the From header of our INVITE

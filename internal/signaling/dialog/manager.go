@@ -70,7 +70,8 @@ func (m *Manager) SetOnTerminated(fn func(d *Dialog)) {
 func (m *Manager) CreateFromInvite(req *sip.Request, tx sip.ServerTransaction) (*Dialog, error) {
 	callID := ""
 	if req.CallID() != nil {
-		callID = req.CallID().String()
+		// Cast to string directly - .String() adds "Call-ID: " prefix
+		callID = string(*req.CallID())
 	}
 	if callID == "" {
 		return nil, fmt.Errorf("INVITE missing Call-ID")
@@ -100,7 +101,8 @@ func (m *Manager) CreateFromInvite(req *sip.Request, tx sip.ServerTransaction) (
 func (m *Manager) RegisterOutbound(invite *sip.Request, resp *sip.Response) (*Dialog, error) {
 	callID := ""
 	if invite.CallID() != nil {
-		callID = invite.CallID().String()
+		// Cast to string directly - .String() adds "Call-ID: " prefix
+		callID = string(*invite.CallID())
 	}
 	if callID == "" {
 		return nil, fmt.Errorf("INVITE missing Call-ID")
@@ -185,7 +187,8 @@ func (m *Manager) SendOK(d *Dialog, sdpBody []byte) error {
 func (m *Manager) ConfirmWithACK(req *sip.Request, tx sip.ServerTransaction) error {
 	callID := ""
 	if req.CallID() != nil {
-		callID = req.CallID().String()
+		// Cast to string directly - .String() adds "Call-ID: " prefix
+		callID = string(*req.CallID())
 	}
 
 	d, exists := m.Get(callID)
@@ -225,7 +228,8 @@ func (m *Manager) ConfirmWithACK(req *sip.Request, tx sip.ServerTransaction) err
 func (m *Manager) HandleIncomingBYE(req *sip.Request, tx sip.ServerTransaction) error {
 	callID := ""
 	if req.CallID() != nil {
-		callID = req.CallID().String()
+		// Cast to string directly - .String() adds "Call-ID: " prefix
+		callID = string(*req.CallID())
 	}
 
 	d, exists := m.Get(callID)
@@ -263,7 +267,8 @@ func (m *Manager) HandleIncomingBYE(req *sip.Request, tx sip.ServerTransaction) 
 func (m *Manager) HandleIncomingCANCEL(req *sip.Request, tx sip.ServerTransaction) error {
 	callID := ""
 	if req.CallID() != nil {
-		callID = req.CallID().String()
+		// Cast to string directly - .String() adds "Call-ID: " prefix
+		callID = string(*req.CallID())
 	}
 
 	d, exists := m.Get(callID)

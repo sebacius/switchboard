@@ -5,6 +5,7 @@
             <tr>
                 {{if .MultiBackend}}<th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Server</th>{{end}}
                 <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Call-ID</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Direction</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">State</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Remote URI</th>
                 <th class="px-6 py-3 text-left text-xs font-medium text-slate-400 uppercase tracking-wider">Remote Addr</th>
@@ -16,6 +17,13 @@
             <tr class="hover:bg-slate-700/30">
                 {{if $.MultiBackend}}<td class="px-6 py-4 whitespace-nowrap text-sm"><span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-600 text-slate-200">{{.Server}}</span></td>{{end}}
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-300 font-mono truncate max-w-xs" title="{{.CallID}}">{{.CallID}}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
+                        {{if eq .Direction "inbound"}}bg-blue-500/20 text-blue-400
+                        {{else}}bg-purple-500/20 text-purple-400{{end}}">
+                        {{if eq .Direction "inbound"}}← IN{{else}}→ OUT{{end}}
+                    </span>
+                </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm">
                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium
                         {{if eq .State "Confirmed"}}bg-emerald-500/20 text-emerald-400

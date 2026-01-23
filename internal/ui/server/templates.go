@@ -74,6 +74,7 @@ type RegistrationData struct {
 type DialogData struct {
 	Server          string // Backend server name
 	CallID          string
+	Direction       string
 	State           string
 	LocalURI        string
 	RemoteURI       string

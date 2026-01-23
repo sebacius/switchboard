@@ -58,7 +58,8 @@ func (h *RegisterHandler) HandleRegister(req *sip.Request, tx sip.ServerTransact
 	// Extract Call-ID and CSeq for binding validation
 	callID := ""
 	if req.CallID() != nil {
-		callID = req.CallID().String()
+		// Cast to string directly - .String() adds "Call-ID: " prefix
+		callID = string(*req.CallID())
 	}
 	var cseq uint32
 	if cseqHdr := req.CSeq(); cseqHdr != nil {

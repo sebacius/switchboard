@@ -148,6 +148,20 @@ func (o *Originator) Originate(ctx context.Context, req OriginateRequest) (*Orig
 			}
 		}
 
+		// Terminate the B-leg dialog via dialog manager (schedules cleanup)
+		if o.dialogMgr != nil {
+			terminateReason := dialog.ReasonLocalBYE
+			if cause == TerminationCauseRemoteBYE {
+				terminateReason = dialog.ReasonRemoteBYE
+			}
+			if err := o.dialogMgr.Terminate(bLegCallID, terminateReason); err != nil {
+				slog.Debug("[Originator] B-leg dialog termination",
+					"call_id", bLegCallID,
+					"error", err,
+				)
+			}
+		}
+
 		o.mu.Lock()
 		delete(o.legs, bLegCallID)
 		delete(o.aToB, req.ALegCallID)
@@ -452,7 +466,18 @@ func (o *Originator) handle2xx(ctx context.Context, bleg *legImpl, resp *sip.Res
 	bleg.SetSIPResponse(int(resp.StatusCode), resp.Reason)
 
 	// Register the outbound dialog with the dialog manager
-	// This unifies A-leg and B-leg dialog handling
+	// Extract SDP answer and update RTP manager with remote endpoint FIRST
+	// (we need this before setting dialog media endpoint)
+	if resp.Body() != nil {
+		if err := o.extractRemoteMedia(ctx, bleg, resp); err != nil {
+			slog.Error("[Originate] Failed to extract remote media",
+				"bleg_call_id", bleg.callID,
+				"error", err,
+			)
+		}
+	}
+
+	// Register the dialog (unifies A-leg and B-leg dialog handling)
 	if o.dialogMgr != nil {
 		dlg, err := o.dialogMgr.RegisterOutbound(invite, resp)
 		if err != nil {
@@ -465,7 +490,7 @@ func (o *Originator) handle2xx(ctx context.Context, bleg *legImpl, resp *sip.Res
 			bleg.SetDialog(dlg)
 			// Store session ID in dialog for drain migration
 			dlg.SetSessionID(bleg.sessionID)
-			// Store media endpoint info
+			// Store media endpoint info (now available after extractRemoteMedia)
 			if bleg.remoteRTPAddr != "" {
 				dlg.SetMediaEndpoint(bleg.remoteRTPAddr, bleg.remoteRTPPort, bleg.negotiatedCodec)
 			}
@@ -509,16 +534,6 @@ func (o *Originator) handle2xx(ctx context.Context, bleg *legImpl, resp *sip.Res
 
 	bleg.SetOutboundDialogState(remoteContactURI, remoteToURI, localFromURI, remoteTag, localTag)
 
-	// Extract SDP answer and update RTP manager with remote endpoint
-	if resp.Body() != nil {
-		if err := o.extractRemoteMedia(ctx, bleg, resp); err != nil {
-			slog.Error("[Originate] Failed to extract remote media",
-				"bleg_call_id", bleg.callID,
-				"error", err,
-			)
-		}
-	}
-
 	// Send ACK per RFC 3261 Section 13.2.2.4
 	if err := o.sendACK(bleg, resp, invite, tx); err != nil {
 		slog.Error("[Originate] Failed to send ACK",
@@ -535,6 +550,10 @@ func (o *Originator) handle2xx(ctx context.Context, bleg *legImpl, resp *sip.Res
 		"remote_addr", bleg.remoteRTPAddr,
 		"remote_port", bleg.remoteRTPPort,
 		"remote_contact", remoteContactURI,
+		"remote_to_uri", remoteToURI,
+		"local_from_uri", localFromURI,
+		"remote_tag", remoteTag,
+		"local_tag", localTag,
 	)
 
 	return &OriginateResult{
@@ -834,6 +853,8 @@ func (o *Originator) SendBYE(leg Leg) error {
 		"bleg_call_id", bleg.callID,
 		"request_uri", remoteContactURI,
 		"to_uri", remoteToURI,
+		"from_uri", localFromURI,
+		"from_uri_used", fromURI.String(),
 		"remote_tag", remoteTag,
 		"local_tag", localTag,
 		"dest", destAddr,
@@ -957,7 +978,8 @@ func (o *Originator) GetLegByCallID(callID string) *legImpl {
 func (o *Originator) HandleIncomingBYE(req *sip.Request, tx sip.ServerTransaction) bool {
 	callID := ""
 	if req.CallID() != nil {
-		callID = req.CallID().String()
+		// Cast to string directly - .String() adds "Call-ID: " prefix
+		callID = string(*req.CallID())
 	}
 	if callID == "" {
 		slog.Debug("[Originator] HandleIncomingBYE: no call-id in request")

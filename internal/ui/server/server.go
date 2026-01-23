@@ -284,6 +284,7 @@ func (s *Server) fetchBackendData(ctx context.Context, c *client.Client, data *T
 			data.Dialogs = append(data.Dialogs, DialogData{
 				Server:          backendName,
 				CallID:          d.CallID,
+				Direction:       d.Direction,
 				State:           d.State,
 				LocalURI:        d.LocalURI,
 				RemoteURI:       d.RemoteURI,
