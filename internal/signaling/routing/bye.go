@@ -27,11 +27,20 @@ func NewBYEHandler(dialogMgr *dialog.Manager, callService b2bua.CallService) *BY
 // First checks if it's for an outbound (B-leg) call via CallService,
 // then falls back to inbound (A-leg) dialog handling.
 func (h *BYEHandler) HandleBYE(req *sip.Request, tx sip.ServerTransaction) {
+	slog.Debug("[BYE] Received BYE request",
+		"call_id", req.CallID(),
+		"from", req.From(),
+		"to", req.To(),
+	)
+
 	// First, check if this is a BYE for an outbound (B-leg) call.
 	// B-legs are tracked by the CallService/Originator, not the dialog manager.
 	if h.callService != nil && h.callService.HandleIncomingBYE(req, tx) {
+		slog.Debug("[BYE] Handled as B-leg BYE", "call_id", req.CallID())
 		return // Handled by CallService
 	}
+
+	slog.Debug("[BYE] Not a B-leg, trying A-leg dialog", "call_id", req.CallID())
 
 	// Otherwise, handle as an inbound (A-leg) dialog
 	if err := h.dialogMgr.HandleIncomingBYE(req, tx); err != nil {

@@ -7,6 +7,12 @@
 #   rtpmanager-1: gRPC 9091, RTP 10100-10199
 #   rtpmanager-2: gRPC 9092, RTP 10200-10299
 #   ...
+#
+# Graceful Drain:
+# When a pod is terminated, the PreStop hook triggers a drain on the signaling
+# server, which migrates all active sessions to other RTP managers before the
+# pod shuts down. Set terminationGracePeriodSeconds based on expected migration
+# time (recommend 300s for production).
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -28,6 +34,8 @@ spec:
         app.kubernetes.io/name: switchboard
         app.kubernetes.io/component: rtpmanager
     spec:
+      # Allow enough time for graceful drain (default 30s is too short)
+      terminationGracePeriodSeconds: 300
       # hostNetwork required for RTP - media packets need direct host access
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
@@ -48,7 +56,7 @@ spec:
               export RTP_PORT_MIN=$((10000 + ORDINAL * 100))
               export RTP_PORT_MAX=$((10000 + ORDINAL * 100 + 99))
 
-              echo "Starting RTP Manager $ORDINAL"
+              echo "Starting RTP Manager $ORDINAL (Node ID: $RTP_NODE_ID)"
               echo "  gRPC port: $GRPC_PORT"
               echo "  RTP range: $RTP_PORT_MIN - $RTP_PORT_MAX"
 
@@ -60,11 +68,19 @@ spec:
               value: "0.0.0.0"
             - name: AUDIO_PATH
               value: "/app/audio"
+            # Node ID for drain coordination - uses pod name (e.g., "rtpmanager-0")
+            - name: RTP_NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             # Pod name via Downward API (hostNetwork breaks HOSTNAME)
             - name: POD_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            # Signaling server address for drain API calls
+            - name: SIGNALING_API_URL
+              value: "http://signaling.switchboard.svc.cluster.local:8080"
             # GRPC_PORT, RTP_PORT_MIN, RTP_PORT_MAX set by command script
             # ADVERTISE will be auto-detected from host network
           volumeMounts:
@@ -95,6 +111,29 @@ spec:
                 - "pgrep switchboard-rtpmanager"
             initialDelaySeconds: 5
             periodSeconds: 5
+          # PreStop hook: trigger drain before pod termination
+          # This gives the signaling server time to migrate sessions
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    echo "PreStop: Initiating drain for $RTP_NODE_ID"
+                    # Trigger drain on signaling server
+                    curl -s -X POST "${SIGNALING_API_URL}/api/v1/rtpmanagers/${RTP_NODE_ID}/drain?mode=graceful" || true
+                    # Poll drain status until complete or timeout
+                    for i in $(seq 1 60); do
+                      STATUS=$(curl -s "${SIGNALING_API_URL}/api/v1/rtpmanagers/${RTP_NODE_ID}/drain" | grep -o '"state":"[^"]*"' | cut -d'"' -f4)
+                      echo "Drain status: $STATUS (attempt $i/60)"
+                      if [ "$STATUS" = "disabled" ]; then
+                        echo "Drain complete, shutting down"
+                        exit 0
+                      fi
+                      sleep 5
+                    done
+                    echo "Drain timeout, proceeding with shutdown"
       volumes:
         - name: audio-files
           hostPath:

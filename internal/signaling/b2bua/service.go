@@ -81,6 +81,12 @@ type CallService interface {
 	// Returns false if the Call-ID does not match any tracked B-leg.
 	// This should be called before the dialog manager's HandleIncomingBYE.
 	HandleIncomingBYE(req *sip.Request, tx sip.ServerTransaction) bool
+
+	// --- Drain Support ---
+
+	// GetBridgeMapper returns the BridgeMapper interface for drain migration.
+	// This allows the drain coordinator to find B-leg dialogs for bridged calls.
+	GetBridgeMapper() BridgeMapper
 }
 
 // CallServiceConfig contains dependencies for CallService.
@@ -133,10 +139,3 @@ type Logger interface {
 	Error(msg string, args ...any)
 }
 
-// DefaultCallServiceConfig returns configuration with sensible defaults.
-func DefaultCallServiceConfig() CallServiceConfig {
-	return CallServiceConfig{
-		DefaultDialTimeout: 30 * time.Second,
-		EarlyMedia:         true,
-	}
-}

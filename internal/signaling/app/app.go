@@ -13,6 +13,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/config"
 	"github.com/sebas/switchboard/internal/signaling/dialog"
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
+	"github.com/sebas/switchboard/internal/signaling/drain"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 	"github.com/sebas/switchboard/internal/signaling/routing"
@@ -78,15 +79,21 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	}
 
 	// Create RTP Manager pool (gRPC transport)
-	slog.Info("Connecting to RTP Manager pool", "addresses", cfg.RTPManagerAddrs)
 	poolCfg := mediaclient.PoolConfig{
-		Addresses:           cfg.RTPManagerAddrs,
 		ConnectTimeout:      cfg.GRPCConnectTimeout,
 		KeepaliveInterval:   cfg.GRPCKeepaliveInterval,
 		KeepaliveTimeout:    cfg.GRPCKeepaliveTimeout,
 		HealthCheckInterval: 5 * time.Second,
 		UnhealthyThreshold:  3,
 		HealthyThreshold:    2,
+	}
+	// Prefer NodeAddresses (node=addr format) over legacy Addresses
+	if len(cfg.RTPManagerNodes) > 0 {
+		poolCfg.NodeAddresses = cfg.RTPManagerNodes
+		slog.Info("Connecting to RTP Manager pool", "nodes", cfg.RTPManagerNodes)
+	} else {
+		poolCfg.Addresses = cfg.RTPManagerAddrs
+		slog.Info("Connecting to RTP Manager pool", "addresses", cfg.RTPManagerAddrs)
 	}
 	mediaTransport, err := mediaclient.NewPool(poolCfg)
 	if err != nil {
@@ -101,6 +108,22 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Create API server with register handler, dialog manager, and RTP manager stats
 	// Pool implements mediaclient.StatsProvider which satisfies api.RtpManagerProvider
 	apiServer := api.NewServer("0.0.0.0:8080", registerHandler, dialogMgr, mediaTransport)
+
+	// Create drain migrator and coordinator
+	localContact := sip.Uri{
+		Scheme: "sip",
+		User:   "switchboard",
+		Host:   cfg.AdvertiseAddr,
+		Port:   cfg.Port,
+	}
+	migrator := drain.NewMigrator(drain.MigratorConfig{
+		Pool:          mediaTransport,
+		DialogManager: dialogMgr,
+		LocalContact:  localContact,
+		Mode:          drain.DrainModeGraceful,
+	})
+	drainCoordinator := drain.NewCoordinator(mediaTransport, migrator)
+	apiServer.SetDrainProvider(drainCoordinator)
 
 	// Load dialplan configuration
 	dialplanPath := cfg.DialplanPath
@@ -129,6 +152,9 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		AdvertiseAddr: cfg.AdvertiseAddr,
 		Port:          cfg.Port,
 	})
+
+	// Wire BridgeMapper to migrator for bridged call migration during drain
+	migrator.SetBridgeMapper(callService.GetBridgeMapper())
 
 	// Create SIP method handlers
 	inviteHandler := routing.NewInviteHandler(

@@ -49,8 +49,9 @@ spec:
               value: "/app/config/dialplan.json"
             # Connect to RTP Managers via localhost (all use hostNetwork)
             # Port = 9090 + ordinal (rtpmanager-0=9090, rtpmanager-1=9091)
+            # Format: nodeId=address,nodeId=address (node IDs match pod names for drain coordination)
             - name: RTPMANAGER_ADDRS
-              value: "localhost:9090,localhost:9091"
+              value: "rtpmanager-0=localhost:9090,rtpmanager-1=localhost:9091"
             # ADVERTISE will be auto-detected from host network
           volumeMounts:
             - name: dialplan-config

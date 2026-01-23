@@ -43,9 +43,9 @@ type StoreConfig struct {
 func DefaultStoreConfig() StoreConfig {
 	return StoreConfig{
 		CleanupInterval: 30 * time.Second,
-		DefaultExpires:  3600, // 1 hour
-		MaxExpires:      7200, // 2 hours
-		MinExpires:      60,   // 1 minute
+		DefaultExpires:  60,  // 1 minute
+		MaxExpires:      120, // 2 minutes
+		MinExpires:      30,  // 30 seconds
 	}
 }
 

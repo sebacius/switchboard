@@ -40,58 +40,8 @@ const (
 	SubjectSessions = SubjectPrefix + ".sessions"
 )
 
-// CallSubject builds a subject for a specific call event.
-// Example: CallSubject("abc-123", "ended") => "switchboard.calls.abc-123.ended"
-func CallSubject(callUUID string, eventSuffix string) string {
+// BuildCallSubject builds a subject for a specific call event.
+// Example: BuildCallSubject("abc-123", "ended") => "switchboard.calls.abc-123.ended"
+func BuildCallSubject(callUUID string, eventSuffix string) string {
 	return fmt.Sprintf("%s.%s.%s", SubjectCalls, callUUID, eventSuffix)
-}
-
-// RegistrationSubject builds a subject for registration events.
-// Example: RegistrationSubject("alice@example.com") => "switchboard.registrations.alice@example.com"
-func RegistrationSubject(endpoint string) string {
-	return fmt.Sprintf("%s.%s", SubjectRegistrations, endpoint)
-}
-
-// SessionSubject builds a subject for RTP session events.
-// Example: SessionSubject("sess-123", "started") => "switchboard.sessions.sess-123.started"
-func SessionSubject(sessionID string, event string) string {
-	return fmt.Sprintf("%s.%s.%s", SubjectSessions, sessionID, event)
-}
-
-// Subject patterns for common consumer configurations
-var (
-	// PatternAllCalls matches all call events
-	PatternAllCalls = SubjectCalls + ".>"
-
-	// PatternCallEnded matches all call.ended events (for CDR)
-	PatternCallEnded = SubjectCalls + ".*.ended"
-
-	// PatternCallAnswered matches all call.answered events (for billing)
-	PatternCallAnswered = SubjectCalls + ".*.answered"
-
-	// PatternAllRegistrations matches all registration events
-	PatternAllRegistrations = SubjectRegistrations + ".>"
-
-	// PatternAllSessions matches all RTP session events
-	PatternAllSessions = SubjectSessions + ".>"
-)
-
-// SubjectForEventType returns the suffix used for a given event type.
-func SubjectForEventType(t EventType) string {
-	switch t {
-	case CallReceived:
-		return SubjectCallReceived
-	case CallDialing:
-		return SubjectCallDialing
-	case CallRinging:
-		return SubjectCallRinging
-	case CallAnswered:
-		return SubjectCallAnswered
-	case CallBridged:
-		return SubjectCallBridged
-	case CallEnded:
-		return SubjectCallEnded
-	default:
-		return "unknown"
-	}
 }

@@ -28,6 +28,7 @@ func NewCallService(cfg CallServiceConfig) CallService {
 		Transport:     cfg.Transport,
 		Client:        cfg.Client,
 		LocalContact:  cfg.LocalContact,
+		DialogManager: cfg.DialogManager,
 	}
 
 	return &callService{
@@ -124,11 +125,12 @@ func (s *callService) Dial(ctx context.Context, target string, timeout time.Dura
 	defer cancel()
 
 	origResult, err := s.originator.Originate(dialCtx, OriginateRequest{
-		Target:     result,
-		Timeout:    timeout,
-		Codecs:     []string{"0"},
-		CallerID:   legOpts.callerID,
-		CallerName: legOpts.callerName,
+		Target:        result,
+		Timeout:       timeout,
+		Codecs:        []string{"0"},
+		CallerID:      legOpts.callerID,
+		CallerName:    legOpts.callerName,
+		ALegSessionID: legOpts.aLegSessionID,
 	})
 	if err != nil {
 		return nil, err
@@ -171,11 +173,14 @@ func (s *callService) DialAndBridge(ctx context.Context, legA Leg, target string
 
 	slog.Info("[CallService] DialAndBridge starting",
 		"leg_a", legA.ID(),
+		"leg_a_session", legA.SessionID(),
 		"target", target,
 		"timeout", timeout,
 	)
 
 	// Step 1: Dial target (pass through options for CallerID, etc.)
+	// Prepend A-leg session ID so B-leg is created on the same RTP manager
+	opts = append([]LegOption{WithALegSessionID(legA.SessionID())}, opts...)
 	legB, err := s.Dial(ctx, target, timeout, opts...)
 	if err != nil {
 		return nil, err
@@ -236,6 +241,11 @@ func (s *callService) DialParallel(ctx context.Context, targets []*LookupResult,
 // HandleIncomingBYE delegates to the originator to handle BYE for outbound legs.
 func (s *callService) HandleIncomingBYE(req *sip.Request, tx sip.ServerTransaction) bool {
 	return s.originator.HandleIncomingBYE(req, tx)
+}
+
+// GetBridgeMapper returns the originator as a BridgeMapper for drain migration.
+func (s *callService) GetBridgeMapper() BridgeMapper {
+	return s.originator
 }
 
 // Ensure callService implements CallService

@@ -59,8 +59,11 @@ type Session struct {
 
 // RtpManager represents an RTP manager instance
 type RtpManager struct {
-	Address string `json:"address"`
-	Healthy bool   `json:"healthy"`
+	NodeID       string `json:"node_id"`
+	Address      string `json:"address"`
+	Healthy      bool   `json:"healthy"`
+	DrainState   string `json:"drain_state"`
+	SessionCount int    `json:"session_count"`
 }
 
 // RtpManagersResponse is the response from /api/v1/rtpmanagers

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -54,6 +55,11 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	mux.HandleFunc("/admin/partials/dialogs", s.handleDialogsPartial)
 	mux.HandleFunc("/admin/partials/sessions", s.handleSessionsPartial)
 	mux.HandleFunc("/admin/partials/rtpmanagers", s.handleRtpManagersPartial)
+
+	// RTP Manager drain control endpoints
+	mux.HandleFunc("/admin/rtpmanagers/drain-modal", s.handleDrainModal)
+	mux.HandleFunc("/admin/rtpmanagers/drain", s.handleDrain)
+	mux.HandleFunc("/admin/rtpmanagers/cancel-drain", s.handleCancelDrain)
 
 	// Health check
 	mux.HandleFunc("/health", s.handleHealth)
@@ -324,10 +330,13 @@ func (s *Server) fetchBackendData(ctx context.Context, c *client.Client, data *T
 				status = "Healthy"
 			}
 			data.RtpManagers = append(data.RtpManagers, RtpManagerData{
-				Server:  backendName,
-				Address: m.Address,
-				Healthy: m.Healthy,
-				Status:  status,
+				Server:       backendName,
+				NodeID:       m.NodeID,
+				Address:      m.Address,
+				Healthy:      m.Healthy,
+				Status:       status,
+				DrainState:   m.DrainState,
+				SessionCount: m.SessionCount,
 			})
 		}
 		mu.Unlock()
@@ -369,4 +378,132 @@ func formatDuration(seconds int) string {
 	mins := (seconds % 3600) / 60
 	secs := seconds % 60
 	return fmt.Sprintf("%dh %dm %ds", hours, mins, secs)
+}
+
+// handleDrainModal renders the drain confirmation modal
+func (s *Server) handleDrainModal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	server := r.URL.Query().Get("server")
+	nodeID := r.URL.Query().Get("nodeId")
+	address := r.URL.Query().Get("address")
+	sessionCountStr := r.URL.Query().Get("sessions")
+
+	sessionCount, _ := strconv.Atoi(sessionCountStr)
+
+	data := DrainModalData{
+		Server:       server,
+		NodeID:       nodeID,
+		Address:      address,
+		SessionCount: sessionCount,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.RenderDrainModal(w, data); err != nil {
+		slog.Error("[UI] Failed to render drain modal", "error", err)
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+	}
+}
+
+// handleDrain handles the drain operation (start drain or direct disable)
+func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	server := r.URL.Query().Get("server")
+	nodeID := r.URL.Query().Get("nodeId")
+	mode := r.URL.Query().Get("mode") // "graceful" or "aggressive"
+
+	if server == "" || nodeID == "" {
+		http.Error(w, "Missing server or nodeId", http.StatusBadRequest)
+		return
+	}
+
+	// Find the client for the specified server
+	var targetClient *client.Client
+	for _, c := range s.clients {
+		if c.Name() == server {
+			targetClient = c
+			break
+		}
+	}
+
+	if targetClient == nil {
+		http.Error(w, "Server not found", http.StatusNotFound)
+		return
+	}
+
+	// Call the drain API
+	_, err := targetClient.StartDrain(r.Context(), nodeID, mode)
+	if err != nil {
+		slog.Error("[UI] Failed to start drain", "server", server, "nodeId", nodeID, "error", err)
+		// Return an error toast/message via HTMX
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, `<div class="text-red-400 text-sm">Failed to start drain: %s</div>`, err.Error())
+		return
+	}
+
+	// Return updated RTP managers partial to refresh the view
+	w.Header().Set("HX-Trigger", "drainStarted")
+	data := s.buildTemplateData(r.Context())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.RenderRtpManagers(w, data); err != nil {
+		slog.Error("[UI] Failed to render rtpmanagers partial", "error", err)
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+	}
+}
+
+// handleCancelDrain cancels an in-progress drain operation
+func (s *Server) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	server := r.URL.Query().Get("server")
+	nodeID := r.URL.Query().Get("nodeId")
+
+	if server == "" || nodeID == "" {
+		http.Error(w, "Missing server or nodeId", http.StatusBadRequest)
+		return
+	}
+
+	// Find the client for the specified server
+	var targetClient *client.Client
+	for _, c := range s.clients {
+		if c.Name() == server {
+			targetClient = c
+			break
+		}
+	}
+
+	if targetClient == nil {
+		http.Error(w, "Server not found", http.StatusNotFound)
+		return
+	}
+
+	// Call the cancel drain API
+	err := targetClient.CancelDrain(r.Context(), nodeID)
+	if err != nil {
+		slog.Error("[UI] Failed to cancel drain", "server", server, "nodeId", nodeID, "error", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, `<div class="text-red-400 text-sm">Failed to cancel drain: %s</div>`, err.Error())
+		return
+	}
+
+	// Return updated RTP managers partial to refresh the view
+	w.Header().Set("HX-Trigger", "drainCancelled")
+	data := s.buildTemplateData(r.Context())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.RenderRtpManagers(w, data); err != nil {
+		slog.Error("[UI] Failed to render rtpmanagers partial", "error", err)
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/emiago/sipgo/sip"
 	"github.com/google/uuid"
 	psdp "github.com/pion/sdp/v3"
+	"github.com/sebas/switchboard/internal/signaling/dialog"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 )
 
@@ -21,6 +22,7 @@ type OriginatorConfig struct {
 	Transport     mediaclient.Transport
 	Client        *sipgo.Client
 	LocalContact  string
+	DialogManager dialog.DialogStore // For registering outbound dialogs
 }
 
 // OriginateRequest contains parameters for an outbound call.
@@ -29,8 +31,9 @@ type OriginateRequest struct {
 	Target *LookupResult
 
 	// A-leg correlation
-	ALegCallID string
-	ALegID     string
+	ALegCallID    string
+	ALegID        string
+	ALegSessionID string // A-leg RTP session ID (for bridging on same RTP manager)
 
 	// Caller ID
 	CallerID   string
@@ -53,18 +56,20 @@ type OriginateResult struct {
 
 // Originator handles outbound call initiation.
 type Originator struct {
-	cfg  OriginatorConfig
-	mu   sync.RWMutex
-	legs map[string]*legImpl // Indexed by B-leg Call-ID
-	aToB map[string]string   // A-leg Call-ID -> B-leg Call-ID mapping
+	cfg       OriginatorConfig
+	dialogMgr dialog.DialogStore
+	mu        sync.RWMutex
+	legs      map[string]*legImpl // Indexed by B-leg Call-ID
+	aToB      map[string]string   // A-leg Call-ID -> B-leg Call-ID mapping
 }
 
 // NewOriginator creates a new Originator.
 func NewOriginator(cfg OriginatorConfig) *Originator {
 	return &Originator{
-		cfg:  cfg,
-		legs: make(map[string]*legImpl),
-		aToB: make(map[string]string),
+		cfg:       cfg,
+		dialogMgr: cfg.DialogManager, // Store the interface
+		legs:      make(map[string]*legImpl),
+		aToB:      make(map[string]string),
 	}
 }
 
@@ -94,8 +99,16 @@ func (o *Originator) Originate(ctx context.Context, req OriginateRequest) (*Orig
 	}
 	bleg := leg.(*legImpl)
 
-	// Set up teardown handler to send SIP BYE when bridge terminates this leg
+	// Set up teardown handler to send SIP BYE/CANCEL when bridge terminates this leg
 	bleg.SetTeardownHandler(func(l Leg) {
+		cause := l.GetTerminationCause()
+		// Don't send BYE if the remote party initiated (they sent BYE to us)
+		if cause == TerminationCauseRemoteBYE {
+			slog.Debug("[Originator] Skipping teardown BYE - remote initiated",
+				"call_id", bLegCallID,
+			)
+			return
+		}
 		// SendBYE will construct and send a SIP BYE to the remote party
 		// It's safe to call even if the leg is already terminated (will be a no-op)
 		if err := o.SendBYE(l); err != nil {
@@ -114,6 +127,27 @@ func (o *Originator) Originate(ctx context.Context, req OriginateRequest) (*Orig
 
 	// Register cleanup when leg terminates
 	bleg.OnTerminated(func(cause TerminationCause) {
+		// Destroy media session for the B-leg
+		if sessionID := bleg.sessionID; sessionID != "" {
+			reason := mediaclient.TerminateReasonNormal
+			switch cause {
+			case TerminationCauseNormal, TerminationCauseBridgePeer:
+				reason = mediaclient.TerminateReasonBYE
+			case TerminationCauseCancel:
+				reason = mediaclient.TerminateReasonCancel
+			case TerminationCauseTimeout:
+				reason = mediaclient.TerminateReasonTimeout
+			case TerminationCauseError, TerminationCauseRejected:
+				reason = mediaclient.TerminateReasonError
+			}
+			if err := o.cfg.Transport.DestroySession(context.Background(), sessionID, reason); err != nil {
+				slog.Warn("[Originator] Failed to destroy B-leg media session",
+					"session_id", sessionID,
+					"error", err,
+				)
+			}
+		}
+
 		o.mu.Lock()
 		delete(o.legs, bLegCallID)
 		delete(o.aToB, req.ALegCallID)
@@ -130,7 +164,13 @@ func (o *Originator) Originate(ctx context.Context, req OriginateRequest) (*Orig
 		codecs = []string{"0"} // Default to PCMU
 	}
 
-	sessionResult, err := o.cfg.Transport.CreateSessionPendingRemote(ctx, bLegCallID, codecs)
+	// If A-leg session ID is provided, create B-leg on the same RTP manager for bridging
+	var sessionResult *mediaclient.SessionResult
+	if req.ALegSessionID != "" {
+		sessionResult, err = o.cfg.Transport.CreateSessionPendingRemoteOnNode(ctx, req.ALegSessionID, bLegCallID, codecs)
+	} else {
+		sessionResult, err = o.cfg.Transport.CreateSessionPendingRemote(ctx, bLegCallID, codecs)
+	}
 	if err != nil {
 		return &OriginateResult{
 			Success:   false,
@@ -411,13 +451,46 @@ func (o *Originator) handleResponse(ctx context.Context, bleg *legImpl, resp *si
 func (o *Originator) handle2xx(ctx context.Context, bleg *legImpl, resp *sip.Response, invite *sip.Request, tx sip.ClientTransaction) *OriginateResult {
 	bleg.SetSIPResponse(int(resp.StatusCode), resp.Reason)
 
-	// Extract and store dialog state for future BYE sending
-	// Per RFC 3261 Section 12.1.2, dialog is identified by Call-ID, local tag, and remote tag
-	var remoteContactURI, remoteTag, localTag string
+	// Register the outbound dialog with the dialog manager
+	// This unifies A-leg and B-leg dialog handling
+	if o.dialogMgr != nil {
+		dlg, err := o.dialogMgr.RegisterOutbound(invite, resp)
+		if err != nil {
+			slog.Error("[Originate] Failed to register outbound dialog",
+				"bleg_call_id", bleg.callID,
+				"error", err,
+			)
+		} else {
+			// Store the dialog reference in the leg
+			bleg.SetDialog(dlg)
+			// Store session ID in dialog for drain migration
+			dlg.SetSessionID(bleg.sessionID)
+			// Store media endpoint info
+			if bleg.remoteRTPAddr != "" {
+				dlg.SetMediaEndpoint(bleg.remoteRTPAddr, bleg.remoteRTPPort, bleg.negotiatedCodec)
+			}
+		}
+	}
+
+	// Also store dialog state in legImpl for backwards compatibility
+	// (will be removed once migration is complete)
+	var remoteContactURI, remoteToURI, localFromURI, remoteTag, localTag string
 
 	// Remote Contact from 200 OK - used as Request-URI for BYE
 	if contact := resp.Contact(); contact != nil {
 		remoteContactURI = contact.Address.String()
+	}
+
+	// Remote To URI from INVITE - used as To header in BYE
+	// This is the original destination we dialed, NOT the Contact URI
+	if to := invite.To(); to != nil {
+		remoteToURI = to.Address.String()
+	}
+
+	// Local From URI from INVITE - used as From header in BYE
+	// Must match the From URI we used in the INVITE for dialog matching
+	if from := invite.From(); from != nil {
+		localFromURI = from.Address.String()
 	}
 
 	// Remote tag from To header in 200 OK
@@ -434,7 +507,7 @@ func (o *Originator) handle2xx(ctx context.Context, bleg *legImpl, resp *sip.Res
 		}
 	}
 
-	bleg.SetOutboundDialogState(remoteContactURI, remoteTag, localTag)
+	bleg.SetOutboundDialogState(remoteContactURI, remoteToURI, localFromURI, remoteTag, localTag)
 
 	// Extract SDP answer and update RTP manager with remote endpoint
 	if resp.Body() != nil {
@@ -650,7 +723,7 @@ func (o *Originator) SendBYE(leg Leg) error {
 	// Get dialog state for constructing BYE
 	// We check if we have dialog state rather than leg state, because
 	// the teardown handler is called after state changes to Destroyed
-	remoteContactURI, remoteTag, localTag := bleg.GetOutboundDialogState()
+	remoteContactURI, remoteToURI, localFromURI, remoteTag, localTag := bleg.GetOutboundDialogState()
 	if remoteContactURI == "" {
 		slog.Debug("[Originate] No remote contact URI for BYE (call may not have been answered)",
 			"bleg_call_id", bleg.callID,
@@ -659,6 +732,7 @@ func (o *Originator) SendBYE(leg Leg) error {
 	}
 
 	// Build BYE request per RFC 3261 Section 15.1.1
+	// Request-URI is from Contact header in 200 OK
 	var requestURI sip.Uri
 	if err := sip.ParseUri(remoteContactURI, &requestURI); err != nil {
 		slog.Error("[Originate] Failed to parse remote contact URI",
@@ -669,19 +743,55 @@ func (o *Originator) SendBYE(leg Leg) error {
 		return fmt.Errorf("parse remote contact: %w", err)
 	}
 
+	// To URI is from INVITE's To header (the original target)
+	var toURI sip.Uri
+	if remoteToURI != "" {
+		if err := sip.ParseUri(remoteToURI, &toURI); err != nil {
+			slog.Warn("[Originate] Failed to parse remote To URI, using contact URI",
+				"bleg_call_id", bleg.callID,
+				"uri", remoteToURI,
+				"error", err,
+			)
+			toURI = requestURI // Fallback to contact URI
+		}
+	} else {
+		toURI = requestURI // Fallback to contact URI
+	}
+
+	// From URI is from INVITE's From header (must match for dialog identification)
+	var fromURI sip.Uri
+	if localFromURI != "" {
+		if err := sip.ParseUri(localFromURI, &fromURI); err != nil {
+			slog.Warn("[Originate] Failed to parse local From URI, using default",
+				"bleg_call_id", bleg.callID,
+				"uri", localFromURI,
+				"error", err,
+			)
+			// Fallback to default
+			fromURI = sip.Uri{
+				Scheme: "sip",
+				User:   "switchboard",
+				Host:   o.cfg.AdvertiseAddr,
+				Port:   o.cfg.Port,
+			}
+		}
+	} else {
+		// Fallback to default
+		fromURI = sip.Uri{
+			Scheme: "sip",
+			User:   "switchboard",
+			Host:   o.cfg.AdvertiseAddr,
+			Port:   o.cfg.Port,
+		}
+	}
+
 	bye := sip.NewRequest(sip.BYE, requestURI)
 
 	// Max-Forwards
 	maxFwd := sip.MaxForwardsHeader(70)
 	bye.AppendHeader(&maxFwd)
 
-	// From header (our identity with our tag)
-	fromURI := sip.Uri{
-		Scheme: "sip",
-		User:   "switchboard",
-		Host:   o.cfg.AdvertiseAddr,
-		Port:   o.cfg.Port,
-	}
+	// From header (our identity with our tag - must match INVITE's From)
 	fromParams := sip.NewParams()
 	fromParams.Add("tag", localTag)
 	fromHdr := &sip.FromHeader{
@@ -691,10 +801,11 @@ func (o *Originator) SendBYE(leg Leg) error {
 	bye.AppendHeader(fromHdr)
 
 	// To header (remote party with their tag)
+	// RFC 3261: To header URI must match INVITE's To header, with tag from 200 OK
 	toParams := sip.NewParams()
 	toParams.Add("tag", remoteTag)
 	toHdr := &sip.ToHeader{
-		Address: requestURI,
+		Address: toURI,
 		Params:  toParams,
 	}
 	bye.AppendHeader(toHdr)
@@ -710,9 +821,22 @@ func (o *Originator) SendBYE(leg Leg) error {
 	}
 	bye.AppendHeader(cseqHdr)
 
+	// Set destination address so sipgo uses the correct transport (listener socket on port 5060)
+	// The destination is derived from the Contact URI
+	port := requestURI.Port
+	if port == 0 {
+		port = 5060
+	}
+	destAddr := fmt.Sprintf("%s:%d", requestURI.Host, port)
+	bye.SetDestination(destAddr)
+
 	slog.Info("[Originate] Sending BYE",
 		"bleg_call_id", bleg.callID,
-		"remote_contact", remoteContactURI,
+		"request_uri", remoteContactURI,
+		"to_uri", remoteToURI,
+		"remote_tag", remoteTag,
+		"local_tag", localTag,
+		"dest", destAddr,
 	)
 
 	// Send BYE via client transaction
@@ -836,17 +960,34 @@ func (o *Originator) HandleIncomingBYE(req *sip.Request, tx sip.ServerTransactio
 		callID = req.CallID().String()
 	}
 	if callID == "" {
+		slog.Debug("[Originator] HandleIncomingBYE: no call-id in request")
 		return false
 	}
 
+	slog.Debug("[Originator] HandleIncomingBYE checking",
+		"call_id", callID,
+	)
+
 	bleg := o.GetLegByCallID(callID)
 	if bleg == nil {
+		// Log what B-legs we ARE tracking for debugging
+		o.mu.RLock()
+		trackedIDs := make([]string, 0, len(o.legs))
+		for id := range o.legs {
+			trackedIDs = append(trackedIDs, id)
+		}
+		o.mu.RUnlock()
+		slog.Debug("[Originator] HandleIncomingBYE: not a tracked B-leg",
+			"call_id", callID,
+			"tracked_blegs", trackedIDs,
+		)
 		return false // Not a B-leg we're tracking
 	}
 
 	slog.Info("[Originator] BYE received for B-leg",
 		"call_id", callID,
 		"leg_id", bleg.id,
+		"leg_state", bleg.GetState().String(),
 	)
 
 	// Respond 200 OK
@@ -858,11 +999,40 @@ func (o *Originator) HandleIncomingBYE(req *sip.Request, tx sip.ServerTransactio
 		)
 	}
 
-	// Terminate the leg - this will trigger the cleanup callback
+	// Terminate the leg - this will trigger the cleanup callback and bridge callback
+	slog.Debug("[Originator] Terminating B-leg after BYE",
+		"call_id", callID,
+		"leg_id", bleg.id,
+	)
 	_ = bleg.Hangup(context.Background(), TerminationCauseRemoteBYE)
+
+	slog.Debug("[Originator] B-leg hangup completed",
+		"call_id", callID,
+	)
 
 	return true
 }
+
+// --- BridgeMapper Implementation ---
+
+// GetBridgedBLeg implements BridgeMapper.GetBridgedBLeg
+// Returns the B-leg Call-ID for a bridged call, or nil if not bridged.
+func (o *Originator) GetBridgedBLeg(aLegCallID string) *BridgedCallInfo {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	bLegCallID, exists := o.aToB[aLegCallID]
+	if !exists {
+		return nil
+	}
+
+	return &BridgedCallInfo{
+		BLegCallID: bLegCallID,
+	}
+}
+
+// Ensure Originator implements BridgeMapper
+var _ BridgeMapper = (*Originator)(nil)
 
 // --- Helper Functions ---
 

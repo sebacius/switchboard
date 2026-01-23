@@ -94,6 +94,34 @@ func (m *Manager) CreateFromInvite(req *sip.Request, tx sip.ServerTransaction) (
 	return dlg, nil
 }
 
+// RegisterOutbound registers an outbound dialog after receiving 200 OK.
+// This is called by the Originator when a B-leg call is answered.
+// The dialog is already in Confirmed state.
+func (m *Manager) RegisterOutbound(invite *sip.Request, resp *sip.Response) (*Dialog, error) {
+	callID := ""
+	if invite.CallID() != nil {
+		callID = invite.CallID().String()
+	}
+	if callID == "" {
+		return nil, fmt.Errorf("INVITE missing Call-ID")
+	}
+
+	// Check for duplicate (shouldn't happen, but be defensive)
+	if existing, exists := m.dialogs.Get(callID); exists {
+		if existing.GetState() != StateTerminated {
+			slog.Warn("[Dialog] Duplicate outbound dialog registration", "call_id", callID)
+			return existing, nil
+		}
+	}
+
+	// Create outbound dialog
+	dlg := NewOutboundDialog(invite, resp)
+	m.dialogs.Set(callID, dlg, ActiveDialogTTL)
+
+	slog.Info("[Dialog] Registered outbound dialog", "call_id", callID, "direction", dlg.Direction)
+	return dlg, nil
+}
+
 // SendTrying sends 100 Trying and transitions to Early state
 func (m *Manager) SendTrying(d *Dialog) error {
 	trying := sip.NewResponseFromRequest(d.InviteRequest, sip.StatusTrying, "Trying", nil)
@@ -279,21 +307,49 @@ func (m *Manager) HandleIncomingCANCEL(req *sip.Request, tx sip.ServerTransactio
 
 // Terminate terminates a dialog and sends BYE if needed
 func (m *Manager) Terminate(callID string, reason TerminateReason) error {
+	slog.Debug("[Dialog] Manager.Terminate called",
+		"call_id", callID,
+		"reason", reason,
+	)
+
 	d, exists := m.Get(callID)
 	if !exists {
+		slog.Warn("[Dialog] Manager.Terminate - dialog not found",
+			"call_id", callID,
+		)
 		return fmt.Errorf("dialog not found: %s", callID)
 	}
 
 	state := d.GetState()
+	slog.Debug("[Dialog] Manager.Terminate - dialog found",
+		"call_id", callID,
+		"state", state.String(),
+		"direction", d.Direction,
+	)
+
 	if state == StateTerminated {
+		slog.Debug("[Dialog] Manager.Terminate - already terminated",
+			"call_id", callID,
+		)
 		return nil // Already terminated
 	}
 
 	// If confirmed, send BYE
 	if state == StateConfirmed && reason == ReasonLocalBYE {
+		slog.Info("[Dialog] Manager.Terminate - sending BYE",
+			"call_id", callID,
+			"direction", d.Direction,
+		)
 		if err := m.sendBYE(d); err != nil {
 			slog.Error("[Dialog] Failed to send BYE", "call_id", callID, "error", err)
 		}
+	} else {
+		slog.Debug("[Dialog] Manager.Terminate - not sending BYE",
+			"call_id", callID,
+			"state", state.String(),
+			"reason", reason,
+			"should_send", state == StateConfirmed && reason == ReasonLocalBYE,
+		)
 	}
 
 	// Cancel context
@@ -307,18 +363,57 @@ func (m *Manager) Terminate(callID string, reason TerminateReason) error {
 
 // sendBYE sends a BYE request to terminate the dialog
 func (m *Manager) sendBYE(d *Dialog) error {
-	if d.Session == nil {
-		return fmt.Errorf("no session for BYE")
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := d.Session.Bye(ctx); err != nil {
+	// For inbound dialogs with sipgo session, use the session's Bye method
+	if d.Session != nil && d.Direction == DirectionInbound {
+		if err := d.Session.Bye(ctx); err != nil {
+			return fmt.Errorf("failed to send BYE: %w", err)
+		}
+		slog.Info("[Dialog] BYE sent via session", "call_id", d.CallID)
+		return nil
+	}
+
+	// For outbound dialogs or dialogs without session, build and send BYE manually
+	localContact := sip.Uri{
+		Scheme: "sip",
+		User:   "switchboard",
+		Host:   "localhost", // Will be overwritten by Via
+	}
+	// Try to get a better local contact from the INVITE
+	if d.InviteRequest != nil {
+		if contact := d.InviteRequest.Contact(); contact != nil {
+			localContact = contact.Address
+		} else if from := d.InviteRequest.From(); from != nil {
+			localContact = from.Address
+		}
+	}
+
+	byeReq, err := d.BuildBYE(localContact)
+	if err != nil {
+		return fmt.Errorf("failed to build BYE: %w", err)
+	}
+
+	tx, err := m.sipClient.TransactionRequest(ctx, byeReq)
+	if err != nil {
 		return fmt.Errorf("failed to send BYE: %w", err)
 	}
 
-	slog.Info("[Dialog] BYE sent", "call_id", d.CallID)
+	// Wait for response
+	select {
+	case resp := <-tx.Responses():
+		if resp != nil {
+			slog.Debug("[Dialog] BYE response received",
+				"call_id", d.CallID,
+				"status", resp.StatusCode)
+		}
+	case <-tx.Done():
+	case <-ctx.Done():
+		slog.Warn("[Dialog] BYE timeout", "call_id", d.CallID)
+	}
+
+	slog.Info("[Dialog] BYE sent", "call_id", d.CallID, "direction", d.Direction)
 	return nil
 }
 
@@ -397,4 +492,122 @@ func (m *Manager) ForEach(fn func(*Dialog) bool) {
 // Close stops the TTLStore cleanup goroutine and releases resources
 func (m *Manager) Close() {
 	m.dialogs.Close()
+}
+
+// FindBySessionID finds a dialog by its RTP session ID
+func (m *Manager) FindBySessionID(sessionID string) (*Dialog, bool) {
+	var found *Dialog
+	m.dialogs.ForEach(func(_ string, d *Dialog) bool {
+		if d.GetSessionID() == sessionID {
+			found = d
+			return false // stop iteration
+		}
+		return true
+	})
+	return found, found != nil
+}
+
+// ReINVITEResult contains the result of a re-INVITE operation
+type ReINVITEResult struct {
+	Success    bool
+	StatusCode int
+	Reason     string
+	SDP        []byte // SDP from 200 OK response (if any)
+}
+
+// SendReINVITE sends a re-INVITE request and waits for the response
+// Returns the result and handles ACK for 200 OK responses
+func (m *Manager) SendReINVITE(ctx context.Context, d *Dialog, localContact sip.Uri, opts ReINVITEOptions) (*ReINVITEResult, error) {
+	if d.IsTerminated() {
+		return nil, fmt.Errorf("cannot send re-INVITE: dialog is terminated")
+	}
+
+	state := d.GetState()
+	if state != StateConfirmed {
+		return nil, fmt.Errorf("cannot send re-INVITE: dialog not in confirmed state (state: %s)", state)
+	}
+
+	// Build the re-INVITE request
+	reInviteReq, err := d.BuildReINVITE(localContact, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build re-INVITE: %w", err)
+	}
+
+	// Send the request using sipgo client
+	tx, err := m.sipClient.TransactionRequest(ctx, reInviteReq)
+	if err != nil {
+		d.CompleteReINVITE()
+		return nil, fmt.Errorf("failed to send re-INVITE: %w", err)
+	}
+	defer tx.Terminate()
+
+	// Wait for final response
+	result := &ReINVITEResult{}
+	for {
+		select {
+		case <-ctx.Done():
+			d.CompleteReINVITE()
+			return nil, ctx.Err()
+		case resp := <-tx.Responses():
+			if resp == nil {
+				d.CompleteReINVITE()
+				return nil, fmt.Errorf("transaction terminated without response")
+			}
+
+			statusCode := int(resp.StatusCode)
+			result.StatusCode = statusCode
+			result.Reason = resp.Reason
+
+			// Handle provisional responses
+			if statusCode >= 100 && statusCode < 200 {
+				slog.Debug("[Dialog] Re-INVITE provisional response",
+					"call_id", d.CallID,
+					"status", statusCode,
+					"reason", resp.Reason)
+				continue
+			}
+
+			// Handle final response
+			if statusCode >= 200 && statusCode < 300 {
+				// Success - extract SDP if present
+				if resp.Body() != nil {
+					result.SDP = resp.Body()
+				}
+				result.Success = true
+
+				// Send ACK for 200 OK (required for INVITE transactions)
+				ackReq := sip.NewAckRequest(reInviteReq, resp, nil)
+				if err := m.sipClient.WriteRequest(ackReq); err != nil {
+					slog.Warn("[Dialog] Failed to send ACK for re-INVITE 200 OK",
+						"call_id", d.CallID,
+						"error", err)
+				} else {
+					slog.Debug("[Dialog] ACK sent for re-INVITE",
+						"call_id", d.CallID)
+				}
+
+				slog.Info("[Dialog] Re-INVITE successful",
+					"call_id", d.CallID,
+					"sdp_length", len(result.SDP))
+			} else {
+				// Error response (4xx, 5xx, 6xx)
+				result.Success = false
+				slog.Warn("[Dialog] Re-INVITE failed",
+					"call_id", d.CallID,
+					"status", statusCode,
+					"reason", resp.Reason)
+
+				// Send ACK for error responses (also required per RFC 3261)
+				ackReq := sip.NewAckRequest(reInviteReq, resp, nil)
+				if err := m.sipClient.WriteRequest(ackReq); err != nil {
+					slog.Warn("[Dialog] Failed to send ACK for re-INVITE error response",
+						"call_id", d.CallID,
+						"error", err)
+				}
+			}
+
+			d.CompleteReINVITE()
+			return result, nil
+		}
+	}
 }

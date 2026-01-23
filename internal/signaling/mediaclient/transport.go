@@ -80,6 +80,10 @@ type Transport interface {
 	// Used for B2BUA B-leg where remote is set later via UpdateSessionRemote.
 	CreateSessionPendingRemote(ctx context.Context, callID string, codecs []string) (*SessionResult, error)
 
+	// CreateSessionPendingRemoteOnNode creates a session on the same node as another session.
+	// Used for B2BUA B-leg to ensure bridging is possible (both legs on same RTP manager).
+	CreateSessionPendingRemoteOnNode(ctx context.Context, peerSessionID, callID string, codecs []string) (*SessionResult, error)
+
 	// UpdateSessionRemote updates the remote endpoint for a session.
 	// Used when SDP answer arrives after session creation (B2BUA scenario).
 	UpdateSessionRemote(ctx context.Context, sessionID, remoteAddr string, remotePort int) error

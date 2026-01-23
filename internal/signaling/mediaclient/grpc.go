@@ -255,6 +255,13 @@ func (t *GRPCTransport) CreateSessionPendingRemote(ctx context.Context, callID s
 	}, nil
 }
 
+// CreateSessionPendingRemoteOnNode implements Transport.CreateSessionPendingRemoteOnNode
+// For single transport, this just delegates to CreateSessionPendingRemote (no multi-node concept)
+func (t *GRPCTransport) CreateSessionPendingRemoteOnNode(ctx context.Context, peerSessionID, callID string, codecs []string) (*SessionResult, error) {
+	// Single transport - ignore peerSessionID, we only have one node
+	return t.CreateSessionPendingRemote(ctx, callID, codecs)
+}
+
 // UpdateSessionRemote implements Transport.UpdateSessionRemote
 func (t *GRPCTransport) UpdateSessionRemote(ctx context.Context, sessionID, remoteAddr string, remotePort int) error {
 	req := &rtpv1.UpdateSessionRemoteRequest{

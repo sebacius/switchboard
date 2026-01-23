@@ -18,6 +18,7 @@ type Templates struct {
 	regsPartial        *template.Template
 	dialogPartial      *template.Template
 	sessPartial        *template.Template
+	drainModalPartial  *template.Template
 }
 
 // TemplateData holds data for rendering templates
@@ -97,10 +98,31 @@ type SessionData struct {
 
 // RtpManagerData holds RTP manager info for display
 type RtpManagerData struct {
-	Server  string // Backend server name (signaling server)
-	Address string // RTP manager address
-	Healthy bool
-	Status  string // "Healthy" or "Unhealthy"
+	Server            string // Backend server name (signaling server)
+	NodeID            string // RTP manager node ID (e.g., "rtpmanager-0")
+	Address           string // RTP manager address (e.g., "localhost:9090")
+	Healthy           bool
+	Status            string // "Healthy" or "Unhealthy"
+	DrainState        string // "active", "draining", or "disabled"
+	SessionCount      int    // Number of active sessions on this node
+	InitialSessions   int    // Initial session count when drain started (for progress)
+	RemainingSessions int    // Remaining sessions during drain
+}
+
+// DrainModalData holds data for the drain confirmation modal
+type DrainModalData struct {
+	Server       string
+	NodeID       string
+	Address      string
+	SessionCount int
+}
+
+// DrainResultData holds the result of a drain operation for HTMX response
+type DrainResultData struct {
+	Success bool
+	Message string
+	NodeID  string
+	Server  string
 }
 
 // NewTemplates parses and returns all templates
@@ -146,6 +168,11 @@ func NewTemplates() (*Templates, error) {
 		return nil, err
 	}
 
+	t.drainModalPartial, err = template.New("drain_modal.html").ParseFS(templatesFS, "templates/drain_modal.html")
+	if err != nil {
+		return nil, err
+	}
+
 	return t, nil
 }
 
@@ -182,4 +209,9 @@ func (t *Templates) RenderDialogs(w io.Writer, data TemplateData) error {
 // RenderSessions renders the sessions partial
 func (t *Templates) RenderSessions(w io.Writer, data TemplateData) error {
 	return t.sessPartial.Execute(w, data)
+}
+
+// RenderDrainModal renders the drain confirmation modal
+func (t *Templates) RenderDrainModal(w io.Writer, data DrainModalData) error {
+	return t.drainModalPartial.Execute(w, data)
 }

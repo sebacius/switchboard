@@ -68,6 +68,14 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 		return
 	}
 
+	// Set the SIP source as initial remote endpoint for display purposes.
+	// This ensures the dialog has remote info even if media setup fails.
+	// Will be updated with SDP info after media session is created.
+	sourceIP, sourcePort := parseSourceAddr(req.Source())
+	if sourceIP != "" {
+		dlg.SetRemoteEndpoint(sourceIP, sourcePort)
+	}
+
 	// Send 100 Trying
 	if err := h.dialogMgr.SendTrying(dlg); err != nil {
 		slog.Error("Failed to send 100 Trying", "error", err)

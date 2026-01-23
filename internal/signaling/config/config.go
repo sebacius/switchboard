@@ -21,7 +21,11 @@ type Config struct {
 	DialplanPath string // Path to dialplan.json config file
 
 	// RTP Manager pool settings
-	RTPManagerAddrs       []string // Multiple RTP managers for load balancing
+	// RTPManagerNodes maps node ID to address (e.g., "rtpmanager-0" -> "localhost:9090")
+	// Takes precedence over RTPManagerAddrs if non-empty
+	RTPManagerNodes map[string]string
+	// RTPManagerAddrs is legacy format - list of addresses (auto-generates node IDs)
+	RTPManagerAddrs       []string
 	GRPCConnectTimeout    time.Duration
 	GRPCKeepaliveInterval time.Duration
 	GRPCKeepaliveTimeout  time.Duration
@@ -70,7 +74,13 @@ func Load() *Config {
 		cfg.LogLevel = loglevel
 	}
 	if rtpmanager := os.Getenv("RTPMANAGER_ADDRS"); rtpmanager != "" {
-		cfg.RTPManagerAddrs = parseAddressList(rtpmanager)
+		// Try parsing as node=addr format first
+		nodeMap := parseNodeAddresses(rtpmanager)
+		if len(nodeMap) > 0 {
+			cfg.RTPManagerNodes = nodeMap
+		} else {
+			cfg.RTPManagerAddrs = parseAddressList(rtpmanager)
+		}
 	}
 	if dialplanPath := os.Getenv("DIALPLAN_PATH"); dialplanPath != "" {
 		cfg.DialplanPath = dialplanPath
@@ -93,6 +103,34 @@ func parseAddressList(s string) []string {
 		}
 	}
 	return addrs
+}
+
+// parseNodeAddresses parses a comma-separated list of nodeId=address pairs
+// Returns nil if the format is not detected (no = signs found)
+// Example: "rtpmanager-0=localhost:9090,rtpmanager-1=localhost:9091"
+func parseNodeAddresses(s string) map[string]string {
+	if s == "" || !strings.Contains(s, "=") {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make(map[string]string)
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		kv := strings.SplitN(p, "=", 2)
+		if len(kv) != 2 {
+			// Not in node=addr format, return nil to fall back to legacy
+			return nil
+		}
+		nodeID := strings.TrimSpace(kv[0])
+		addr := strings.TrimSpace(kv[1])
+		if nodeID != "" && addr != "" {
+			result[nodeID] = addr
+		}
+	}
+	return result
 }
 
 // isValidAddress checks if the address is a valid IP or resolvable hostname
