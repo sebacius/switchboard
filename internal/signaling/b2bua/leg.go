@@ -173,6 +173,7 @@ type legOptions struct {
 	callerName    string
 	onTeardown    func(Leg) // Called when leg is being torn down (before state change)
 	aLegSessionID string    // A-leg session ID for bridging on same RTP manager
+	aLegCallID    string    // A-leg Call-ID for BridgeMapper lookup (drain migration)
 }
 
 // WithCallerID sets the caller ID (From URI user part) for outbound legs.
@@ -207,6 +208,15 @@ func WithTeardownHandler(fn func(Leg)) LegOption {
 func WithALegSessionID(sessionID string) LegOption {
 	return func(o *legOptions) {
 		o.aLegSessionID = sessionID
+	}
+}
+
+// WithALegCallID sets the A-leg's SIP Call-ID for the B-leg.
+// This is used by the BridgeMapper to associate A-leg and B-leg dialogs,
+// enabling the drain/migration feature to migrate both legs together.
+func WithALegCallID(callID string) LegOption {
+	return func(o *legOptions) {
+		o.aLegCallID = callID
 	}
 }
 

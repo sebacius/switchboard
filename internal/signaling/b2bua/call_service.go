@@ -131,6 +131,7 @@ func (s *callService) Dial(ctx context.Context, target string, timeout time.Dura
 		CallerID:      legOpts.callerID,
 		CallerName:    legOpts.callerName,
 		ALegSessionID: legOpts.aLegSessionID,
+		ALegCallID:    legOpts.aLegCallID,
 	})
 	if err != nil {
 		return nil, err
@@ -179,8 +180,13 @@ func (s *callService) DialAndBridge(ctx context.Context, legA Leg, target string
 	)
 
 	// Step 1: Dial target (pass through options for CallerID, etc.)
-	// Prepend A-leg session ID so B-leg is created on the same RTP manager
-	opts = append([]LegOption{WithALegSessionID(legA.SessionID())}, opts...)
+	// Prepend A-leg session ID and Call-ID so B-leg:
+	// - Is created on the same RTP manager (for bridging)
+	// - Can be looked up by BridgeMapper (for drain migration)
+	opts = append([]LegOption{
+		WithALegSessionID(legA.SessionID()),
+		WithALegCallID(legA.CallID()),
+	}, opts...)
 	legB, err := s.Dial(ctx, target, timeout, opts...)
 	if err != nil {
 		return nil, err
