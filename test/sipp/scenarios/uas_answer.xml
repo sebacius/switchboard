@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<!--
+  UAS: Answer incoming call, wait for BYE from caller.
+  Simulates a registered phone receiving and answering a call.
+-->
+<scenario name="UAS - Answer and wait for BYE">
+  <!-- Wait for incoming INVITE -->
+  <recv request="INVITE" crlf="true"/>
+
+  <!-- Send 180 Ringing -->
+  <send>
+    <![CDATA[
+SIP/2.0 180 Ringing
+[last_Via:]
+[last_From:]
+[last_To:];tag=[pid]uas[call_number]
+[last_Call-ID:]
+[last_CSeq:]
+Content-Length: 0
+    ]]>
+  </send>
+
+  <!-- Brief ring delay -->
+  <pause milliseconds="500"/>
+
+  <!-- Send 200 OK with SDP -->
+  <send retrans="500">
+    <![CDATA[
+SIP/2.0 200 OK
+[last_Via:]
+[last_From:]
+[last_To:];tag=[pid]uas[call_number]
+[last_Call-ID:]
+[last_CSeq:]
+Contact: <sip:[local_ip]:[local_port]>
+Content-Type: application/sdp
+Content-Length: [len]
+
+v=0
+o=sipp 0 0 IN IP4 [local_ip]
+s=-
+c=IN IP4 [local_ip]
+t=0 0
+m=audio [media_port] RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+    ]]>
+  </send>
+
+  <!-- Receive ACK -->
+  <recv request="ACK" rtd="true"/>
+
+  <!-- Wait for BYE (caller hangs up) -->
+  <recv request="BYE"/>
+
+  <!-- Send 200 OK to BYE -->
+  <send>
+    <![CDATA[
+SIP/2.0 200 OK
+[last_Via:]
+[last_From:]
+[last_To:]
+[last_Call-ID:]
+[last_CSeq:]
+Content-Length: 0
+
+    ]]>
+  </send>
+</scenario>
