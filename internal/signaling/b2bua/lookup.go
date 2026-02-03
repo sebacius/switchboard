@@ -97,16 +97,12 @@ func (r *LookupResult) HasContacts() bool {
 //   - UserResolver: uses LocationStore
 //   - GatewayResolver: uses gateway configuration
 //   - DirectResolver: passthrough for sip: URIs
-//   - ChainResolver: tries multiple resolvers in order
+//   - ResolverRegistry: dispatches to resolvers by prefix
 type Resolver interface {
 	// Resolve looks up the target and returns resolved contacts.
 	// Returns ErrTargetNotFound if the target cannot be resolved.
 	// Returns ErrNoContacts if target exists but has no active registrations.
 	Resolve(ctx context.Context, target string) (*LookupResult, error)
-
-	// CanResolve returns true if this resolver handles the target format.
-	// Used by ChainResolver to skip inapplicable resolvers.
-	CanResolve(target string) bool
 }
 
 // GatewayConfig contains configuration for an outbound gateway/trunk.

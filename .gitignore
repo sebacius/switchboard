@@ -39,3 +39,6 @@ go.work.sum
 CLAUDE.md
 
 .DS_Store
+rtpmanager
+signaling
+ui

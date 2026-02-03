@@ -142,10 +142,17 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Create dialplan executor with default actions
 	executor := dialplan.NewExecutor(dp, dialplan.DefaultRegistry(), slog.Default())
 
+	// Create resolver registry for dial targets
+	resolver := b2bua.NewResolverRegistry()
+	resolver.Register("sip:", b2bua.NewDirectResolver())
+	resolver.Register("sips:", b2bua.NewDirectResolver())
+	resolver.Register("user/", b2bua.NewUserResolver(locStore, cfg.AdvertiseAddr))
+	resolver.SetFallback(b2bua.NewUserResolver(locStore, cfg.AdvertiseAddr))
+
 	// Create B2BUA CallService for dial actions
 	callService := b2bua.NewCallService(b2bua.CallServiceConfig{
 		Client:        uac,
-		Resolver:      b2bua.DefaultResolver(locStore, cfg.AdvertiseAddr),
+		Resolver:      resolver,
 		DialogManager: dialogMgr,
 		Transport:     mediaTransport,
 		LocalContact:  fmt.Sprintf("sip:switchboard@%s:%d", cfg.AdvertiseAddr, cfg.Port),
