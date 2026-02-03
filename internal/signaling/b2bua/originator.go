@@ -149,12 +149,12 @@ func (o *Originator) Originate(ctx context.Context, req OriginateRequest) (*Orig
 		}
 
 		// Terminate the B-leg dialog via dialog manager (schedules cleanup)
+		// Always use ReasonRemoteBYE because:
+		// - If remote sent BYE (cause=RemoteBYE): we don't need to send BYE back
+		// - If we initiated hangup (cause=BridgePeer/Normal): teardown handler already sent BYE
+		// Using ReasonLocalBYE would cause dialog manager to send a duplicate BYE
 		if o.dialogMgr != nil {
-			terminateReason := dialog.ReasonLocalBYE
-			if cause == TerminationCauseRemoteBYE {
-				terminateReason = dialog.ReasonRemoteBYE
-			}
-			if err := o.dialogMgr.Terminate(bLegCallID, terminateReason); err != nil {
+			if err := o.dialogMgr.Terminate(bLegCallID, dialog.ReasonRemoteBYE); err != nil {
 				slog.Debug("[Originator] B-leg dialog termination",
 					"call_id", bLegCallID,
 					"error", err,
@@ -289,6 +289,12 @@ func (o *Originator) buildINVITE(bleg *legImpl, targetURI, localTag string, req 
 		Address: contactURI,
 	}
 	invite.AppendHeader(contactHdr)
+
+	// X-CID header for linking A-leg and B-leg in debugging tools (sngrep, etc.)
+	if req.ALegCallID != "" {
+		correlationHdr := sip.NewHeader("X-CID", req.ALegCallID)
+		invite.AppendHeader(correlationHdr)
+	}
 
 	// Content-Type for SDP
 	contentType := sip.ContentTypeHeader("application/sdp")

@@ -57,9 +57,11 @@ help:
 	@echo "  make k8s-logs               - Tail logs from all pods"
 	@echo ""
 	@echo "TESTING:"
-	@echo "  make test-register    - Register single user"
-	@echo "  make test-multi       - Register multiple users"
-	@echo "  make test-api         - Check registrations via API"
+	@echo "  make test-sip TARGET=<ip>       - Run SIPp test suite"
+	@echo "  make test-sip TARGET=<ip> SCENARIO=register - Run specific test"
+	@echo "  make test-register              - Register single user (sipexer)"
+	@echo "  make test-multi                 - Register multiple users"
+	@echo "  make test-api                   - Check registrations via API"
 
 # Ensure build directory exists
 $(BUILD_DIR):
@@ -237,6 +239,16 @@ k8s-deploy-ui: docker-build-ui docker-save-ui
 # ============================================================================
 # Testing targets
 # ============================================================================
+
+# SIPp test suite - run all SIP scenarios
+# Usage: make test-sip TARGET=localhost
+#        make test-sip TARGET=192.168.1.100
+#        make test-sip TARGET=localhost SCENARIO=register
+TARGET ?= localhost
+SCENARIO ?=
+
+test-sip:
+	@./test/sipp/run-tests.sh $(TARGET) $(SCENARIO)
 
 test-register:
 	@echo "Registering sebas with 3600s expiry..."
