@@ -131,8 +131,8 @@ func (s *sessionImpl) IsTerminated() bool {
 	return s.terminated || s.dialog.IsTerminated()
 }
 
-func (s *sessionImpl) GetDialog() *dialog.Dialog       { return s.dialog }
-func (s *sessionImpl) GetSessionID() string            { return s.sessionID }
+func (s *sessionImpl) GetDialog() *dialog.Dialog           { return s.dialog }
+func (s *sessionImpl) GetSessionID() string                { return s.sessionID }
 func (s *sessionImpl) GetTransport() mediaclient.Transport { return s.transport }
 
 // PlayAudio plays an audio file and blocks until completion.

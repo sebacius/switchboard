@@ -11,15 +11,15 @@ var templatesFS embed.FS
 
 // Templates holds all parsed templates
 type Templates struct {
-	dashboard            *template.Template
-	statsPartial         *template.Template
-	backendsPartial      *template.Template
-	rtpmanagersPartial   *template.Template
-	regsPartial          *template.Template
-	dialogPartial        *template.Template
-	sessPartial          *template.Template
-	drainModalPartial    *template.Template
-	parkedCallsPartial   *template.Template
+	dashboard          *template.Template
+	statsPartial       *template.Template
+	backendsPartial    *template.Template
+	rtpmanagersPartial *template.Template
+	regsPartial        *template.Template
+	dialogPartial      *template.Template
+	sessPartial        *template.Template
+	drainModalPartial  *template.Template
+	parkedCallsPartial *template.Template
 }
 
 // TemplateData holds data for rendering templates

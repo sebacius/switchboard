@@ -96,8 +96,8 @@ func (a *UnparkAction) Execute(ctx context.Context, session CallSession) error {
 	)
 
 	// Get both dialog contexts to watch for either party hanging up
-	retrieverCtx := ctx                        // Retriever's context (passed in)
-	parkedCtx := parkedSlot.Dialog.Context()   // Parked call's dialog context
+	retrieverCtx := ctx                      // Retriever's context (passed in)
+	parkedCtx := parkedSlot.Dialog.Context() // Parked call's dialog context
 
 	// Block until either party hangs up
 	var parkerHungUp bool
