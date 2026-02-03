@@ -114,13 +114,25 @@ func (s *Server) DestroySession(ctx context.Context, req *rtpv1.DestroySessionRe
 
 // PlayAudio implements RTPManagerService.PlayAudio (server streaming)
 func (s *Server) PlayAudio(req *rtpv1.PlayAudioRequest, stream rtpv1.RTPManagerService_PlayAudioServer) error {
-	slog.Info("[gRPC] PlayAudio", "session_id", req.SessionId, "file", req.FilePath)
+	slog.Info("[gRPC] PlayAudio",
+		"session_id", req.SessionId,
+		"file", req.FilePath,
+		"files", req.Files,
+		"loop", req.Loop,
+	)
 
 	// Create event channel
 	eventCh := make(chan *rtpv1.PlaybackEvent, 10)
 
+	// Build play request
+	playReq := session.PlayAudioRequest{
+		FilePath: req.FilePath,
+		Files:    req.Files,
+		Loop:     req.Loop,
+	}
+
 	// Start playback in background
-	if err := s.sessionMgr.PlayAudio(req.SessionId, req.FilePath, eventCh); err != nil {
+	if err := s.sessionMgr.PlayAudio(req.SessionId, playReq, eventCh); err != nil {
 		return err
 	}
 

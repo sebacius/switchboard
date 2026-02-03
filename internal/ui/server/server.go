@@ -55,11 +55,15 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	mux.HandleFunc("/admin/partials/dialogs", s.handleDialogsPartial)
 	mux.HandleFunc("/admin/partials/sessions", s.handleSessionsPartial)
 	mux.HandleFunc("/admin/partials/rtpmanagers", s.handleRtpManagersPartial)
+	mux.HandleFunc("/admin/partials/parkedcalls", s.handleParkedCallsPartial)
 
 	// RTP Manager drain control endpoints
 	mux.HandleFunc("/admin/rtpmanagers/drain-modal", s.handleDrainModal)
 	mux.HandleFunc("/admin/rtpmanagers/drain", s.handleDrain)
 	mux.HandleFunc("/admin/rtpmanagers/cancel-drain", s.handleCancelDrain)
+
+	// Parked calls control endpoints
+	mux.HandleFunc("/admin/park/unpark", s.handleForceUnpark)
 
 	// Health check
 	mux.HandleFunc("/health", s.handleHealth)
@@ -189,6 +193,7 @@ func (s *Server) buildTemplateData(ctx context.Context) TemplateData {
 		Registrations: make([]RegistrationData, 0),
 		Dialogs:       make([]DialogData, 0),
 		Sessions:      make([]SessionData, 0),
+		ParkedCalls:   make([]ParkedCallData, 0),
 		MultiBackend:  len(s.clients) > 1,
 	}
 
@@ -338,6 +343,26 @@ func (s *Server) fetchBackendData(ctx context.Context, c *client.Client, data *T
 				Status:       status,
 				DrainState:   m.DrainState,
 				SessionCount: m.SessionCount,
+			})
+		}
+		mu.Unlock()
+	}
+
+	// Fetch parked calls
+	parkedCalls, err := c.ParkedCalls(ctx)
+	if err != nil {
+		slog.Debug("[UI] Backend parked calls fetch failed", "backend", backendName, "error", err)
+	} else {
+		mu.Lock()
+		for _, p := range parkedCalls {
+			parkedAt, _ := time.Parse(time.RFC3339, p.ParkedAt)
+			data.ParkedCalls = append(data.ParkedCalls, ParkedCallData{
+				Server:   backendName,
+				SlotID:   p.ID,
+				CallID:   p.CallID,
+				Duration: formatDuration(p.DurationSeconds),
+				ParkedBy: p.ParkedBy,
+				ParkedAt: parkedAt.Format("15:04:05"),
 			})
 		}
 		mu.Unlock()
@@ -505,6 +530,65 @@ func (s *Server) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderRtpManagers(w, data); err != nil {
 		slog.Error("[UI] Failed to render rtpmanagers partial", "error", err)
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+	}
+}
+
+// handleParkedCallsPartial renders the parked calls section partial for HTMX
+func (s *Server) handleParkedCallsPartial(w http.ResponseWriter, r *http.Request) {
+	data := s.buildTemplateData(r.Context())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.RenderParkedCalls(w, data); err != nil {
+		slog.Error("[UI] Failed to render parkedcalls partial", "error", err)
+		http.Error(w, "Failed to render template", http.StatusInternalServerError)
+	}
+}
+
+// handleForceUnpark handles force-unparking a call from a parking slot
+func (s *Server) handleForceUnpark(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	server := r.URL.Query().Get("server")
+	slotID := r.URL.Query().Get("slotId")
+
+	if server == "" || slotID == "" {
+		http.Error(w, "Missing server or slotId", http.StatusBadRequest)
+		return
+	}
+
+	// Find the client for the specified server
+	var targetClient *client.Client
+	for _, c := range s.clients {
+		if c.Name() == server {
+			targetClient = c
+			break
+		}
+	}
+
+	if targetClient == nil {
+		http.Error(w, "Server not found", http.StatusNotFound)
+		return
+	}
+
+	// Call the force unpark API
+	err := targetClient.ForceUnpark(r.Context(), slotID)
+	if err != nil {
+		slog.Error("[UI] Failed to force unpark", "server", server, "slotId", slotID, "error", err)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprintf(w, `<div class="text-red-400 text-sm">Failed to unpark call: %s</div>`, err.Error())
+		return
+	}
+
+	// Return updated parked calls partial to refresh the view
+	w.Header().Set("HX-Trigger", "callUnparked")
+	data := s.buildTemplateData(r.Context())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.RenderParkedCalls(w, data); err != nil {
+		slog.Error("[UI] Failed to render parkedcalls partial", "error", err)
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 	}
 }

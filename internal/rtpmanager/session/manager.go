@@ -285,8 +285,15 @@ func (m *Manager) DestroySession(sessionID string) error {
 	return nil
 }
 
+// PlayAudioRequest contains parameters for playing audio
+type PlayAudioRequest struct {
+	FilePath string   // Single file (for backwards compatibility)
+	Files    []string // Playlist of files (preferred)
+	Loop     bool     // Loop the playlist
+}
+
 // PlayAudio starts audio playback for a session
-func (m *Manager) PlayAudio(sessionID, filePath string, eventCh chan<- *rtpv1.PlaybackEvent) error {
+func (m *Manager) PlayAudio(sessionID string, req PlayAudioRequest, eventCh chan<- *rtpv1.PlaybackEvent) error {
 	m.mu.RLock()
 	sess, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
@@ -300,10 +307,17 @@ func (m *Manager) PlayAudio(sessionID, filePath string, eventCh chan<- *rtpv1.Pl
 	sess.State = rtpv1.SessionState_SESSION_STATE_ACTIVE
 	sess.mu.Unlock()
 
+	// Build file list (prefer Files over FilePath)
+	files := req.Files
+	if len(files) == 0 && req.FilePath != "" {
+		files = []string{req.FilePath}
+	}
+
 	// Create play request
 	playReq := media.PlayRequest{
 		CallID:    sess.CallID,
-		File:      filePath,
+		Files:     files,
+		Loop:      req.Loop,
 		Codec:     sess.Codec,
 		LocalAddr: sess.LocalAddr,
 		LocalPort: sess.LocalPort,

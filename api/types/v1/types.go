@@ -74,3 +74,14 @@ type RtpManagersResponse struct {
 	ActiveSessions int          `json:"active_sessions"`
 	Members        []RtpManager `json:"members"`
 }
+
+// ParkedCall represents a parked call slot
+type ParkedCall struct {
+	ID              string   `json:"id"`
+	CallID          string   `json:"call_id"`
+	SessionID       string   `json:"session_id"`
+	ParkedAt        string   `json:"parked_at"`
+	ParkedBy        string   `json:"parked_by"`
+	DurationSeconds int      `json:"duration_seconds"`
+	MohFiles        []string `json:"moh_files,omitempty"`
+}

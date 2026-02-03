@@ -39,6 +39,9 @@ go.work.sum
 CLAUDE.md
 
 .DS_Store
-rtpmanager
-signaling
-ui
+
+# Built binaries (root level only)
+/rtpmanager
+/signaling
+/ui
+/switchboard-*

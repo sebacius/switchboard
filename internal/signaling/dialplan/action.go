@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/sebas/switchboard/internal/signaling/parking"
 )
 
 // Action represents a single step in a dialplan route.
@@ -56,4 +58,14 @@ func DefaultRegistry() *ActionRegistry {
 	r.Register("dial", NewDialAction)
 	r.Register("hangup", NewHangupAction)
 	return r
+}
+
+// RegisterParkingActions registers the park and unpark actions with a ParkService.
+// Call this after DefaultRegistry() to add parking support.
+func RegisterParkingActions(r *ActionRegistry, parkService interface{}) {
+	// Type assertion to avoid import cycle
+	if ps, ok := parkService.(*parking.Service); ok {
+		r.Register("park", NewParkActionFactory(ps))
+		r.Register("unpark", NewUnparkActionFactory(ps))
+	}
 }

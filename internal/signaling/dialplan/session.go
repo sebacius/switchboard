@@ -40,6 +40,20 @@ type CallSession interface {
 
 	// State queries
 	IsTerminated() bool
+
+	// Parking support
+	// GetDialog returns the underlying SIP dialog for parking operations.
+	GetDialog() *dialog.Dialog
+
+	// GetSessionID returns the RTP session ID.
+	GetSessionID() string
+
+	// GetTransport returns the media transport for bridging operations.
+	GetTransport() mediaclient.Transport
+
+	// TerminateDialog terminates another dialog by its Call-ID.
+	// Used for cross-leg termination in bridging scenarios.
+	TerminateDialog(callID string, reason string) error
 }
 
 // sessionImpl implements CallSession, bridging dialplan with existing components.
@@ -116,6 +130,10 @@ func (s *sessionImpl) IsTerminated() bool {
 	defer s.mu.Unlock()
 	return s.terminated || s.dialog.IsTerminated()
 }
+
+func (s *sessionImpl) GetDialog() *dialog.Dialog           { return s.dialog }
+func (s *sessionImpl) GetSessionID() string                { return s.sessionID }
+func (s *sessionImpl) GetTransport() mediaclient.Transport { return s.transport }
 
 // PlayAudio plays an audio file and blocks until completion.
 func (s *sessionImpl) PlayAudio(ctx context.Context, file string) error {
@@ -382,4 +400,19 @@ func (s *sessionImpl) Hangup(reason string) error {
 	}
 
 	return nil
+}
+
+// TerminateDialog terminates another dialog by its Call-ID.
+// Used for cross-leg termination in bridging scenarios (e.g., parking).
+func (s *sessionImpl) TerminateDialog(callID string, reason string) error {
+	s.logger.Info("[Session] TerminateDialog",
+		"target_call_id", callID,
+		"reason", reason,
+	)
+
+	if s.dialogMgr == nil {
+		return fmt.Errorf("dialog manager not available")
+	}
+
+	return s.dialogMgr.Terminate(callID, dialog.ReasonLocalBYE)
 }

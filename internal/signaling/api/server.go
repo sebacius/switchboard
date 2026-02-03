@@ -14,6 +14,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/drain"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
+	"github.com/sebas/switchboard/internal/signaling/parking"
 )
 
 // RegistrationProvider provides registration data for the API.
@@ -37,6 +38,14 @@ type DrainProvider interface {
 	CancelDrain(nodeID string) error
 }
 
+// ParkProvider provides parking operations for the API.
+// Implemented by parking.APIAdapter.
+type ParkProvider interface {
+	List() []parking.APISlotInfo
+	Get(slotID string) (*parking.APISlotInfo, bool)
+	ForceUnpark(slotID string) error
+}
+
 // Server provides HTTP API for the SIP proxy (headless, API only)
 type Server struct {
 	addr          string
@@ -45,6 +54,7 @@ type Server struct {
 	dialogMgr     dialog.DialogStore
 	rtpManagers   RtpManagerProvider
 	drainProvider DrainProvider
+	parkProvider  ParkProvider
 	sessionsMu    sync.RWMutex
 	sessions      map[string]*SessionRecord
 	startTime     time.Time
@@ -91,6 +101,10 @@ func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog
 	// RTP Managers
 	mux.HandleFunc("/api/v1/rtpmanagers", s.handleRtpManagers)
 	mux.HandleFunc("/api/v1/rtpmanagers/", s.handleRtpManagerDrain)
+
+	// Parking
+	mux.HandleFunc("/api/v1/park", s.handleParkList)
+	mux.HandleFunc("/api/v1/park/", s.handleParkSlot)
 
 	// Admin
 	mux.HandleFunc("/api/v1/shutdown", s.handleShutdown)
@@ -396,6 +410,11 @@ func (s *Server) SetDrainProvider(dp DrainProvider) {
 	s.drainProvider = dp
 }
 
+// SetParkProvider sets the parking provider for park API endpoints
+func (s *Server) SetParkProvider(pp ParkProvider) {
+	s.parkProvider = pp
+}
+
 // handleRtpManagerDrain handles drain operations for specific RTP managers
 // POST /api/v1/rtpmanagers/{nodeId}/drain - Start drain
 // GET /api/v1/rtpmanagers/{nodeId}/drain - Get drain status
@@ -525,6 +544,70 @@ func (s *Server) handleCancelDrain(w http.ResponseWriter, nodeID string) {
 		"message": "Drain canceled",
 		"node_id": nodeID,
 	})
+}
+
+// --- Parking ---
+
+// handleParkList returns all parked calls
+func (s *Server) handleParkList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.parkProvider == nil {
+		s.writeJSON(w, []interface{}{})
+		return
+	}
+
+	slots := s.parkProvider.List()
+	s.writeJSON(w, slots)
+}
+
+// handleParkSlot handles operations on a specific park slot
+// GET /api/v1/park/{slotID} - Get slot details
+// DELETE /api/v1/park/{slotID} - Force-unpark
+func (s *Server) handleParkSlot(w http.ResponseWriter, r *http.Request) {
+	// Extract slot ID from path
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/park/")
+	if path == "" {
+		http.Error(w, "Slot ID required", http.StatusBadRequest)
+		return
+	}
+
+	slotID, err := url.PathUnescape(path)
+	if err != nil {
+		http.Error(w, "Invalid slot ID encoding", http.StatusBadRequest)
+		return
+	}
+
+	if s.parkProvider == nil {
+		http.Error(w, "Parking not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		slot, found := s.parkProvider.Get(slotID)
+		if !found {
+			http.Error(w, "Slot not found", http.StatusNotFound)
+			return
+		}
+		s.writeJSON(w, slot)
+
+	case http.MethodDelete:
+		if err := s.parkProvider.ForceUnpark(slotID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		s.writeJSON(w, map[string]interface{}{
+			"message": "Slot cleared",
+			"slot_id": slotID,
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // --- Admin ---
