@@ -24,7 +24,8 @@ type SessionResult struct {
 // PlayRequest contains audio playback parameters
 type PlayRequest struct {
 	SessionID  string
-	AudioFile  string
+	AudioFile  string   // Single file (for backwards compatibility)
+	Files      []string // Playlist of files (preferred over AudioFile)
 	Loop       bool
 	OnComplete func(sessionID string) // Called when playback completes
 }

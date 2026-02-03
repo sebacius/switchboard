@@ -11,14 +11,15 @@ var templatesFS embed.FS
 
 // Templates holds all parsed templates
 type Templates struct {
-	dashboard          *template.Template
-	statsPartial       *template.Template
-	backendsPartial    *template.Template
-	rtpmanagersPartial *template.Template
-	regsPartial        *template.Template
-	dialogPartial      *template.Template
-	sessPartial        *template.Template
-	drainModalPartial  *template.Template
+	dashboard            *template.Template
+	statsPartial         *template.Template
+	backendsPartial      *template.Template
+	rtpmanagersPartial   *template.Template
+	regsPartial          *template.Template
+	dialogPartial        *template.Template
+	sessPartial          *template.Template
+	drainModalPartial    *template.Template
+	parkedCallsPartial   *template.Template
 }
 
 // TemplateData holds data for rendering templates
@@ -31,6 +32,7 @@ type TemplateData struct {
 	Registrations []RegistrationData
 	Dialogs       []DialogData
 	Sessions      []SessionData
+	ParkedCalls   []ParkedCallData
 	MultiBackend  bool // true if multiple backends configured
 }
 
@@ -126,6 +128,16 @@ type DrainResultData struct {
 	Server  string
 }
 
+// ParkedCallData holds parked call info for display
+type ParkedCallData struct {
+	Server   string // Backend server name
+	SlotID   string // Parking slot ID
+	CallID   string // SIP Call-ID
+	Duration string // Formatted duration
+	ParkedBy string // Who parked the call (e.g., "dialplan", user extension)
+	ParkedAt string // Formatted timestamp
+}
+
 // NewTemplates parses and returns all templates
 func NewTemplates() (*Templates, error) {
 	t := &Templates{}
@@ -174,6 +186,11 @@ func NewTemplates() (*Templates, error) {
 		return nil, err
 	}
 
+	t.parkedCallsPartial, err = template.New("parkedcalls.html").ParseFS(templatesFS, "templates/parkedcalls.html")
+	if err != nil {
+		return nil, err
+	}
+
 	return t, nil
 }
 
@@ -215,4 +232,9 @@ func (t *Templates) RenderSessions(w io.Writer, data TemplateData) error {
 // RenderDrainModal renders the drain confirmation modal
 func (t *Templates) RenderDrainModal(w io.Writer, data DrainModalData) error {
 	return t.drainModalPartial.Execute(w, data)
+}
+
+// RenderParkedCalls renders the parked calls partial
+func (t *Templates) RenderParkedCalls(w io.Writer, data TemplateData) error {
+	return t.parkedCallsPartial.Execute(w, data)
 }

@@ -3,6 +3,7 @@ package dialplan
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -11,7 +12,7 @@ import (
 type Route struct {
 	ID       string         `json:"id"`
 	Name     string         `json:"name"`
-	Pattern  string         `json:"pattern"`  // Exact match, "prefix*" for prefix, or "*" for default
+	Pattern  string         `json:"pattern"`  // Exact match, "prefix*" for prefix, regex, or "*" for default
 	Priority int            `json:"priority"` // Lower = higher priority (0 = highest)
 	Enabled  bool           `json:"enabled"`
 	Actions  []ActionConfig `json:"actions"`
@@ -19,8 +20,10 @@ type Route struct {
 	// Compiled pattern info (not exported, built on validation)
 	isDefault bool
 	isPrefix  bool
+	isRegex   bool
 	prefix    string
 	exact     string
+	regex     *regexp.Regexp
 }
 
 // ActionConfig holds raw action configuration.
@@ -44,6 +47,15 @@ func (r *Route) Validate() error {
 	// Compile pattern
 	if r.Pattern == "*" {
 		r.isDefault = true
+	} else if isRegexPattern(r.Pattern) {
+		// Pattern contains regex metacharacters - compile as regex
+		// Wrap in ^...$ for full match
+		re, err := regexp.Compile("^" + r.Pattern + "$")
+		if err != nil {
+			return fmt.Errorf("invalid regex pattern %q: %w", r.Pattern, err)
+		}
+		r.isRegex = true
+		r.regex = re
 	} else if strings.HasSuffix(r.Pattern, "*") {
 		r.isPrefix = true
 		r.prefix = strings.TrimSuffix(r.Pattern, "*")
@@ -54,6 +66,23 @@ func (r *Route) Validate() error {
 	return nil
 }
 
+// isRegexPattern checks if a pattern contains regex metacharacters.
+// We check for common metacharacters that indicate regex usage.
+func isRegexPattern(pattern string) bool {
+	// Check for regex metacharacters (excluding trailing * which means prefix)
+	metacharacters := []string{"[", "]", "(", ")", "{", "}", "|", ".", "+", "?", "^", "$", "\\"}
+	for _, meta := range metacharacters {
+		if strings.Contains(pattern, meta) {
+			return true
+		}
+	}
+	// Check for * not at the end (mid-pattern wildcard is regex)
+	if strings.Contains(strings.TrimSuffix(pattern, "*"), "*") {
+		return true
+	}
+	return false
+}
+
 // Match checks if a destination matches this route's pattern.
 func (r *Route) Match(destination string) bool {
 	if !r.Enabled {
@@ -62,6 +91,9 @@ func (r *Route) Match(destination string) bool {
 
 	if r.isDefault {
 		return true
+	}
+	if r.isRegex {
+		return r.regex.MatchString(destination)
 	}
 	if r.isPrefix {
 		return strings.HasPrefix(destination, r.prefix)

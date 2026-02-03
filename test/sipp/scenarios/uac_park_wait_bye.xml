@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<!--
+  UAC: Park call, wait for BYE (retriever hangs up first).
+
+  Flow:
+  1. Call 700, get parked
+  2. Wait for retriever to unpark and bridge
+  3. Retriever sends BYE, server sends BYE to us
+-->
+<scenario name="UAC - Park, Wait for BYE">
+  <send>
+    <![CDATA[
+INVITE sip:700@[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+From: "Parker" <sip:[service]@[local_ip]>;tag=[pid]park[call_number]
+To: <sip:700@[remote_ip]:[remote_port]>
+Call-ID: [call_id]
+CSeq: 1 INVITE
+Contact: <sip:[service]@[local_ip]:[local_port];transport=[transport]>
+Max-Forwards: 70
+Content-Type: application/sdp
+User-Agent: SIPp-Parker/1.0
+Content-Length: [len]
+
+v=0
+o=sipp 0 0 IN IP4 [local_ip]
+s=-
+c=IN IP4 [local_ip]
+t=0 0
+m=audio [media_port] RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+    ]]>
+  </send>
+
+  <recv response="100" optional="true"/>
+  <recv response="183" optional="true"/>
+  <recv response="200" rtd="true"/>
+
+  <send>
+    <![CDATA[
+ACK sip:700@[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+From: [last_From:]
+To: [last_To:]
+Call-ID: [call_id]
+CSeq: 1 ACK
+Max-Forwards: 70
+Content-Length: 0
+    ]]>
+  </send>
+
+  <!-- Wait for BYE from server (retriever hung up) -->
+  <recv request="BYE" timeout="60000"/>
+
+  <send>
+    <![CDATA[
+SIP/2.0 200 OK
+[last_Via:]
+[last_From:]
+[last_To:]
+[last_Call-ID:]
+[last_CSeq:]
+Content-Length: 0
+    ]]>
+  </send>
+</scenario>

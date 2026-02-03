@@ -408,8 +408,9 @@ func (x *DestroySessionResponse) GetStatus() *SessionStatus {
 type PlayAudioRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	FilePath      string                 `protobuf:"bytes,2,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
-	Loop          bool                   `protobuf:"varint,3,opt,name=loop,proto3" json:"loop,omitempty"`
+	FilePath      string                 `protobuf:"bytes,2,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"` // Single file (for backwards compatibility)
+	Loop          bool                   `protobuf:"varint,3,opt,name=loop,proto3" json:"loop,omitempty"`                        // Loop the playlist indefinitely
+	Files         []string               `protobuf:"bytes,4,rep,name=files,proto3" json:"files,omitempty"`                       // Playlist of files (preferred over file_path)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -463,6 +464,13 @@ func (x *PlayAudioRequest) GetLoop() bool {
 		return x.Loop
 	}
 	return false
+}
+
+func (x *PlayAudioRequest) GetFiles() []string {
+	if x != nil {
+		return x.Files
+	}
+	return nil
 }
 
 type PlaybackEvent struct {
@@ -1460,12 +1468,13 @@ const file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc = "" +
 	"\x16DestroySessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x124\n" +
-	"\x06status\x18\x02 \x01(\v2\x1c.rtpmanager.v1.SessionStatusR\x06status\"b\n" +
+	"\x06status\x18\x02 \x01(\v2\x1c.rtpmanager.v1.SessionStatusR\x06status\"x\n" +
 	"\x10PlayAudioRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1b\n" +
 	"\tfile_path\x18\x02 \x01(\tR\bfilePath\x12\x12\n" +
-	"\x04loop\x18\x03 \x01(\bR\x04loop\"\xe6\x02\n" +
+	"\x04loop\x18\x03 \x01(\bR\x04loop\x12\x14\n" +
+	"\x05files\x18\x04 \x03(\tR\x05files\"\xe6\x02\n" +
 	"\rPlaybackEvent\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12:\n" +

@@ -3,7 +3,9 @@ package media
 // PlayRequest is a request to play audio to a client
 type PlayRequest struct {
 	CallID     string                                      // SIP Call-ID for tracking
-	File       string                                      // Path to audio file (e.g., "audio/demo.wav")
+	File       string                                      // Path to audio file (e.g., "audio/demo.wav") - deprecated, use Files
+	Files      []string                                    // Playlist of audio files (preferred over File)
+	Loop       bool                                        // Loop the playlist indefinitely
 	Codec      string                                      // Selected codec (PCMU, PCMA, Opus, G729)
 	LocalAddr  string                                      // Local IP address to send from
 	LocalPort  int                                         // Local RTP port to send from (as advertised in SDP)

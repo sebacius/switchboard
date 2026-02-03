@@ -26,12 +26,13 @@ RESULTS_DIR="$SCRIPT_DIR/results"
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <signaling_ip> [test]"
     echo ""
-    echo "Tests: register, calls, all (default)"
+    echo "Tests: register, calls, parking, all (default)"
     echo ""
     echo "Examples:"
     echo "  $0 192.168.50.181           # Run all"
     echo "  $0 192.168.50.181 register  # Only registration"
     echo "  $0 192.168.50.181 calls     # Only calls"
+    echo "  $0 192.168.50.181 parking   # Only parking tests"
     exit 1
 fi
 
@@ -92,6 +93,148 @@ test_register() {
             ((FAIL++))
         fi
     done
+}
+
+# ============================================================================
+# TEST: Parking - Retriever hangs up
+# ============================================================================
+test_park_retriever_bye() {
+    echo -e "\n${BOLD}[TEST] Parking: Retriever Hangs Up${NC}"
+
+    local LOCAL_IP
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [[ -z "$LOCAL_IP" ]]; then
+        LOCAL_IP=$(ifconfig | grep 'inet ' | grep -v '127.0.0.1' | head -1 | awk '{print $2}')
+    fi
+
+    echo -e "  Scenario: Parker calls 700, Retriever calls *700, Retriever sends BYE"
+
+    # Start parker first (calls 700, waits for BYE)
+    echo -e "  Starting parker (port 7001)..."
+    sipp "${TARGET}:${SIP_PORT}" \
+        -sf "$SCENARIOS_DIR/uac_park_wait_bye.xml" \
+        -i "$LOCAL_IP" \
+        -s "parker" \
+        -p 7001 \
+        -m 1 \
+        -nd \
+        -timeout 30s \
+        -trace_msg \
+        -message_file "$RUN_DIR/park_retriever_bye_parker_msgs.log" \
+        > "$RUN_DIR/park_retriever_bye_parker.log" 2>&1 &
+    local parker_pid=$!
+
+    # Wait for parker to establish call
+    sleep 2
+
+    # Start retriever (calls *700, sends BYE after 2s)
+    echo -e "  Starting retriever (port 7002)..."
+    sipp "${TARGET}:${SIP_PORT}" \
+        -sf "$SCENARIOS_DIR/uac_unpark_send_bye.xml" \
+        -i "$LOCAL_IP" \
+        -inf "$SCRIPT_DIR/data/slot.csv" \
+        -s "retriever" \
+        -p 7002 \
+        -m 1 \
+        -nd \
+        -timeout 30s \
+        -trace_msg \
+        -message_file "$RUN_DIR/park_retriever_bye_retriever_msgs.log" \
+        > "$RUN_DIR/park_retriever_bye_retriever.log" 2>&1 &
+    local retriever_pid=$!
+
+    # Wait for both to complete
+    local parker_ok=0
+    local retriever_ok=0
+
+    if wait $retriever_pid 2>/dev/null; then
+        retriever_ok=1
+    fi
+
+    if wait $parker_pid 2>/dev/null; then
+        parker_ok=1
+    fi
+
+    if [[ $parker_ok -eq 1 && $retriever_ok -eq 1 ]]; then
+        echo -e "  ${GREEN}[PASS]${NC} Park/Unpark (retriever BYE)"
+        ((PASS++))
+    else
+        echo -e "  ${RED}[FAIL]${NC} Park/Unpark (retriever BYE)"
+        [[ $parker_ok -eq 0 ]] && echo -e "    Parker failed - check $RUN_DIR/park_retriever_bye_parker.log"
+        [[ $retriever_ok -eq 0 ]] && echo -e "    Retriever failed - check $RUN_DIR/park_retriever_bye_retriever.log"
+        ((FAIL++))
+    fi
+}
+
+# ============================================================================
+# TEST: Parking - Parker hangs up
+# ============================================================================
+test_park_parker_bye() {
+    echo -e "\n${BOLD}[TEST] Parking: Parker Hangs Up${NC}"
+
+    local LOCAL_IP
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [[ -z "$LOCAL_IP" ]]; then
+        LOCAL_IP=$(ifconfig | grep 'inet ' | grep -v '127.0.0.1' | head -1 | awk '{print $2}')
+    fi
+
+    echo -e "  Scenario: Parker calls 700, Retriever calls *700, Parker sends BYE"
+
+    # Start parker (calls 700, waits 4s then sends BYE)
+    echo -e "  Starting parker (port 7003)..."
+    sipp "${TARGET}:${SIP_PORT}" \
+        -sf "$SCENARIOS_DIR/uac_park_send_bye.xml" \
+        -i "$LOCAL_IP" \
+        -s "parker2" \
+        -p 7003 \
+        -m 1 \
+        -nd \
+        -timeout 30s \
+        -trace_msg \
+        -message_file "$RUN_DIR/park_parker_bye_parker_msgs.log" \
+        > "$RUN_DIR/park_parker_bye_parker.log" 2>&1 &
+    local parker_pid=$!
+
+    # Wait for parker to establish call
+    sleep 2
+
+    # Start retriever (calls *700, waits for BYE)
+    echo -e "  Starting retriever (port 7004)..."
+    sipp "${TARGET}:${SIP_PORT}" \
+        -sf "$SCENARIOS_DIR/uac_unpark_wait_bye.xml" \
+        -i "$LOCAL_IP" \
+        -inf "$SCRIPT_DIR/data/slot.csv" \
+        -s "retriever2" \
+        -p 7004 \
+        -m 1 \
+        -nd \
+        -timeout 30s \
+        -trace_msg \
+        -message_file "$RUN_DIR/park_parker_bye_retriever_msgs.log" \
+        > "$RUN_DIR/park_parker_bye_retriever.log" 2>&1 &
+    local retriever_pid=$!
+
+    # Wait for both to complete
+    local parker_ok=0
+    local retriever_ok=0
+
+    if wait $parker_pid 2>/dev/null; then
+        parker_ok=1
+    fi
+
+    if wait $retriever_pid 2>/dev/null; then
+        retriever_ok=1
+    fi
+
+    if [[ $parker_ok -eq 1 && $retriever_ok -eq 1 ]]; then
+        echo -e "  ${GREEN}[PASS]${NC} Park/Unpark (parker BYE)"
+        ((PASS++))
+    else
+        echo -e "  ${RED}[FAIL]${NC} Park/Unpark (parker BYE)"
+        [[ $parker_ok -eq 0 ]] && echo -e "    Parker failed - check $RUN_DIR/park_parker_bye_parker.log"
+        [[ $retriever_ok -eq 0 ]] && echo -e "    Retriever failed - check $RUN_DIR/park_parker_bye_retriever.log"
+        ((FAIL++))
+    fi
 }
 
 # ============================================================================
@@ -256,9 +399,15 @@ case "$TEST" in
     calls)
         test_calls
         ;;
+    parking)
+        test_park_retriever_bye
+        test_park_parker_bye
+        ;;
     all)
         test_register
         test_calls
+        test_park_retriever_bye
+        test_park_parker_bye
         ;;
     *)
         echo -e "${RED}Unknown test: $TEST${NC}"

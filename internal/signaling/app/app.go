@@ -16,6 +16,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/drain"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
+	"github.com/sebas/switchboard/internal/signaling/parking"
 	"github.com/sebas/switchboard/internal/signaling/routing"
 )
 
@@ -125,6 +126,16 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	drainCoordinator := drain.NewCoordinator(mediaTransport, migrator)
 	apiServer.SetDrainProvider(drainCoordinator)
 
+	// Create parking service
+	parkService := parking.NewService(parking.ServiceConfig{
+		Transport: mediaTransport,
+		Logger:    slog.Default(),
+	})
+
+	// Set parking API provider
+	parkAdapter := parking.NewAPIAdapter(parkService)
+	apiServer.SetParkProvider(parkAdapter)
+
 	// Load dialplan configuration
 	dialplanPath := cfg.DialplanPath
 	if dialplanPath == "" {
@@ -139,8 +150,10 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	}
 	slog.Info("Dialplan loaded", "path", dialplanPath, "routes", dp.RouteCount())
 
-	// Create dialplan executor with default actions
-	executor := dialplan.NewExecutor(dp, dialplan.DefaultRegistry(), slog.Default())
+	// Create dialplan executor with default actions + parking actions
+	actionRegistry := dialplan.DefaultRegistry()
+	dialplan.RegisterParkingActions(actionRegistry, parkService)
+	executor := dialplan.NewExecutor(dp, actionRegistry, slog.Default())
 
 	// Create resolver registry for dial targets
 	resolver := b2bua.NewResolverRegistry()
@@ -195,10 +208,13 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		callService:     callService,
 	}
 
-	// Set up dialog termination callback to cleanup transport sessions and API records
+	// Set up dialog termination callback to cleanup transport sessions, API records, and parking
 	dialogMgr.SetOnTerminated(func(d *dialog.Dialog) {
 		// Remove session from API records
 		apiServer.RemoveSession(d.CallID)
+
+		// Cleanup parked call if this was a parked dialog
+		parkService.CleanupByCallID(d.CallID)
 
 		if sessionID := d.GetSessionID(); sessionID != "" {
 			reason := mediaclient.TerminateReasonNormal

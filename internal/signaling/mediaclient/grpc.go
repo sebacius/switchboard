@@ -154,6 +154,7 @@ func (t *GRPCTransport) PlayAudio(ctx context.Context, req PlayRequest) (<-chan 
 	grpcReq := &rtpv1.PlayAudioRequest{
 		SessionId: req.SessionID,
 		FilePath:  req.AudioFile,
+		Files:     req.Files,
 		Loop:      req.Loop,
 	}
 

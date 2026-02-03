@@ -86,8 +86,9 @@ message DestroySessionResponse {
 
 message PlayAudioRequest {
   string session_id = 1;
-  string file_path = 2;
-  bool loop = 3;
+  string file_path = 2;       // Single file (for backwards compatibility)
+  bool loop = 3;              // Loop the playlist indefinitely
+  repeated string files = 4;  // Playlist of files (preferred over file_path)
 }
 
 message PlaybackEvent {

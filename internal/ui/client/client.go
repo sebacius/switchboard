@@ -181,6 +181,32 @@ func (c *Client) CancelDrain(ctx context.Context, nodeID string) error {
 	return nil
 }
 
+// ParkedCalls fetches all parked calls from the signaling server
+func (c *Client) ParkedCalls(ctx context.Context) ([]types.ParkedCall, error) {
+	resp, err := c.get(ctx, "/api/v1/park")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var calls []types.ParkedCall
+	if err := json.NewDecoder(resp.Body).Decode(&calls); err != nil {
+		return nil, fmt.Errorf("decode parked calls: %w", err)
+	}
+	return calls, nil
+}
+
+// ForceUnpark force-unparks a call from the specified slot
+func (c *Client) ForceUnpark(ctx context.Context, slotID string) error {
+	path := fmt.Sprintf("/api/v1/park/%s", slotID)
+	resp, err := c.delete(ctx, path)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
 // get performs an HTTP GET request
 func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
