@@ -38,6 +38,11 @@ service RTPManagerService {
   // UnbridgeMedia disconnects two bridged sessions.
   // Each session continues to exist but packets are no longer forwarded.
   rpc UnbridgeMedia(UnbridgeMediaRequest) returns (UnbridgeMediaResponse);
+
+  // PlayTTS generates speech from text using a TTS server and streams it.
+  // The audio is fetched from the configured TTS server, resampled to 8kHz,
+  // encoded to PCMU, and streamed as RTP packets.
+  rpc PlayTTS(PlayTTSRequest) returns (stream PlaybackEvent);
 }
 
 // Session Management
@@ -135,6 +140,14 @@ message StopAudioRequest {
 message StopAudioResponse {
   string session_id = 1;
   bool was_playing = 2;
+}
+
+// Text-to-Speech
+
+message PlayTTSRequest {
+  string session_id = 1;
+  string text = 2;       // Text to synthesize
+  string voice = 3;      // Voice name (e.g., "alloy", "echo", "nova")
 }
 
 // Health Check

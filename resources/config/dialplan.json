@@ -8,12 +8,13 @@
       "priority": 10,
       "enabled": true,
       "actions": [
-        {
-          "type": "play_audio",
-          "params": {
-            "file": "audio/demo-congrats.wav"
-          }
-        }
+        {                                                                                                                                                                     
+          "type": "tts",                                                                                                                                                      
+          "params": {                                                                                                                                                         
+            "text": "Hello, welcome to our service. This is the most insteresting experience i have ever had. Please press 1 for sales, 2 for support, or 3 for billing.",                                                                                                                         
+            "voice": "alloy"                                                                                                                                                  
+          }                                                                                                                                                                   
+        }   
       ]
     },
     {

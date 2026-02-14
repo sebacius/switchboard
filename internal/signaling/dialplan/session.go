@@ -27,6 +27,7 @@ type CallSession interface {
 
 	// Media operations
 	PlayAudio(ctx context.Context, file string) error
+	PlayTTS(ctx context.Context, text, voice string) error
 	StopAudio() error
 
 	// B2BUA operations (for dial action)
@@ -183,6 +184,60 @@ func (s *sessionImpl) PlayAudio(ctx context.Context, file string) error {
 			s.logger.Debug("[Session] Playback stopped",
 				"call_id", s.callID,
 				"file", file,
+			)
+			return nil
+		}
+	}
+
+	return nil
+}
+
+// PlayTTS synthesizes text to speech and plays it.
+func (s *sessionImpl) PlayTTS(ctx context.Context, text, voice string) error {
+	s.mu.Lock()
+	sessionID := s.sessionID
+	s.mu.Unlock()
+
+	if sessionID == "" {
+		return fmt.Errorf("no RTP session established")
+	}
+
+	s.logger.Debug("[Session] Playing TTS",
+		"call_id", s.callID,
+		"text", text,
+		"voice", voice,
+	)
+
+	// Create TTS request
+	ttsReq := mediaclient.TTSRequest{
+		SessionID: sessionID,
+		Text:      text,
+		Voice:     voice,
+	}
+
+	// Start TTS playback
+	statusCh, err := s.transport.PlayTTS(ctx, ttsReq)
+	if err != nil {
+		return fmt.Errorf("start TTS playback: %w", err)
+	}
+
+	// Wait for completion or cancellation
+	for status := range statusCh {
+		switch status.State {
+		case mediaclient.PlayStateCompleted:
+			s.logger.Debug("[Session] TTS playback completed",
+				"call_id", s.callID,
+			)
+			return nil
+		case mediaclient.PlayStateError:
+			s.logger.Warn("[Session] TTS playback error",
+				"call_id", s.callID,
+				"error", status.Error,
+			)
+			return status.Error
+		case mediaclient.PlayStateStopped:
+			s.logger.Debug("[Session] TTS playback stopped",
+				"call_id", s.callID,
 			)
 			return nil
 		}

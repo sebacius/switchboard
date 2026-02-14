@@ -5,7 +5,8 @@
 	docker-build docker-build-signaling docker-build-rtpmanager docker-build-ui \
 	docker-save docker-save-signaling docker-save-rtpmanager docker-save-ui \
 	k8s-deploy k8s-delete k8s-status k8s-logs \
-	k8s-deploy-signaling k8s-deploy-rtpmanager k8s-deploy-ui
+	k8s-deploy-signaling k8s-deploy-rtpmanager k8s-deploy-ui \
+	tts-start tts-stop tts-status
 
 # Docker image names
 IMAGE_SIGNALING ?= switchboard-signaling
@@ -55,6 +56,11 @@ help:
 	@echo "  make k8s-delete             - Delete all Switchboard resources"
 	@echo "  make k8s-status             - Show deployment status"
 	@echo "  make k8s-logs               - Tail logs from all pods"
+	@echo ""
+	@echo "TTS:"
+	@echo "  make tts-start          - Start TTS server (Docker)"
+	@echo "  make tts-stop           - Stop TTS server"
+	@echo "  make tts-status         - Check TTS server status"
 	@echo ""
 	@echo "TESTING:"
 	@echo "  make test-sip TARGET=<ip>       - Run SIPp test suite"
@@ -269,3 +275,42 @@ test-api:
 test-deregister:
 	@echo "Deregistering alice..."
 	@sipexer -register -au alice -ex 0 -cb $(TEST_SIP_SERVER)
+
+# ============================================================================
+# TTS Server (OpenAI-compatible speech API)
+# ============================================================================
+
+TTS_CONTAINER_NAME ?= piper-tts
+TTS_IMAGE ?= ghcr.io/matatonic/openedai-speech
+TTS_PORT ?= 8000
+
+# Start TTS server if not running
+tts-start:
+	@if docker ps -q -f name=$(TTS_CONTAINER_NAME) | grep -q .; then \
+		echo "TTS server already running"; \
+	elif docker ps -aq -f name=$(TTS_CONTAINER_NAME) | grep -q .; then \
+		echo "Starting existing TTS container..."; \
+		docker start $(TTS_CONTAINER_NAME) && echo "TTS server available at http://localhost:$(TTS_PORT)"; \
+	else \
+		echo "Starting TTS server on port $(TTS_PORT)..."; \
+		docker run -d --name $(TTS_CONTAINER_NAME) -p $(TTS_PORT):8000 $(TTS_IMAGE) && \
+		echo "TTS server available at http://localhost:$(TTS_PORT)"; \
+	fi
+
+# Stop TTS server
+tts-stop:
+	@if docker ps -q -f name=$(TTS_CONTAINER_NAME) | grep -q .; then \
+		echo "Stopping TTS server..."; \
+		docker stop $(TTS_CONTAINER_NAME); \
+	else \
+		echo "TTS server not running"; \
+	fi
+
+# Check TTS server status
+tts-status:
+	@if docker ps -q -f name=$(TTS_CONTAINER_NAME) | grep -q .; then \
+		echo "TTS server: running"; \
+		docker ps -f name=$(TTS_CONTAINER_NAME) --format "  Container: {{.Names}}\n  Port: {{.Ports}}\n  Status: {{.Status}}"; \
+	else \
+		echo "TTS server: not running"; \
+	fi

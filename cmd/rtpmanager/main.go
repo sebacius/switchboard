@@ -31,6 +31,7 @@ func main() {
 		{Label: "Advertise", Value: cfg.AdvertiseAddr},
 		{Label: "RTP Range", Value: fmt.Sprintf("%d-%d", cfg.RTPPortMin, cfg.RTPPortMax)},
 		{Label: "Audio Path", Value: cfg.AudioBasePath},
+		{Label: "TTS Server", Value: cfg.TTSServerURL},
 		{Label: "Log Level", Value: cfg.LogLevel},
 	})
 
@@ -45,6 +46,7 @@ func main() {
 		RTPPortMin:    cfg.RTPPortMin,
 		RTPPortMax:    cfg.RTPPortMax,
 		AudioBasePath: cfg.AudioBasePath,
+		TTSServerURL:  cfg.TTSServerURL,
 	}
 
 	rtpSrv, err := server.NewServer(srvCfg)

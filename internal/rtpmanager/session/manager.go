@@ -377,6 +377,83 @@ func (m *Manager) PlayAudio(sessionID string, req PlayAudioRequest, eventCh chan
 	return nil
 }
 
+// PlayTTSAudio plays synthesized TTS audio (WAV data) for a session
+func (m *Manager) PlayTTSAudio(sessionID string, audioData []byte, eventCh chan<- *rtpv1.PlaybackEvent) error {
+	m.mu.RLock()
+	sess, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	// Update state
+	sess.mu.Lock()
+	sess.State = rtpv1.SessionState_SESSION_STATE_ACTIVE
+	sess.mu.Unlock()
+
+	// Create play request with raw audio data
+	playReq := media.PlayRequest{
+		CallID:    sess.CallID,
+		RawAudio:  audioData,
+		Loop:      false,
+		Codec:     sess.Codec,
+		LocalAddr: sess.LocalAddr,
+		LocalPort: sess.LocalPort,
+		Endpoint:  sess.RemoteAddr,
+		Port:      sess.RemotePort,
+		OnComplete: func(callID string, data interface{}) error {
+			eventCh <- &rtpv1.PlaybackEvent{
+				SessionId: sessionID,
+				Event: &rtpv1.PlaybackEvent_Completed{
+					Completed: &rtpv1.PlaybackCompleted{
+						TotalFramesSent: 0,
+					},
+				},
+			}
+			close(eventCh)
+			return nil
+		},
+		OnError: func(callID string, err error) {
+			eventCh <- &rtpv1.PlaybackEvent{
+				SessionId: sessionID,
+				Event: &rtpv1.PlaybackEvent_Error{
+					Error: &rtpv1.PlaybackError{
+						Code:    "PLAYBACK_FAILED",
+						Message: err.Error(),
+					},
+				},
+			}
+			close(eventCh)
+		},
+	}
+
+	// Send started event
+	eventCh <- &rtpv1.PlaybackEvent{
+		SessionId: sessionID,
+		Event: &rtpv1.PlaybackEvent_Started{
+			Started: &rtpv1.PlaybackStarted{},
+		},
+	}
+
+	// Start playback
+	if err := m.mediaService.Play(sess.ctx, playReq); err != nil {
+		eventCh <- &rtpv1.PlaybackEvent{
+			SessionId: sessionID,
+			Event: &rtpv1.PlaybackEvent_Error{
+				Error: &rtpv1.PlaybackError{
+					Code:    "PLAYBACK_FAILED",
+					Message: err.Error(),
+				},
+			},
+		}
+		close(eventCh)
+		return err
+	}
+
+	return nil
+}
+
 // StopAudio stops audio playback for a session
 func (m *Manager) StopAudio(sessionID string) (bool, error) {
 	m.mu.RLock()

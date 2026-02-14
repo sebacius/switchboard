@@ -45,7 +45,11 @@ func (s *LocalService) Play(ctx context.Context, req PlayRequest) error {
 		files = []string{req.File}
 	}
 
-	if req.CallID == "" || len(files) == 0 || req.Codec == "" || req.Port == 0 {
+	// Check for raw audio (TTS) vs file-based playback
+	hasRawAudio := len(req.RawAudio) > 0
+	hasFiles := len(files) > 0
+
+	if req.CallID == "" || (!hasRawAudio && !hasFiles) || req.Codec == "" || req.Port == 0 {
 		return fmt.Errorf("invalid play request: missing required fields")
 	}
 
@@ -80,7 +84,13 @@ func (s *LocalService) Play(ctx context.Context, req PlayRequest) error {
 			s.mu.Unlock()
 		}()
 
-		if err := s.streamPlaylist(playCtx, req, files, codecCfg); err != nil {
+		var err error
+		if hasRawAudio {
+			err = s.streamRawAudio(playCtx, req, codecCfg)
+		} else {
+			err = s.streamPlaylist(playCtx, req, files, codecCfg)
+		}
+		if err != nil {
 			slog.Error("[Media] Playback failed", "call_id", req.CallID, "error", err)
 			if req.OnError != nil {
 				req.OnError(req.CallID, err)
@@ -198,6 +208,112 @@ func (s *LocalService) streamPlaylist(ctx context.Context, req PlayRequest, file
 	slog.Info("[Media] Playlist complete",
 		"call_id", req.CallID,
 		"frames_sent", totalFramesSent,
+	)
+
+	// Call the completion callback if provided
+	if req.OnComplete != nil {
+		if err := req.OnComplete(req.CallID, nil); err != nil {
+			slog.Error("[Media] Completion callback failed", "call_id", req.CallID, "error", err)
+			return err
+		}
+	}
+
+	return nil
+}
+
+// streamRawAudio streams raw WAV audio data (used for TTS)
+func (s *LocalService) streamRawAudio(ctx context.Context, req PlayRequest, codecCfg *CodecConfig) error {
+	slog.Info("[Media] Starting raw audio playback",
+		"call_id", req.CallID,
+		"audio_size", len(req.RawAudio),
+		"codec", req.Codec,
+		"local", fmt.Sprintf("%s:%d", req.LocalAddr, req.LocalPort),
+		"remote", fmt.Sprintf("%s:%d", req.Endpoint, req.Port))
+
+	// Parse WAV data
+	audioFile, err := ParseWAVData(req.RawAudio)
+	if err != nil {
+		return fmt.Errorf("failed to parse WAV data: %w", err)
+	}
+
+	// Resample to codec's format
+	encodedAudio, err := codecCfg.Resampler(audioFile)
+	if err != nil {
+		return fmt.Errorf("failed to encode audio: %w", err)
+	}
+
+	// Bind to local RTP port
+	localAddr := &net.UDPAddr{
+		Port: req.LocalPort,
+		IP:   net.IPv4zero,
+	}
+
+	conn, err := net.ListenUDP("udp", localAddr)
+	if err != nil {
+		return fmt.Errorf("failed to bind to local RTP port %d: %w", req.LocalPort, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	clientAddr := &net.UDPAddr{
+		Port: req.Port,
+		IP:   net.ParseIP(req.Endpoint),
+	}
+
+	// Initialize RTP state
+	rtpSeq := GenerateSequenceStart()
+	rtpTs := GenerateTimestampStart()
+	ssrc := GenerateSSRC()
+
+	bytesPerFrame := frameSize // 160 bytes for PCMU
+	framesSent := 0
+
+	// Stream frames
+	for i := 0; i+bytesPerFrame <= len(encodedAudio); i += bytesPerFrame {
+		select {
+		case <-ctx.Done():
+			slog.Info("[Media] Raw audio playback stopped",
+				"call_id", req.CallID,
+				"frames_sent", framesSent,
+			)
+			return nil
+		default:
+		}
+
+		frame := encodedAudio[i : i+bytesPerFrame]
+
+		packet := &rtp.Packet{
+			Header: rtp.Header{
+				Version:        2,
+				Padding:        false,
+				Extension:      false,
+				Marker:         false,
+				PayloadType:    uint8(codecCfg.PayloadType),
+				SequenceNumber: rtpSeq,
+				Timestamp:      rtpTs,
+				SSRC:           ssrc,
+			},
+			Payload: frame,
+		}
+
+		data, err := packet.Marshal()
+		if err != nil {
+			return fmt.Errorf("failed to marshal RTP packet: %w", err)
+		}
+
+		if _, err := conn.WriteToUDP(data, clientAddr); err != nil {
+			return fmt.Errorf("failed to send RTP packet: %w", err)
+		}
+
+		framesSent++
+		rtpSeq++
+		rtpTs += frameSize
+
+		time.Sleep(frameDuration)
+	}
+
+	slog.Info("[Media] Raw audio playback complete",
+		"call_id", req.CallID,
+		"frames_sent", framesSent,
 	)
 
 	// Call the completion callback if provided

@@ -16,6 +16,7 @@ type Config struct {
 	RTPPortMax    int
 	AudioBasePath string
 	LogLevel      string
+	TTSServerURL  string // TTS server URL (e.g., "http://localhost:8000")
 }
 
 // Load loads configuration from command line flags and environment variables
@@ -29,6 +30,7 @@ func Load() *Config {
 	flag.IntVar(&cfg.RTPPortMax, "rtp-port-max", 20000, "Maximum RTP port")
 	flag.StringVar(&cfg.AudioBasePath, "audio-path", "./audio", "Audio files base path")
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level")
+	flag.StringVar(&cfg.TTSServerURL, "tts-server", "http://localhost:8000", "TTS server URL")
 
 	flag.Parse()
 
@@ -55,6 +57,9 @@ func Load() *Config {
 	}
 	if v := os.Getenv("LOGLEVEL"); v != "" {
 		cfg.LogLevel = v
+	}
+	if v := os.Getenv("TTS_SERVER"); v != "" {
+		cfg.TTSServerURL = v
 	}
 
 	return cfg
