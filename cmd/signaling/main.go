@@ -44,13 +44,13 @@ func main() {
 	run(swboard, cfg)
 }
 
-func run(proxy *app.SwitchBoard, cfg *config.Config) {
+func run(swboard *app.SwitchBoard, cfg *config.Config) {
 	slog.Info("Starting Switchboard Signaling Server",
 		"port", cfg.Port,
 		"rtpmanagers", cfg.RTPManagerAddrs,
 	)
 
-	slog.Info("API available at http://0.0.0.0:8080")
+	slog.Info(fmt.Sprintf("API available at http://%s:%d", cfg.BindAddr, cfg.APIPort))
 	logNetworkInterfaces()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -58,7 +58,7 @@ func run(proxy *app.SwitchBoard, cfg *config.Config) {
 
 	// Start server
 	go func() {
-		if err := proxy.Start(ctx); err != nil {
+		if err := swboard.Start(ctx); err != nil {
 			slog.Error("Server error", "error", err)
 		}
 	}()

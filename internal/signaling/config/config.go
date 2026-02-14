@@ -13,18 +13,24 @@ import (
 type Config struct {
 	// SIP settings
 	Port          int
-	BindAddr      string // Address to bind for listening
+	BindAddr      string // Address to bind for listening (used by both SIP and API)
 	AdvertiseAddr string // Address to advertise in SIP headers
 	LogLevel      string
+
+	// API settings
+	APIPort int // HTTP API port (default 8080)
 
 	// Dialplan settings
 	DialplanPath string // Path to dialplan.json config file
 
-	// RTP Manager pool settings
-	// RTPManagerNodes maps node ID to address (e.g., "rtpmanager-0" -> "localhost:9090")
-	// Takes precedence over RTPManagerAddrs if non-empty
+	// RTP Manager pool settings - two formats supported:
+	//
+	// Named format (Kubernetes/containers): explicit node IDs for stable pod identification
+	//   RTPMANAGER=rtpmanager-0=localhost:9090,rtpmanager-1=localhost:9091
 	RTPManagerNodes map[string]string
-	// RTPManagerAddrs is legacy format - list of addresses (auto-generates node IDs)
+	//
+	// Simple format (systemd/local dev): just addresses, node IDs auto-generated as node-0, node-1, etc.
+	//   RTPMANAGER=localhost:9090,localhost:9091
 	RTPManagerAddrs       []string
 	GRPCConnectTimeout    time.Duration
 	GRPCKeepaliveInterval time.Duration
@@ -41,7 +47,8 @@ func Load() *Config {
 
 	// Define flags
 	flag.IntVar(&cfg.Port, "port", 5060, "SIP listening port")
-	flag.StringVar(&cfg.BindAddr, "bind", "0.0.0.0", "SIP bind address")
+	flag.IntVar(&cfg.APIPort, "api-port", 8080, "HTTP API port")
+	flag.StringVar(&cfg.BindAddr, "bind", "0.0.0.0", "Bind address for SIP and API")
 	flag.StringVar(&cfg.AdvertiseAddr, "advertise", "", "Address to advertise in SIP headers (auto-detected if not set)")
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error)")
 	flag.StringVar(&cfg.DialplanPath, "dialplan", "resources/config/dialplan.json", "Path to dialplan configuration file")
@@ -58,6 +65,11 @@ func Load() *Config {
 	if port := os.Getenv("PORT"); port != "" {
 		if p, err := strconv.Atoi(port); err == nil {
 			cfg.Port = p
+		}
+	}
+	if apiPort := os.Getenv("API_PORT"); apiPort != "" {
+		if p, err := strconv.Atoi(apiPort); err == nil {
+			cfg.APIPort = p
 		}
 	}
 	if bind := os.Getenv("BIND"); bind != "" {

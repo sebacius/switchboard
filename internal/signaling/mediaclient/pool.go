@@ -37,12 +37,14 @@ func (s DrainState) String() string {
 
 // PoolConfig holds configuration for the RTP manager pool
 type PoolConfig struct {
-	// NodeAddresses maps node ID to address (e.g., "rtpmanager-0" -> "localhost:9090")
-	// If empty, Addresses is used with auto-generated IDs
+	// NodeAddresses - Named format for Kubernetes/containers
+	// Maps explicit node ID to address (e.g., "rtpmanager-0" -> "localhost:9090")
+	// Use this when you need stable pod identifiers
 	NodeAddresses map[string]string
 
-	// Addresses is deprecated, use NodeAddresses instead
-	// If NodeAddresses is empty, these addresses get auto-generated IDs (node-0, node-1, etc.)
+	// Addresses - Simple format for systemd/local development
+	// Just a list of addresses; node IDs are auto-generated as node-0, node-1, etc.
+	// Use this for single-node setups or local development
 	Addresses           []string
 	ConnectTimeout      time.Duration
 	KeepaliveInterval   time.Duration

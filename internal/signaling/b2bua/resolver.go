@@ -8,9 +8,23 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/location"
 )
 
-// ResolverRegistry dispatches to resolvers by target prefix.
+// Resolver resolves dial targets to SIP URIs.
+//
+// Implementations:
+//   - UserResolver: uses LocationStore
+//   - GatewayResolver: uses gateway configuration
+//   - DirectResolver: passthrough for sip: URIs
+//   - TargetResolver: dispatches to resolvers by prefix
+type Resolver interface {
+	// Resolve looks up the target and returns resolved contacts.
+	// Returns ErrTargetNotFound if the target cannot be resolved.
+	// Returns ErrNoContacts if target exists but has no active registrations.
+	Resolve(ctx context.Context, target string) (*LookupResult, error)
+}
+
+// TargetResolver dispatches to resolvers by target prefix.
 // Prefixes are matched longest-first to allow specific prefixes to override general ones.
-type ResolverRegistry struct {
+type TargetResolver struct {
 	prefixes []prefixEntry // Sorted by prefix length (longest first)
 	fallback Resolver
 }
@@ -20,16 +34,16 @@ type prefixEntry struct {
 	resolver Resolver
 }
 
-// NewResolverRegistry creates a new ResolverRegistry.
-func NewResolverRegistry() *ResolverRegistry {
-	return &ResolverRegistry{
+// NewTargetResolver creates a new TargetResolver.
+func NewTargetResolver() *TargetResolver {
+	return &TargetResolver{
 		prefixes: make([]prefixEntry, 0),
 	}
 }
 
 // Register adds a resolver for a specific prefix.
 // Call this for each prefix the resolver should handle (e.g., "sip:", "sips:", "user/").
-func (r *ResolverRegistry) Register(prefix string, resolver Resolver) {
+func (r *TargetResolver) Register(prefix string, resolver Resolver) {
 	r.prefixes = append(r.prefixes, prefixEntry{prefix: prefix, resolver: resolver})
 	// Keep sorted by prefix length (longest first) for correct matching
 	sort.Slice(r.prefixes, func(i, j int) bool {
@@ -39,12 +53,12 @@ func (r *ResolverRegistry) Register(prefix string, resolver Resolver) {
 
 // SetFallback sets the resolver to use when no prefix matches.
 // This handles plain extensions like "1001" without any prefix.
-func (r *ResolverRegistry) SetFallback(resolver Resolver) {
+func (r *TargetResolver) SetFallback(resolver Resolver) {
 	r.fallback = resolver
 }
 
 // Resolve dispatches to the appropriate resolver based on target prefix.
-func (r *ResolverRegistry) Resolve(ctx context.Context, target string) (*LookupResult, error) {
+func (r *TargetResolver) Resolve(ctx context.Context, target string) (*LookupResult, error) {
 	// Check prefixes in order (longest match first due to sorting)
 	for _, entry := range r.prefixes {
 		if strings.HasPrefix(target, entry.prefix) {
@@ -216,7 +230,7 @@ func (r *UserResolver) buildAOR(extension string) string {
 
 // Ensure implementations satisfy Resolver interface
 var (
-	_ Resolver = (*ResolverRegistry)(nil)
+	_ Resolver = (*TargetResolver)(nil)
 	_ Resolver = (*DirectResolver)(nil)
 	_ Resolver = (*UserResolver)(nil)
 )

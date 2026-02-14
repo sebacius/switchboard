@@ -1,8 +1,6 @@
 package b2bua
 
 import (
-	"context"
-
 	"github.com/sebas/switchboard/internal/signaling/location"
 )
 
@@ -89,20 +87,6 @@ func (r *LookupResult) PrimaryContact() ResolvedContact {
 // HasContacts returns true if at least one contact was resolved.
 func (r *LookupResult) HasContacts() bool {
 	return len(r.Contacts) > 0
-}
-
-// Resolver resolves dial targets to SIP URIs.
-//
-// Implementations:
-//   - UserResolver: uses LocationStore
-//   - GatewayResolver: uses gateway configuration
-//   - DirectResolver: passthrough for sip: URIs
-//   - ResolverRegistry: dispatches to resolvers by prefix
-type Resolver interface {
-	// Resolve looks up the target and returns resolved contacts.
-	// Returns ErrTargetNotFound if the target cannot be resolved.
-	// Returns ErrNoContacts if target exists but has no active registrations.
-	Resolve(ctx context.Context, target string) (*LookupResult, error)
 }
 
 // GatewayConfig contains configuration for an outbound gateway/trunk.

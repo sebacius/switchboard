@@ -84,17 +84,17 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		ConnectTimeout:      cfg.GRPCConnectTimeout,
 		KeepaliveInterval:   cfg.GRPCKeepaliveInterval,
 		KeepaliveTimeout:    cfg.GRPCKeepaliveTimeout,
-		HealthCheckInterval: 5 * time.Second,
+		HealthCheckInterval: 10 * time.Second,
 		UnhealthyThreshold:  3,
 		HealthyThreshold:    2,
 	}
-	// Prefer NodeAddresses (node=addr format) over legacy Addresses
+	// Use named format (Kubernetes) if provided, otherwise simple format (systemd/local)
 	if len(cfg.RTPManagerNodes) > 0 {
 		poolCfg.NodeAddresses = cfg.RTPManagerNodes
-		slog.Info("Connecting to RTP Manager pool", "nodes", cfg.RTPManagerNodes)
+		slog.Info("Connecting to RTP Manager pool (named format)", "nodes", cfg.RTPManagerNodes)
 	} else {
 		poolCfg.Addresses = cfg.RTPManagerAddrs
-		slog.Info("Connecting to RTP Manager pool", "addresses", cfg.RTPManagerAddrs)
+		slog.Info("Connecting to RTP Manager pool (simple format)", "addresses", cfg.RTPManagerAddrs)
 	}
 	mediaTransport, err := mediaclient.NewPool(poolCfg)
 	if err != nil {
@@ -108,7 +108,8 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 
 	// Create API server with register handler, dialog manager, and RTP manager stats
 	// Pool implements mediaclient.StatsProvider which satisfies api.RtpManagerProvider
-	apiServer := api.NewServer("0.0.0.0:8080", registerHandler, dialogMgr, mediaTransport)
+	apiAddr := fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.APIPort)
+	apiServer := api.NewServer(apiAddr, registerHandler, dialogMgr, mediaTransport)
 
 	// Create drain migrator and coordinator
 	localContact := sip.Uri{
@@ -156,7 +157,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	executor := dialplan.NewExecutor(dp, actionRegistry, slog.Default())
 
 	// Create resolver registry for dial targets
-	resolver := b2bua.NewResolverRegistry()
+	resolver := b2bua.NewTargetResolver()
 	resolver.Register("sip:", b2bua.NewDirectResolver())
 	resolver.Register("sips:", b2bua.NewDirectResolver())
 	resolver.Register("user/", b2bua.NewUserResolver(locStore, cfg.AdvertiseAddr))
