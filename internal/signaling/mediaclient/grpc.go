@@ -222,6 +222,68 @@ func (t *GRPCTransport) StopAudio(ctx context.Context, sessionID string) error {
 	return err
 }
 
+// PlayTTS implements Transport.PlayTTS
+func (t *GRPCTransport) PlayTTS(ctx context.Context, req TTSRequest) (<-chan PlayStatus, error) {
+	grpcReq := &rtpv1.PlayTTSRequest{
+		SessionId: req.SessionID,
+		Text:      req.Text,
+		Voice:     req.Voice,
+	}
+
+	stream, err := t.client.PlayTTS(ctx, grpcReq)
+	if err != nil {
+		return nil, fmt.Errorf("PlayTTS RPC failed: %w", err)
+	}
+
+	statusCh := make(chan PlayStatus, 10)
+
+	go func() {
+		defer close(statusCh)
+
+		for {
+			msg, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				statusCh <- PlayStatus{
+					SessionID: req.SessionID,
+					State:     PlayStateError,
+					Error:     err,
+				}
+				return
+			}
+
+			status := PlayStatus{SessionID: msg.SessionId}
+
+			switch e := msg.Event.(type) {
+			case *rtpv1.PlaybackEvent_Started:
+				status.State = PlayStateStarted
+			case *rtpv1.PlaybackEvent_Progress:
+				status.State = PlayStateProgress
+			case *rtpv1.PlaybackEvent_Completed:
+				status.State = PlayStateCompleted
+				statusCh <- status
+				if req.OnComplete != nil {
+					req.OnComplete(req.SessionID)
+				}
+				return
+			case *rtpv1.PlaybackEvent_Stopped:
+				status.State = PlayStateStopped
+				statusCh <- status
+				return
+			case *rtpv1.PlaybackEvent_Error:
+				status.State = PlayStateError
+				status.Error = fmt.Errorf("%s: %s", e.Error.Code, e.Error.Message)
+			}
+
+			statusCh <- status
+		}
+	}()
+
+	return statusCh, nil
+}
+
 // CreateSessionPendingRemote implements Transport.CreateSessionPendingRemote
 func (t *GRPCTransport) CreateSessionPendingRemote(ctx context.Context, callID string, codecs []string) (*SessionResult, error) {
 	// For B2BUA B-leg, we create a session without a remote endpoint

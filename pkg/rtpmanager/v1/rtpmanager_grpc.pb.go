@@ -27,6 +27,7 @@ const (
 	RTPManagerService_UpdateSessionRemote_FullMethodName = "/rtpmanager.v1.RTPManagerService/UpdateSessionRemote"
 	RTPManagerService_BridgeMedia_FullMethodName         = "/rtpmanager.v1.RTPManagerService/BridgeMedia"
 	RTPManagerService_UnbridgeMedia_FullMethodName       = "/rtpmanager.v1.RTPManagerService/UnbridgeMedia"
+	RTPManagerService_PlayTTS_FullMethodName             = "/rtpmanager.v1.RTPManagerService/PlayTTS"
 )
 
 // RTPManagerServiceClient is the client API for RTPManagerService service.
@@ -60,6 +61,10 @@ type RTPManagerServiceClient interface {
 	// UnbridgeMedia disconnects two bridged sessions.
 	// Each session continues to exist but packets are no longer forwarded.
 	UnbridgeMedia(ctx context.Context, in *UnbridgeMediaRequest, opts ...grpc.CallOption) (*UnbridgeMediaResponse, error)
+	// PlayTTS generates speech from text using a TTS server and streams it.
+	// The audio is fetched from the configured TTS server, resampled to 8kHz,
+	// encoded to PCMU, and streamed as RTP packets.
+	PlayTTS(ctx context.Context, in *PlayTTSRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PlaybackEvent], error)
 }
 
 type rTPManagerServiceClient struct {
@@ -159,6 +164,25 @@ func (c *rTPManagerServiceClient) UnbridgeMedia(ctx context.Context, in *Unbridg
 	return out, nil
 }
 
+func (c *rTPManagerServiceClient) PlayTTS(ctx context.Context, in *PlayTTSRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PlaybackEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RTPManagerService_ServiceDesc.Streams[1], RTPManagerService_PlayTTS_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[PlayTTSRequest, PlaybackEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RTPManagerService_PlayTTSClient = grpc.ServerStreamingClient[PlaybackEvent]
+
 // RTPManagerServiceServer is the server API for RTPManagerService service.
 // All implementations must embed UnimplementedRTPManagerServiceServer
 // for forward compatibility.
@@ -190,6 +214,10 @@ type RTPManagerServiceServer interface {
 	// UnbridgeMedia disconnects two bridged sessions.
 	// Each session continues to exist but packets are no longer forwarded.
 	UnbridgeMedia(context.Context, *UnbridgeMediaRequest) (*UnbridgeMediaResponse, error)
+	// PlayTTS generates speech from text using a TTS server and streams it.
+	// The audio is fetched from the configured TTS server, resampled to 8kHz,
+	// encoded to PCMU, and streamed as RTP packets.
+	PlayTTS(*PlayTTSRequest, grpc.ServerStreamingServer[PlaybackEvent]) error
 	mustEmbedUnimplementedRTPManagerServiceServer()
 }
 
@@ -223,6 +251,9 @@ func (UnimplementedRTPManagerServiceServer) BridgeMedia(context.Context, *Bridge
 }
 func (UnimplementedRTPManagerServiceServer) UnbridgeMedia(context.Context, *UnbridgeMediaRequest) (*UnbridgeMediaResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UnbridgeMedia not implemented")
+}
+func (UnimplementedRTPManagerServiceServer) PlayTTS(*PlayTTSRequest, grpc.ServerStreamingServer[PlaybackEvent]) error {
+	return status.Error(codes.Unimplemented, "method PlayTTS not implemented")
 }
 func (UnimplementedRTPManagerServiceServer) mustEmbedUnimplementedRTPManagerServiceServer() {}
 func (UnimplementedRTPManagerServiceServer) testEmbeddedByValue()                           {}
@@ -382,6 +413,17 @@ func _RTPManagerService_UnbridgeMedia_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RTPManagerService_PlayTTS_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(PlayTTSRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(RTPManagerServiceServer).PlayTTS(m, &grpc.GenericServerStream[PlayTTSRequest, PlaybackEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RTPManagerService_PlayTTSServer = grpc.ServerStreamingServer[PlaybackEvent]
+
 // RTPManagerService_ServiceDesc is the grpc.ServiceDesc for RTPManagerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -422,6 +464,11 @@ var RTPManagerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "PlayAudio",
 			Handler:       _RTPManagerService_PlayAudio_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "PlayTTS",
+			Handler:       _RTPManagerService_PlayTTS_Handler,
 			ServerStreams: true,
 		},
 	},

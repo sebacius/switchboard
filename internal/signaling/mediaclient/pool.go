@@ -499,6 +499,16 @@ func (p *Pool) StopAudio(ctx context.Context, sessionID string) error {
 	return member.transport.StopAudio(ctx, sessionID)
 }
 
+// PlayTTS implements Transport.PlayTTS with affinity
+func (p *Pool) PlayTTS(ctx context.Context, req TTSRequest) (<-chan PlayStatus, error) {
+	member, ok := p.getMemberForSession(req.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("no RTP manager found for session %s", req.SessionID)
+	}
+
+	return member.transport.PlayTTS(ctx, req)
+}
+
 // CreateSessionPendingRemote implements Transport.CreateSessionPendingRemote with load balancing
 func (p *Pool) CreateSessionPendingRemote(ctx context.Context, callID string, codecs []string) (*SessionResult, error) {
 	member, err := p.selectMember()

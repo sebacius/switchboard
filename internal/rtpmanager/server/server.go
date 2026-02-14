@@ -9,6 +9,7 @@ import (
 	"github.com/sebas/switchboard/internal/rtpmanager/media"
 	"github.com/sebas/switchboard/internal/rtpmanager/portpool"
 	"github.com/sebas/switchboard/internal/rtpmanager/session"
+	"github.com/sebas/switchboard/internal/rtpmanager/tts"
 	rtpv1 "github.com/sebas/switchboard/pkg/rtpmanager/v1"
 )
 
@@ -20,6 +21,7 @@ type Config struct {
 	RTPPortMin    int
 	RTPPortMax    int
 	AudioBasePath string
+	TTSServerURL  string
 }
 
 // Server implements the RTPManagerService gRPC server
@@ -29,6 +31,7 @@ type Server struct {
 	bridgeMgr  *bridge.Manager
 	portPool   *portpool.PortPool
 	config     *Config
+	ttsClient  *tts.Client
 }
 
 // NewServer creates a new RTP Manager gRPC server
@@ -45,11 +48,21 @@ func NewServer(cfg *Config) (*Server, error) {
 	// Create bridge manager
 	bridgeMgr := bridge.NewManager()
 
+	// Create TTS client (optional - may not be configured)
+	var ttsClient *tts.Client
+	if cfg.TTSServerURL != "" {
+		ttsClient = tts.NewClient(tts.Config{
+			ServerURL: cfg.TTSServerURL,
+		})
+		slog.Info("[gRPC] TTS client configured", "server", cfg.TTSServerURL)
+	}
+
 	return &Server{
 		sessionMgr: sessionMgr,
 		bridgeMgr:  bridgeMgr,
 		portPool:   pool,
 		config:     cfg,
+		ttsClient:  ttsClient,
 	}, nil
 }
 
@@ -310,6 +323,47 @@ func (s *Server) UnbridgeMedia(ctx context.Context, req *rtpv1.UnbridgeMediaRequ
 			State: rtpv1.SessionState_SESSION_STATE_TERMINATED,
 		},
 	}, nil
+}
+
+// PlayTTS implements RTPManagerService.PlayTTS (server streaming)
+func (s *Server) PlayTTS(req *rtpv1.PlayTTSRequest, stream rtpv1.RTPManagerService_PlayTTSServer) error {
+	slog.Info("[gRPC] PlayTTS",
+		"session_id", req.SessionId,
+		"text", req.Text,
+		"voice", req.Voice,
+	)
+
+	// Check if TTS is configured
+	if s.ttsClient == nil {
+		return fmt.Errorf("TTS server not configured")
+	}
+
+	// Synthesize speech
+	audioData, err := s.ttsClient.Synthesize(stream.Context(), req.Text, req.Voice)
+	if err != nil {
+		slog.Error("[gRPC] TTS synthesis failed", "error", err)
+		return fmt.Errorf("TTS synthesis failed: %w", err)
+	}
+
+	slog.Debug("[gRPC] TTS synthesis complete", "audio_size", len(audioData))
+
+	// Create event channel
+	eventCh := make(chan *rtpv1.PlaybackEvent, 10)
+
+	// Play the synthesized audio via session manager
+	if err := s.sessionMgr.PlayTTSAudio(req.SessionId, audioData, eventCh); err != nil {
+		return err
+	}
+
+	// Stream events to client
+	for event := range eventCh {
+		if err := stream.Send(event); err != nil {
+			slog.Error("[gRPC] Failed to send TTS playback event", "error", err)
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Close cleans up resources

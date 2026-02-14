@@ -55,6 +55,7 @@ func (r *ActionRegistry) Create(actionType string, rawConfig json.RawMessage) (A
 func DefaultRegistry() *ActionRegistry {
 	r := NewActionRegistry()
 	r.Register("play_audio", NewPlayAudioAction)
+	r.Register("tts", NewTTSAction)
 	r.Register("dial", NewDialAction)
 	r.Register("hangup", NewHangupAction)
 	return r

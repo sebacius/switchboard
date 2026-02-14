@@ -30,6 +30,14 @@ type PlayRequest struct {
 	OnComplete func(sessionID string) // Called when playback completes
 }
 
+// TTSRequest contains text-to-speech playback parameters
+type TTSRequest struct {
+	SessionID  string
+	Text       string // Text to synthesize
+	Voice      string // Voice name (e.g., "alloy", "echo", "nova")
+	OnComplete func(sessionID string)
+}
+
 // PlayState represents the state of playback
 type PlayState int
 
@@ -97,6 +105,9 @@ type Transport interface {
 
 	// StopAudio cancels ongoing playback
 	StopAudio(ctx context.Context, sessionID string) error
+
+	// PlayTTS synthesizes text and streams audio
+	PlayTTS(ctx context.Context, req TTSRequest) (<-chan PlayStatus, error)
 
 	// BridgeMedia connects two sessions for bidirectional RTP relay.
 	// Returns a bridge ID for later unbridging.

@@ -34,6 +34,63 @@ type AudioFile struct {
 	PCMData       []byte
 }
 
+// ParseWAVData parses WAV data from a byte slice and returns metadata + PCM audio data
+func ParseWAVData(data []byte) (*AudioFile, error) {
+	if len(data) < 44 {
+		return nil, fmt.Errorf("WAV data too short")
+	}
+
+	// Read RIFF header
+	if string(data[0:4]) != "RIFF" {
+		return nil, fmt.Errorf("not a valid RIFF file")
+	}
+
+	// Read WAVE header
+	if string(data[8:12]) != "WAVE" {
+		return nil, fmt.Errorf("not a valid WAVE file")
+	}
+
+	// Parse chunks
+	audioFile := &AudioFile{}
+	offset := 12
+
+	for offset < len(data)-8 {
+		chunkID := string(data[offset : offset+4])
+		chunkSize := binary.LittleEndian.Uint32(data[offset+4 : offset+8])
+		offset += 8
+
+		switch chunkID {
+		case "fmt ":
+			if offset+16 > len(data) {
+				return nil, fmt.Errorf("fmt chunk too short")
+			}
+			audioFile.AudioFormat = binary.LittleEndian.Uint16(data[offset : offset+2])
+			if audioFile.AudioFormat != 1 {
+				return nil, fmt.Errorf("only PCM audio format (1) is supported, got %d", audioFile.AudioFormat)
+			}
+			audioFile.NumChannels = binary.LittleEndian.Uint16(data[offset+2 : offset+4])
+			audioFile.SampleRate = binary.LittleEndian.Uint32(data[offset+4 : offset+8])
+			audioFile.BitsPerSample = binary.LittleEndian.Uint16(data[offset+14 : offset+16])
+			slog.Debug("[WAV] Parsed format chunk", "sampleRate", audioFile.SampleRate, "channels", audioFile.NumChannels, "bitsPerSample", audioFile.BitsPerSample)
+			offset += int(chunkSize)
+
+		case "data":
+			endOffset := offset + int(chunkSize)
+			if endOffset > len(data) {
+				endOffset = len(data)
+			}
+			audioFile.PCMData = data[offset:endOffset]
+			slog.Debug("[WAV] Loaded audio data", "size_bytes", len(audioFile.PCMData))
+			return audioFile, nil
+
+		default:
+			offset += int(chunkSize)
+		}
+	}
+
+	return nil, fmt.Errorf("data chunk not found in WAV data")
+}
+
 // ReadWAVFile parses a WAV file and returns metadata + PCM audio data
 func ReadWAVFile(filePath string) (*AudioFile, error) {
 	file, err := os.Open(filePath)
