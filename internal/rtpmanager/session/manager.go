@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pion/rtp"
 	"github.com/sebas/switchboard/internal/rtpmanager/media"
 	"github.com/sebas/switchboard/internal/rtpmanager/portpool"
 	"github.com/sebas/switchboard/internal/rtpmanager/sdp"
@@ -487,4 +489,160 @@ func (m *Manager) CloseAll() {
 	}
 	m.sessions = make(map[string]*Session)
 	m.callToSession = make(map[string]string)
+}
+
+// Listen captures incoming RTP audio from a session until silence is detected
+// or max duration is reached. Returns WAV audio data suitable for Whisper (16kHz).
+func (m *Manager) Listen(ctx context.Context, sessionID string, maxDurationMs, silenceTimeoutMs int) (audioData []byte, durationMs int, timeout bool, err error) {
+	m.mu.RLock()
+	sess, ok := m.sessions[sessionID]
+	m.mu.RUnlock()
+
+	if !ok {
+		return nil, 0, false, fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	// First stop any active playback on this session
+	_ = m.mediaService.Stop(sess.CallID)
+
+	// Wait a moment for the playback socket to be released
+	time.Sleep(100 * time.Millisecond)
+
+	slog.Info("[SessionMgr] Starting audio capture",
+		"session_id", sessionID,
+		"max_duration_ms", maxDurationMs,
+		"silence_timeout_ms", silenceTimeoutMs,
+		"local_port", sess.LocalPort,
+	)
+
+	// Create context with max duration timeout
+	listenCtx, cancel := context.WithTimeout(ctx, time.Duration(maxDurationMs)*time.Millisecond)
+	defer cancel()
+
+	// Bind to local RTP port to receive incoming packets
+	localAddr := &net.UDPAddr{
+		Port: sess.LocalPort,
+		IP:   net.IPv4zero,
+	}
+
+	conn, err := net.ListenUDP("udp", localAddr)
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("failed to bind to local RTP port %d: %w", sess.LocalPort, err)
+	}
+	defer conn.Close()
+
+	// Set read deadline based on silence timeout
+	silenceTimeout := time.Duration(silenceTimeoutMs) * time.Millisecond
+
+	// Buffer for receiving RTP packets
+	buf := make([]byte, 1500)
+
+	// Accumulated PCM data (8kHz, 16-bit)
+	var pcmData []byte
+	startTime := time.Now()
+	lastVoiceTime := startTime
+	framesReceived := 0
+
+	// Silence detection threshold (empirical value for voice vs silence)
+	// This is the squared RMS energy threshold
+	const silenceThreshold = 100000.0 // Adjust based on testing
+
+	for {
+		select {
+		case <-listenCtx.Done():
+			// Max duration reached
+			timeout = true
+			slog.Info("[SessionMgr] Audio capture timeout",
+				"session_id", sessionID,
+				"frames_received", framesReceived,
+			)
+			goto done
+		default:
+		}
+
+		// Set read deadline for silence detection
+		conn.SetReadDeadline(time.Now().Add(silenceTimeout))
+
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// Silence timeout - no packets received
+				if framesReceived > 0 {
+					slog.Info("[SessionMgr] Silence detected (no packets)",
+						"session_id", sessionID,
+						"frames_received", framesReceived,
+					)
+					goto done
+				}
+				// No audio received yet, keep waiting
+				continue
+			}
+			// Other error
+			return nil, 0, false, fmt.Errorf("UDP read error: %w", err)
+		}
+
+		// Parse RTP packet
+		packet := &rtp.Packet{}
+		if err := packet.Unmarshal(buf[:n]); err != nil {
+			slog.Warn("[SessionMgr] Failed to parse RTP packet", "error", err)
+			continue
+		}
+
+		// Only process PCMU (payload type 0)
+		if packet.PayloadType != 0 {
+			continue
+		}
+
+		// Decode PCMU to PCM
+		pcm := media.PCMUToPCM(packet.Payload)
+		framesReceived++
+
+		// Calculate energy for silence detection
+		energy := media.CalculateEnergy(pcm)
+
+		if energy > silenceThreshold {
+			// Voice detected
+			lastVoiceTime = time.Now()
+			pcmData = append(pcmData, pcm...)
+		} else {
+			// Silence detected
+			// Still append the audio to avoid cutting off words
+			pcmData = append(pcmData, pcm...)
+
+			// Check if silence has lasted long enough
+			if time.Since(lastVoiceTime) > silenceTimeout && len(pcmData) > 0 {
+				slog.Info("[SessionMgr] Silence detected (energy)",
+					"session_id", sessionID,
+					"frames_received", framesReceived,
+					"energy", energy,
+				)
+				goto done
+			}
+		}
+	}
+
+done:
+	if len(pcmData) == 0 {
+		slog.Info("[SessionMgr] No audio captured", "session_id", sessionID)
+		return nil, 0, timeout, nil
+	}
+
+	// Calculate duration
+	durationMs = int(time.Since(startTime).Milliseconds())
+
+	// Upsample from 8kHz to 16kHz for Whisper
+	pcm16k := media.Upsample8to16(pcmData)
+
+	// Build WAV file
+	wavData := media.BuildWAVData(pcm16k, 16000)
+
+	slog.Info("[SessionMgr] Audio capture complete",
+		"session_id", sessionID,
+		"frames_received", framesReceived,
+		"duration_ms", durationMs,
+		"pcm_8k_size", len(pcmData),
+		"wav_16k_size", len(wavData),
+	)
+
+	return wavData, durationMs, timeout, nil
 }

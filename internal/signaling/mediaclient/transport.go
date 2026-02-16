@@ -74,6 +74,20 @@ type BridgeInfo struct {
 	SessionBID string
 }
 
+// ListenRequest contains parameters for listening to caller audio
+type ListenRequest struct {
+	SessionID        string
+	MaxDurationMs    int // Maximum recording duration (default 10000ms)
+	SilenceTimeoutMs int // Stop after this much silence (default 1500ms)
+}
+
+// ListenResult contains the result of listening
+type ListenResult struct {
+	Text       string // Transcribed text from ASR
+	DurationMs int    // How long caller spoke
+	Timeout    bool   // True if max_duration was reached
+}
+
 // StatsProvider provides pool statistics (optional interface)
 type StatsProvider interface {
 	Stats() PoolStats
@@ -115,6 +129,9 @@ type Transport interface {
 
 	// UnbridgeMedia disconnects two bridged sessions.
 	UnbridgeMedia(ctx context.Context, bridgeID string) error
+
+	// Listen captures audio from caller and returns transcribed text via ASR
+	Listen(ctx context.Context, req ListenRequest) (*ListenResult, error)
 
 	// Ready checks if transport is connected and healthy
 	Ready() bool

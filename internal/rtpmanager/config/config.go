@@ -17,6 +17,7 @@ type Config struct {
 	AudioBasePath string
 	LogLevel      string
 	TTSServerURL  string // TTS server URL (e.g., "http://localhost:8000")
+	ASRServerURL  string // ASR/Whisper server URL (e.g., "http://localhost:8001")
 }
 
 // Load loads configuration from command line flags and environment variables
@@ -31,6 +32,7 @@ func Load() *Config {
 	flag.StringVar(&cfg.AudioBasePath, "audio-path", "./audio", "Audio files base path")
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level")
 	flag.StringVar(&cfg.TTSServerURL, "tts-server", "http://localhost:8000", "TTS server URL")
+	flag.StringVar(&cfg.ASRServerURL, "asr-server", "http://localhost:8001", "ASR/Whisper server URL")
 
 	flag.Parse()
 
@@ -60,6 +62,9 @@ func Load() *Config {
 	}
 	if v := os.Getenv("TTS_SERVER"); v != "" {
 		cfg.TTSServerURL = v
+	}
+	if v := os.Getenv("ASR_SERVER"); v != "" {
+		cfg.ASRServerURL = v
 	}
 
 	return cfg

@@ -2,19 +2,20 @@
   "version": "1.0",
   "routes": [
     {
-      "id": "route_ivr",
-      "name": "Main IVR",
-      "pattern": "500",
+      "id": "route_aiagent",
+      "name": "AiAgent",
+      "pattern": "600",
       "priority": 10,
       "enabled": true,
       "actions": [
-        {                                                                                                                                                                     
-          "type": "tts",                                                                                                                                                      
-          "params": {                                                                                                                                                         
-            "text": "Hello, welcome to our service. This is the most insteresting experience i have ever had. Please press 1 for sales, 2 for support, or 3 for billing.",                                                                                                                         
-            "voice": "alloy"                                                                                                                                                  
-          }                                                                                                                                                                   
-        }   
+        {
+          "type": "ai_agent",
+          "params": {
+            "config": "default.md",
+            "voice": "alloy",
+            "model": "llama3.1:8b"
+          }
+        }
       ]
     },
     {

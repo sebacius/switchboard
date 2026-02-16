@@ -14,6 +14,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/dialog"
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/drain"
+	"github.com/sebas/switchboard/internal/signaling/llm"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 	"github.com/sebas/switchboard/internal/signaling/parking"
@@ -151,9 +152,21 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	}
 	slog.Info("Dialplan loaded", "path", dialplanPath, "routes", dp.RouteCount())
 
-	// Create dialplan executor with default actions + parking actions
+	// Create LLM client for AI agent (optional - may not be configured)
+	var llmClient *llm.Client
+	if cfg.LLMServerURL != "" {
+		llmClient = llm.NewClient(llm.Config{
+			ServerURL: cfg.LLMServerURL,
+		})
+		slog.Info("LLM client configured", "server", cfg.LLMServerURL)
+	}
+
+	// Create dialplan executor with default actions + parking + ai_agent actions
 	actionRegistry := dialplan.DefaultRegistry()
 	dialplan.RegisterParkingActions(actionRegistry, parkService)
+	if llmClient != nil {
+		dialplan.RegisterAIAgentAction(actionRegistry, llmClient)
+	}
 	executor := dialplan.NewExecutor(dp, actionRegistry, slog.Default())
 
 	// Create resolver registry for dial targets

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/sebas/switchboard/internal/signaling/llm"
 	"github.com/sebas/switchboard/internal/signaling/parking"
 )
 
@@ -68,5 +69,14 @@ func RegisterParkingActions(r *ActionRegistry, parkService interface{}) {
 	if ps, ok := parkService.(*parking.Service); ok {
 		r.Register("park", NewParkActionFactory(ps))
 		r.Register("unpark", NewUnparkActionFactory(ps))
+	}
+}
+
+// RegisterAIAgentAction registers the ai_agent action with an LLM client.
+// Call this after DefaultRegistry() to add AI voice assistant support.
+func RegisterAIAgentAction(r *ActionRegistry, llmClient interface{}) {
+	// Type assertion to avoid import cycle
+	if client, ok := llmClient.(*llm.Client); ok {
+		r.Register("ai_agent", NewAIAgentActionFactory(client))
 	}
 }

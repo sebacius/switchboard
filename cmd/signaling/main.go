@@ -26,6 +26,7 @@ func main() {
 		{Label: "Listen", Value: fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)},
 		{Label: "Advertise", Value: cfg.AdvertiseAddr},
 		{Label: "RTP Manager", Value: strings.Join(cfg.RTPManagerAddrs, ", ")},
+		{Label: "LLM Server", Value: cfg.LLMServerURL},
 		{Label: "Dialplan", Value: cfg.DialplanPath},
 		{Label: "Log Level", Value: cfg.LogLevel},
 	})

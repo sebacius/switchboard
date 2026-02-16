@@ -382,6 +382,26 @@ func (t *GRPCTransport) UnbridgeMedia(ctx context.Context, bridgeID string) erro
 	return nil
 }
 
+// Listen implements Transport.Listen
+func (t *GRPCTransport) Listen(ctx context.Context, req ListenRequest) (*ListenResult, error) {
+	grpcReq := &rtpv1.ListenRequest{
+		SessionId:        req.SessionID,
+		MaxDurationMs:    int32(req.MaxDurationMs),
+		SilenceTimeoutMs: int32(req.SilenceTimeoutMs),
+	}
+
+	resp, err := t.client.Listen(ctx, grpcReq)
+	if err != nil {
+		return nil, fmt.Errorf("Listen RPC failed: %w", err)
+	}
+
+	return &ListenResult{
+		Text:       resp.Text,
+		DurationMs: int(resp.DurationMs),
+		Timeout:    resp.Timeout,
+	}, nil
+}
+
 // Ready implements Transport.Ready
 func (t *GRPCTransport) Ready() bool {
 	t.mu.RLock()

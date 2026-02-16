@@ -6,7 +6,9 @@
 	docker-save docker-save-signaling docker-save-rtpmanager docker-save-ui \
 	k8s-deploy k8s-delete k8s-status k8s-logs \
 	k8s-deploy-signaling k8s-deploy-rtpmanager k8s-deploy-ui \
-	tts-start tts-stop tts-status
+	tts-start tts-stop tts-status \
+	whisper-start whisper-stop whisper-status \
+	services-start services-stop services-status
 
 # Docker image names
 IMAGE_SIGNALING ?= switchboard-signaling
@@ -57,10 +59,12 @@ help:
 	@echo "  make k8s-status             - Show deployment status"
 	@echo "  make k8s-logs               - Tail logs from all pods"
 	@echo ""
-	@echo "TTS:"
-	@echo "  make tts-start          - Start TTS server (Docker)"
-	@echo "  make tts-stop           - Stop TTS server"
-	@echo "  make tts-status         - Check TTS server status"
+	@echo "AI SERVICES (Docker):"
+	@echo "  make services-start     - Start all AI services (TTS + Whisper)"
+	@echo "  make services-stop      - Stop all AI services"
+	@echo "  make services-status    - Check AI services status"
+	@echo "  make tts-start          - Start TTS server only"
+	@echo "  make whisper-start      - Start Whisper server only"
 	@echo ""
 	@echo "TESTING:"
 	@echo "  make test-sip TARGET=<ip>       - Run SIPp test suite"
@@ -314,3 +318,60 @@ tts-status:
 	else \
 		echo "TTS server: not running"; \
 	fi
+
+# ============================================================================
+# Whisper Server (Speech-to-Text / ASR)
+# ============================================================================
+
+WHISPER_CONTAINER_NAME ?= whisper-asr
+WHISPER_IMAGE ?= fedirz/faster-whisper-server:latest-cpu
+WHISPER_MODEL ?= Systran/faster-whisper-tiny
+WHISPER_PORT ?= 8001
+
+# Start Whisper server if not running
+whisper-start:
+	@if docker ps -q -f name=$(WHISPER_CONTAINER_NAME) | grep -q .; then \
+		echo "Whisper server already running"; \
+	elif docker ps -aq -f name=$(WHISPER_CONTAINER_NAME) | grep -q .; then \
+		echo "Starting existing Whisper container..."; \
+		docker start $(WHISPER_CONTAINER_NAME) && echo "Whisper server available at http://localhost:$(WHISPER_PORT)"; \
+	else \
+		echo "Starting Whisper server on port $(WHISPER_PORT)..."; \
+		docker run -d --name $(WHISPER_CONTAINER_NAME) -p $(WHISPER_PORT):8000 -e WHISPER__MODEL=$(WHISPER_MODEL) $(WHISPER_IMAGE) && \
+		echo "Whisper server available at http://localhost:$(WHISPER_PORT)"; \
+	fi
+
+# Stop Whisper server
+whisper-stop:
+	@if docker ps -q -f name=$(WHISPER_CONTAINER_NAME) | grep -q .; then \
+		echo "Stopping Whisper server..."; \
+		docker stop $(WHISPER_CONTAINER_NAME); \
+	else \
+		echo "Whisper server not running"; \
+	fi
+
+# Check Whisper server status
+whisper-status:
+	@if docker ps -q -f name=$(WHISPER_CONTAINER_NAME) | grep -q .; then \
+		echo "Whisper server: running"; \
+		docker ps -f name=$(WHISPER_CONTAINER_NAME) --format "  Container: {{.Names}}\n  Port: {{.Ports}}\n  Status: {{.Status}}"; \
+	else \
+		echo "Whisper server: not running"; \
+	fi
+
+# ============================================================================
+# Combined AI Services
+# ============================================================================
+
+# Start all AI services
+services-start: tts-start whisper-start
+	@echo ""
+	@echo "AI services ready:"
+	@echo "  TTS:     http://localhost:$(TTS_PORT)"
+	@echo "  Whisper: http://localhost:$(WHISPER_PORT)"
+
+# Stop all AI services
+services-stop: tts-stop whisper-stop
+
+# Check all AI services status
+services-status: tts-status whisper-status

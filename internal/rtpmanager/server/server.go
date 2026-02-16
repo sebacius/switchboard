@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/sebas/switchboard/internal/rtpmanager/asr"
 	"github.com/sebas/switchboard/internal/rtpmanager/bridge"
 	"github.com/sebas/switchboard/internal/rtpmanager/media"
 	"github.com/sebas/switchboard/internal/rtpmanager/portpool"
@@ -22,6 +23,7 @@ type Config struct {
 	RTPPortMax    int
 	AudioBasePath string
 	TTSServerURL  string
+	ASRServerURL  string
 }
 
 // Server implements the RTPManagerService gRPC server
@@ -32,6 +34,7 @@ type Server struct {
 	portPool   *portpool.PortPool
 	config     *Config
 	ttsClient  *tts.Client
+	asrClient  *asr.Client
 }
 
 // NewServer creates a new RTP Manager gRPC server
@@ -57,12 +60,22 @@ func NewServer(cfg *Config) (*Server, error) {
 		slog.Info("[gRPC] TTS client configured", "server", cfg.TTSServerURL)
 	}
 
+	// Create ASR client (optional - may not be configured)
+	var asrClient *asr.Client
+	if cfg.ASRServerURL != "" {
+		asrClient = asr.NewClient(asr.Config{
+			ServerURL: cfg.ASRServerURL,
+		})
+		slog.Info("[gRPC] ASR client configured", "server", cfg.ASRServerURL)
+	}
+
 	return &Server{
 		sessionMgr: sessionMgr,
 		bridgeMgr:  bridgeMgr,
 		portPool:   pool,
 		config:     cfg,
 		ttsClient:  ttsClient,
+		asrClient:  asrClient,
 	}, nil
 }
 
@@ -364,6 +377,67 @@ func (s *Server) PlayTTS(req *rtpv1.PlayTTSRequest, stream rtpv1.RTPManagerServi
 	}
 
 	return nil
+}
+
+// Listen implements RTPManagerService.Listen
+func (s *Server) Listen(ctx context.Context, req *rtpv1.ListenRequest) (*rtpv1.ListenResponse, error) {
+	slog.Info("[gRPC] Listen",
+		"session_id", req.SessionId,
+		"max_duration_ms", req.MaxDurationMs,
+		"silence_timeout_ms", req.SilenceTimeoutMs,
+	)
+
+	// Check if ASR is configured
+	if s.asrClient == nil {
+		return nil, fmt.Errorf("ASR server not configured")
+	}
+
+	// Set defaults
+	maxDuration := int(req.MaxDurationMs)
+	if maxDuration == 0 {
+		maxDuration = 10000 // 10 seconds default
+	}
+	silenceTimeout := int(req.SilenceTimeoutMs)
+	if silenceTimeout == 0 {
+		silenceTimeout = 1500 // 1.5 seconds default
+	}
+
+	// Capture audio from session
+	audioData, durationMs, timeout, err := s.sessionMgr.Listen(ctx, req.SessionId, maxDuration, silenceTimeout)
+	if err != nil {
+		slog.Error("[gRPC] Listen failed", "error", err)
+		return nil, fmt.Errorf("listen failed: %w", err)
+	}
+
+	// If no audio captured, return empty
+	if len(audioData) == 0 {
+		return &rtpv1.ListenResponse{
+			SessionId:  req.SessionId,
+			Text:       "",
+			DurationMs: 0,
+			Timeout:    timeout,
+		}, nil
+	}
+
+	// Transcribe audio
+	text, err := s.asrClient.Transcribe(ctx, audioData)
+	if err != nil {
+		slog.Error("[gRPC] Transcription failed", "error", err)
+		return nil, fmt.Errorf("transcription failed: %w", err)
+	}
+
+	slog.Info("[gRPC] Listen complete",
+		"session_id", req.SessionId,
+		"duration_ms", durationMs,
+		"text", text,
+	)
+
+	return &rtpv1.ListenResponse{
+		SessionId:  req.SessionId,
+		Text:       text,
+		DurationMs: int32(durationMs),
+		Timeout:    timeout,
+	}, nil
 }
 
 // Close cleans up resources
