@@ -26,11 +26,11 @@ type TenantInfo struct {
 
 // Config holds paths and dependencies for the FileManager.
 type Config struct {
-	SettingsDir      string              // directory containing settings.md
-	TenantsDir       string              // directory containing tenant .md files
-	DialplanPath     string              // full path to dialplan.json
-	Dialplan         *dialplan.Dialplan  // for Reload()
-	SettingsReloader SettingsReloader    // optional, for refreshing cached settings
+	SettingsDir      string             // directory containing settings.md
+	TenantsDir       string             // directory containing tenant .md files
+	DialplanPath     string             // full path to dialplan.json
+	Dialplan         *dialplan.Dialplan // for Reload()
+	SettingsReloader SettingsReloader   // optional, for refreshing cached settings
 }
 
 // FileManager provides safe file operations for settings, tenants, and dialplan.

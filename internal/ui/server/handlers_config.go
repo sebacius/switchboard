@@ -183,8 +183,8 @@ func (s *Server) handleConfigTenantNew(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := ConfigTenantEditData{
-		Server: c.Name(),
-		IsNew:  true,
+		Server:  c.Name(),
+		IsNew:   true,
 		Content: "# Tenant Name\n\nDescribe the tenant knowledge base here.\n",
 	}
 
@@ -252,7 +252,7 @@ func (s *Server) handleConfigTenantCreate(w http.ResponseWriter, r *http.Request
 	if name == "" {
 		data := ConfigTenantEditData{Server: c.Name(), IsNew: true, Content: content, Error: "Tenant name is required"}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		s.templates.RenderConfigTenantEdit(w, data)
+		_ = s.templates.RenderConfigTenantEdit(w, data)
 		return
 	}
 
@@ -393,9 +393,9 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 
 	if err := c.ReloadConfig(r.Context()); err != nil {
 		slog.Error("[UI] Reload failed", "server", c.Name(), "error", err)
-		fmt.Fprintf(w, `<div class="flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm"><svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>Reload failed: %s</div>`, err.Error())
+		_, _ = fmt.Fprintf(w, `<div class="flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm"><svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>Reload failed: %s</div>`, err.Error())
 		return
 	}
 
-	fmt.Fprintf(w, `<div class="flex items-center px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm"><svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Configuration reloaded successfully</div>`)
+	_, _ = fmt.Fprintf(w, `<div class="flex items-center px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm"><svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Configuration reloaded successfully</div>`)
 }

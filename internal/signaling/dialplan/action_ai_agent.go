@@ -54,8 +54,8 @@ func NewAIAgentActionFactory(llmClient *llm.Client, parkService *parking.Service
 	}
 
 	factory := &AIAgentFactory{
-		llmClient:   llmClient,
-		parkService: parkService,
+		llmClient:    llmClient,
+		parkService:  parkService,
 		settingsPath: settingsPath,
 	}
 
