@@ -147,9 +147,12 @@ What logic lives where in the Switchboard codebase.
 ### `internal/signaling/dialplan/session.go`
 **CallSession interface and implementation**
 - Defines what actions can do:
-  - `PlayAudio()`, `StopAudio()`
+  - `PlayAudio()`, `PlayTTS()`, `StopAudio()`
+  - `Listen()` - captures caller audio and returns transcribed text (via ASR)
   - `Dial()`, `Hangup()`
-  - `CallID()`, `Destination()`, `CallerID()`
+  - `CallID()`, `Destination()`, `CallerID()`, `Domain()`
+  - `IsTerminated()`, `GetDialog()`, `GetSessionID()`, `GetTransport()`
+  - `TerminateDialog()` - cross-leg termination for bridging/parking
 - `sessionImpl` wraps dialog, media client, call service
 - Variable substitution for action params
 
@@ -158,7 +161,8 @@ What logic lives where in the Switchboard codebase.
 - `Action` interface: `Execute(ctx, session) error`
 - `ActionFactory` - creates actions from JSON
 - `RegisterAction()` - adds action types
-- Built-in registration of play_audio, dial, hangup
+- `RegisterAIAgentAction()` - registers `ai_agent` with LLM client and optional park service
+- Built-in registration of play_audio, dial, hangup, ai_agent
 
 ### `internal/signaling/dialplan/action_play_audio.go`
 **play_audio action**
@@ -177,6 +181,19 @@ What logic lives where in the Switchboard codebase.
 - `HangupAction` struct
 - Reads optional `reason` param
 - Calls `session.Hangup()`
+
+### `internal/signaling/dialplan/action_ai_agent.go`
+**ai_agent action - AI voice conversation and routing**
+- `AIAgentAction` struct with `AIAgentParams` configuration
+- `aiAgentFactory` - holds LLM client and cached `settings.md` content (loaded once at startup)
+- Two operating modes:
+  - **conversational** (default): multi-turn listen/LLM/speak loop with configurable `max_turns`
+  - **routing**: single-shot LLM decision, no listen loop
+- `loadSystemPrompt()` - combines cached settings content with per-call tenant config from `resources/tenants/{config}.md`
+- `parseResponse()` - extracts spoken text and optional `ACTION:` block from LLM output
+- `validateAction()` - checks required params for supported actions (transfer, hangup, park)
+- `executeAction()` - dispatches transfer (via `session.Dial`), hangup, or park
+- Configurable params: `config`, `voice`, `model`, `greeting`, `mode`, `max_turns`, `silence_timeout_ms`, `max_listen_ms`, `tenants_path`
 
 ### `internal/signaling/dialplan/errors.go`
 **Dialplan error types**
@@ -346,6 +363,21 @@ What logic lives where in the Switchboard codebase.
 
 ---
 
+### LLM Client
+
+### `internal/signaling/llm/client.go`
+**LLM client for AI agent conversations**
+- `Client` struct - HTTP client for Ollama / OpenAI-compatible chat completions API
+- `NewClient()` - creates client with server URL, model, and timeout
+- `Chat()` / `ChatWithModel()` - sends message history, returns assistant response
+- `Ready()` - checks if server URL is configured
+- `Conversation` struct - manages multi-turn conversation with history
+- `NewConversation()` - creates conversation with system prompt and per-conversation model override
+- `Say()` - appends user message, calls LLM, appends assistant response, returns text
+- `TurnCount()` - counts user messages in conversation
+
+---
+
 ### API Server
 
 ### `internal/signaling/api/server.go`
@@ -512,6 +544,18 @@ What logic lives where in the Switchboard codebase.
 
 ---
 
+### ASR (Speech Recognition)
+
+### `internal/rtpmanager/asr/client.go`
+**Whisper ASR client for speech-to-text**
+- `Client` struct - HTTP client for Whisper server (OpenAI-compatible transcription API)
+- `NewClient()` - creates client with server URL and timeout
+- `Transcribe()` - sends WAV audio data as multipart form upload, returns transcribed text
+- `Ready()` - checks if server URL is configured
+- Uses `/v1/audio/transcriptions` endpoint
+
+---
+
 ## UI Server
 
 ### `internal/ui/server/server.go`
@@ -582,6 +626,42 @@ What logic lives where in the Switchboard codebase.
 
 ---
 
+## Configuration Files
+
+### `resources/config/settings.md`
+**AI agent system settings (loaded once at startup)**
+- Defines the LLM's role, response format, and available actions (transfer, hangup, park)
+- Documents the `ACTION:` block format the LLM must follow
+- Describes conversational and routing operating modes
+- Sets behavioral rules (brief responses, no markdown, one action per response)
+- Shared across all tenants; provides the contract between LLM output and `parseResponse()`
+
+### `resources/tenants/*.md`
+**Per-tenant LLM personality and instructions (loaded per-call)**
+- Each file (e.g., `default.md`) defines a tenant's voice assistant personality
+- Contains business-specific context: office hours, insurance plans, addresses
+- Instructions for handling callers (greetings, message-taking, transfer rules)
+- Selected by the `config` param in the `ai_agent` dialplan action (defaults to `default`)
+- Can use `${domain}` variable to load tenant config based on the SIP domain
+
+---
+
+## Kubernetes Manifests (AI Services)
+
+### `deploy/k8s/ollama.yaml`
+- Ollama LLM server deployment and service
+- Used by the signaling server's LLM client for chat completions
+
+### `deploy/k8s/asr.yaml`
+- Whisper ASR server deployment and service
+- Used by the RTP manager for speech-to-text transcription
+
+### `deploy/k8s/tts.yaml`
+- Text-to-speech server deployment and service
+- Used by the RTP manager for synthesizing spoken responses
+
+---
+
 ## Related Documents
 
 - [Architecture](ARCHITECTURE.md) - System design
@@ -590,4 +670,4 @@ What logic lives where in the Switchboard codebase.
 
 ---
 
-*Last updated: January 2026*
+*Last updated: March 2026*

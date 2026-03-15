@@ -1,6 +1,6 @@
 # Architecture
 
-> **Note**: This document describes the architecture as of January 2026. This is a living document that evolves with the project.
+> **Note**: This document describes the architecture as of March 2026. This is a living document that evolves with the project.
 
 ## Built With
 
@@ -39,9 +39,10 @@ This separation enables:
 
 Switchboard splits VoIP handling into distinct responsibilities:
 
-1. **Signaling** - SIP protocol, call state, routing decisions
-2. **Media** - RTP streaming, codec handling, audio bridging
-3. **Presentation** - Admin visibility, monitoring
+1. **Signaling** - SIP protocol, call state, routing decisions, LLM conversation context
+2. **Media** - RTP streaming, codec handling, audio bridging, TTS synthesis, ASR transcription
+3. **AI Services** - LLM inference (Ollama), text-to-speech (Piper/openedai-speech), speech-to-text (Whisper/faster-whisper)
+4. **Presentation** - Admin visibility, monitoring
 
 ### Horizontal Scalability
 
@@ -72,23 +73,38 @@ The goal is not feature parity with FreeSWITCH or Asterisk. The goal is a simple
 |  |  Location   |  |   Routing   |  | MediaClient |  |  REST API   |    |
 |  |   Service   |  |  Handlers   |  | (gRPC Pool) |  |   Server    |    |
 |  +-------------+  +-------------+  +-------------+  +-------------+    |
-|  +-------------+                                                        |
-|  |   Events    |         HTTP :8080                                     |
-|  |    Bus      |                                                        |
-|  +-------------+                                                        |
-+-----------------------------+-------------------------------------------+
-                              | gRPC :9090
-+-----------------------------v-------------------------------------------+
-|                         RTP MANAGER                                      |
-|  +-------------+  +-------------+  +-------------+  +-------------+    |
-|  |   gRPC      |  |   Session   |  |    Media    |  |   Bridge    |    |
-|  |   Server    |  |   Manager   |  |   Service   |  |   Manager   |    |
-|  +-------------+  +-------------+  +-------------+  +-------------+    |
 |  +-------------+  +-------------+                                       |
-|  |  Port Pool  |  |     SDP     |                                       |
-|  |  Allocator  |  |   Builder   |                                       |
+|  |   Events    |  | LLM Client  |  HTTP :8080                          |
+|  |    Bus      |  |  (Ollama)   |                                       |
 |  +-------------+  +-------------+                                       |
-+-----------------------------+-------------------------------------------+
++--------+--------------------+-------------------------------------------+
+         |                    | gRPC :9090
+         | HTTP               |
+         v                    v
++----------------+   +-----------------------------------------------+
+|    OLLAMA      |   |                 RTP MANAGER                     |
+|  LLM Server   |   |  +-------------+  +-------------+              |
+|  (llama3, etc) |   |  |   gRPC      |  |   Session   |              |
++----------------+   |  |   Server    |  |   Manager   |              |
+                     |  +-------------+  +-------------+              |
+                     |  +-------------+  +-------------+              |
+                     |  |    Media    |  |   Bridge    |              |
+                     |  |   Service   |  |   Manager   |              |
+                     |  +-------------+  +-------------+              |
+                     |  +-------------+  +-------------+              |
+                     |  |  Port Pool  |  |     SDP     |              |
+                     |  |  Allocator  |  |   Builder   |              |
+                     |  +-------------+  +-------------+              |
+                     +--------+----+-----------+-----------------------+
+                              |    |           |
+                              |    | HTTP      | HTTP
+                              |    v           v
+                              |  +-----------+ +------------------+
+                              |  |   PIPER   | | WHISPER          |
+                              |  |  TTS      | | (faster-whisper) |
+                              |  |  Server   | | ASR Server       |
+                              |  +-----------+ +------------------+
+                              |
                               | RTP :10000-20000
 +-----------------------------v-------------------------------------------+
 |                           SIP Clients                                    |
@@ -166,6 +182,50 @@ A simple admin dashboard for visibility into running calls.
 - **Multi-backend** aggregation from multiple signaling servers
 - **SSE** for real-time updates (planned)
 
+## AI Agent Architecture
+
+The `ai_agent` dialplan action makes LLM-driven voice conversations a first-class routing mechanism. Rather than being a bolt-on integration, the AI agent sits alongside `play_audio`, `dial`, `park`, and `hangup` as a core action in the dialplan engine.
+
+### Service Responsibilities
+
+The AI agent spans three layers, each with a clear role:
+
+| Layer | Service | Responsibility |
+|-------|---------|----------------|
+| Context | Signaling Server | Holds conversation state, LLM client, conversation history, action execution |
+| Media I/O | RTP Manager | TTS synthesis (via Piper), ASR transcription (via Whisper), RTP streaming |
+| Inference | External (Ollama, Piper, Whisper) | Stateless AI services, no call awareness |
+
+The signaling server owns the conversation loop and decides what happens next. The RTP Manager is the media workhorse -- it converts text to speech and speech to text but has no knowledge of conversation context. The external AI services (Ollama, Piper, Whisper) are stateless HTTP servers that process individual requests.
+
+### Two Operating Modes
+
+**Conversational mode** (default): Multi-turn dialogue. After the greeting, the system enters a loop: listen for caller speech (ASR), send transcript to the LLM, speak the LLM response (TTS), repeat. The loop continues until the LLM emits an ACTION block (transfer, hangup, park) or max turns is reached.
+
+**Routing mode**: Single-shot decision. After the greeting, the LLM receives a single prompt and responds with a message and an action. There is no listen step -- the LLM decides based on tenant instructions alone. This is useful for after-hours routing where every call should be handled the same way.
+
+### Two-Layer Prompt System
+
+The LLM system prompt is assembled from two sources:
+
+1. **Settings** (`resources/config/settings.md`): Loaded once at startup by the action factory. Defines the action contract (available actions, response format, rules). This is the same for all tenants and all calls.
+
+2. **Tenant config** (`resources/tenants/<name>.md`): Loaded per-call based on the `config` parameter in the dialplan. Provides business context, personality, and specific instructions for the AI agent. The `${domain}` variable in the config field enables dynamic tenant resolution from the SIP domain of the incoming call.
+
+This separation means the action contract is stable and cached, while tenant-specific behavior can vary per call without any code changes.
+
+### LLM Action Execution
+
+The LLM can emit ACTION blocks in its responses. The signaling server parses these and executes them against the call session:
+
+| Action | Effect | Required Params |
+|--------|--------|-----------------|
+| `transfer` | Dial an extension via B2BUA | `extension` |
+| `hangup` | Terminate the call | (none) |
+| `park` | Place caller in a parking slot with MOH | `slot` (optional) |
+
+Actions are validated before execution. Unknown action names are silently ignored. In conversational mode, a failed transfer informs the caller and continues the conversation rather than ending the call.
+
 ## Key Design Decisions
 
 ### Why gRPC Between Services?
@@ -199,6 +259,40 @@ For now, simplicity. The location service, dialog manager, and session manager a
 
 Future: Redis or etcd for shared state.
 
+### Why AI Agent as a First-Class Dialplan Action?
+
+The AI voice agent is implemented as an `ai_agent` action registered in the same ActionRegistry as `play_audio`, `dial`, and `hangup`. This was a deliberate choice over a separate subsystem or external webhook.
+
+**Why a dialplan action:**
+- Consistent with existing routing model -- no new concepts for operators to learn
+- Can be combined with other actions in a route (e.g., play greeting, then AI agent)
+- Same lifecycle management (context cancellation, session cleanup)
+- Configuration lives in dialplan.json alongside all other routing
+
+**Alternatives considered:**
+- External webhook/API -- adds latency, requires separate deployment, loses session context
+- Separate AI service -- adds complexity without clear benefit since signaling already has the call context
+
+### Why Context Lives in Signaling, Not RTP Manager?
+
+The conversation history, LLM client, and action execution all live in the signaling server. The RTP Manager only handles media I/O (TTS and ASR).
+
+**Rationale:**
+- Signaling already manages call state, dialog lifecycle, and action execution
+- Conversation context is a routing concern, not a media concern
+- Keeps RTP Manager stateless with respect to AI -- it just converts between text and audio
+- Allows a single signaling server to coordinate conversations across multiple RTP Managers
+
+### Why a Two-Layer Prompt System?
+
+The system prompt is split into settings (action contract) and tenant config (business context).
+
+**Rationale:**
+- Settings define the stable interface (action format, rules) and are loaded once at startup
+- Tenant config changes per deployment or per call, without modifying the action contract
+- The `${domain}` variable allows multi-tenant deployments where the SIP domain determines which tenant config to load
+- Operators can customize AI behavior by editing markdown files, with no code changes or restarts needed for tenant configs
+
 ### Why No Authentication?
 
 Not implemented yet. This is a significant security gap that makes the system completely unsuitable for production.
@@ -224,4 +318,4 @@ These are ideas, not commitments:
 
 ---
 
-*Last updated: January 2026*
+*Last updated: March 2026*

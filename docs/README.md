@@ -17,10 +17,11 @@ This directory contains the complete documentation for the Switchboard VoIP plat
 | [Development](DEVELOPMENT.md) | Build instructions, testing, and contribution guide |
 | [Deployment](DEPLOYMENT.md) | Docker containers and Kubernetes (k3s) deployment |
 | [Roadmap](ROADMAP.md) | Planned features and future direction |
+| [AI Agent](../resources/config/settings.md) | AI agent LLM action contract and response format |
 
 ## Overview
 
-Switchboard is a VoIP platform that separates signaling and media into independently scalable components:
+Switchboard is a VoIP platform that separates signaling and media into independently scalable components, with integrated AI services for voice agent capabilities:
 
 ```
                     +------------------+
@@ -30,12 +31,12 @@ Switchboard is a VoIP platform that separates signaling and media into independe
                              | HTTP/REST
                     +--------v---------+
     SIP :5060 ----> |    Signaling     | :8080 API
-    (INVITE/BYE)    |     Server       |
+    (INVITE/BYE)    |     Server       |-------> Ollama (LLM)
                     +--------+---------+
                              | gRPC
                     +--------v---------+
                     |   RTP Manager    | :9090
-                    |  (Media/Audio)   |
+                    |  (Media/Audio)   |-------> Whisper (ASR) / TTS
                     +--------+---------+
                              | RTP/UDP
                     +--------v---------+
@@ -43,11 +44,13 @@ Switchboard is a VoIP platform that separates signaling and media into independe
                     +------------------+
 ```
 
-**Signaling Server** - SIP protocol handling, B2BUA call bridging, dialplan engine, location service
+**Signaling Server** - SIP protocol handling, B2BUA call bridging, dialplan engine, location service, LLM conversation management
 
-**RTP Manager** - Media streaming, RTP bridging between call legs, SDP generation, port allocation
+**RTP Manager** - Media streaming, RTP bridging between call legs, SDP generation, port allocation, ASR and TTS integration
 
 **UI Server** - Admin dashboard aggregating data from multiple signaling servers
+
+**AI Services** (external) - Ollama for LLM inference, Whisper for speech-to-text, TTS server for text-to-speech. The signaling server holds conversation context while RTP managers handle media I/O (audio capture, transcription, synthesis).
 
 ## Document Conventions
 
@@ -65,4 +68,4 @@ Switchboard is a VoIP platform that separates signaling and media into independe
 
 ---
 
-*Last updated: January 2026*
+*Last updated: March 2026*

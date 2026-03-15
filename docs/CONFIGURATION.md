@@ -30,6 +30,14 @@ Example with multiple RTP Managers:
 |------|---------|---------|-------------|
 | `--dialplan` | `DIALPLAN_PATH` | dialplan.json | Path to dialplan configuration file |
 
+### LLM Server Connection
+
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `--llm-server` | `LLM_SERVER` | http://localhost:11434 | Ollama LLM server URL |
+
+The signaling server connects to an Ollama instance for AI agent functionality. The LLM is used by the dialplan `ai_agent` action to generate conversational responses during calls.
+
 ### Logging
 
 | Flag | Env Var | Default | Description |
@@ -45,6 +53,7 @@ export BIND=0.0.0.0
 export ADVERTISE=192.168.1.10
 export RTPMANAGER=rtpmanager1:9090,rtpmanager2:9090
 export DIALPLAN_PATH=/etc/switchboard/dialplan.json
+export LLM_SERVER=http://localhost:11434
 export LOGLEVEL=debug
 
 ./switchboard-signaling
@@ -56,6 +65,7 @@ export LOGLEVEL=debug
   --advertise 192.168.1.10 \
   --rtpmanager rtpmanager1:9090,rtpmanager2:9090 \
   --dialplan /etc/switchboard/dialplan.json \
+  --llm-server http://localhost:11434 \
   --loglevel debug
 ```
 
@@ -76,6 +86,15 @@ export LOGLEVEL=debug
 | `--rtp-min` | `RTP_PORT_MIN` | 10000 | Start of RTP port range |
 | `--rtp-max` | `RTP_PORT_MAX` | 20000 | End of RTP port range |
 | `--audio-path` | `AUDIO_PATH` | ./audio | Base path for audio files |
+
+### AI Service Connections
+
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `--tts-server` | `TTS_SERVER` | http://localhost:8000 | Piper TTS server URL |
+| `--asr-server` | `ASR_SERVER` | http://localhost:8001 | Whisper ASR server URL |
+
+The RTP Manager connects to TTS and ASR services for AI agent calls. TTS converts LLM text responses into audio streamed over RTP. ASR transcribes incoming caller audio into text for the LLM.
 
 ### Port Range Planning
 
@@ -105,6 +124,8 @@ export ADVERTISE=192.168.1.10
 export RTP_PORT_MIN=10000
 export RTP_PORT_MAX=20000
 export AUDIO_PATH=/var/lib/switchboard/audio
+export TTS_SERVER=http://localhost:8000
+export ASR_SERVER=http://localhost:8001
 export LOGLEVEL=info
 
 ./switchboard-rtpmanager
@@ -117,6 +138,8 @@ export LOGLEVEL=info
   --rtp-min 10000 \
   --rtp-max 20000 \
   --audio-path /var/lib/switchboard/audio \
+  --tts-server http://localhost:8000 \
+  --asr-server http://localhost:8001 \
   --loglevel info
 ```
 
@@ -169,6 +192,56 @@ export UI_LOGLEVEL=info
   --backends "dc1=http://signaling1:8080,dc2=http://signaling2:8080" \
   --loglevel info
 ```
+
+## AI Services
+
+Switchboard integrates three external AI services to support the `ai_agent` dialplan action. These services are not part of Switchboard itself but must be running and reachable for AI-powered call handling.
+
+### Service Overview
+
+| Service | Image | Default Port | Configured On |
+|---------|-------|-------------|---------------|
+| Piper TTS | `ghcr.io/matatonic/openedai-speech` | 8000 | RTP Manager (`TTS_SERVER`) |
+| Whisper ASR | `fedirz/faster-whisper-server:latest-cpu` | 8001 | RTP Manager (`ASR_SERVER`) |
+| Ollama LLM | `ollama/ollama` | 11434 | Signaling (`LLM_SERVER`) |
+
+### How They Work Together
+
+1. The **ASR** service (on the RTP Manager) transcribes incoming caller audio into text.
+2. The **LLM** service (on the Signaling Server) generates a conversational response from the transcript.
+3. The **TTS** service (on the RTP Manager) converts the LLM response text into audio streamed back over RTP.
+
+### Local Development
+
+For local development, TTS and Whisper run as Docker containers while Ollama runs natively:
+
+```bash
+# Start TTS and Whisper containers
+make services-start
+
+# Start Ollama (runs natively, not in Docker)
+ollama serve
+```
+
+### Kubernetes DNS
+
+When deployed to Kubernetes, the AI services are accessible via cluster DNS:
+
+| Service | Internal DNS | Port |
+|---------|-------------|------|
+| TTS | `tts.switchboard.svc.cluster.local` | 8000 |
+| ASR | `asr.switchboard.svc.cluster.local` | 8000 |
+| Ollama | `ollama.switchboard.svc.cluster.local` | 11434 |
+
+## Tenant and Settings Configuration
+
+### Tenant Configuration
+
+Tenant configuration files are stored in `resources/tenants/` as Markdown files. Each file defines the configuration for a single tenant (e.g., `resources/tenants/default.md`).
+
+### Settings
+
+Global settings are stored in `resources/config/settings.md`. This file contains system-wide configuration that applies across all tenants.
 
 ## Deployment Patterns
 
@@ -249,6 +322,7 @@ PORT=5060
 BIND=0.0.0.0
 ADVERTISE=192.168.1.10
 RTPMANAGER=localhost:9090
+LLM_SERVER=http://localhost:11434
 LOGLEVEL=info
 ```
 
@@ -260,6 +334,8 @@ ADVERTISE=192.168.1.10
 RTP_PORT_MIN=10000
 RTP_PORT_MAX=20000
 AUDIO_PATH=/var/lib/switchboard/audio
+TTS_SERVER=http://localhost:8000
+ASR_SERVER=http://localhost:8001
 LOGLEVEL=info
 ```
 
@@ -271,4 +347,4 @@ LOGLEVEL=info
 
 ---
 
-*Last updated: January 2026*
+*Last updated: March 2026*

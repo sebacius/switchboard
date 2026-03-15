@@ -14,6 +14,13 @@ This roadmap outlines the major capabilities and milestones planned for Switchbo
 - Dialplan with pattern matching and Dial action
 - Basic admin dashboard with live updates
 - Multiple RTP Manager load balancing with session affinity
+- AI voice agent as a dialplan action (`ai_agent`) with two modes:
+  - **Conversational**: multi-turn listen/LLM/speak loop with ASR and TTS
+  - **Routing**: single-shot LLM decision (transfer, park, or hangup)
+- LLM integration via Ollama (OpenAI-compatible API) with multi-turn conversation history
+- Speech recognition via Whisper ASR server (batch transcription)
+- Text-to-speech playback through TTS server
+- Per-tenant LLM personalities loaded from markdown files
 
 **What Does Not Work Yet**
 - Authentication (anyone can register as anyone)
@@ -151,19 +158,30 @@ External integration capabilities.
 
 ---
 
-## Phase 6: WebSockets and AI Hooks
+## Phase 6: WebSockets and Advanced AI
 
-Real-time integration capabilities.
+Real-time integration capabilities and AI enhancements.
 
 ### WebSocket Interface
 - [ ] WebSocket connection for external controllers
 - [ ] Subscription to call events
 - [ ] Real-time call control actions
 
-### AI Integration
-- [ ] RTP tap/fork for recording or AI processing
-- [ ] Audio stream extraction
-- [ ] DTMF injection
+### AI Integration (implemented)
+- [x] AI voice agent dialplan action with conversational and routing modes
+- [x] LLM client (Ollama / OpenAI-compatible) with multi-turn conversation
+- [x] Whisper ASR integration for batch speech-to-text
+- [x] TTS integration for spoken responses
+- [x] Per-tenant LLM configuration via markdown files
+- [x] LLM action parsing (transfer, hangup, park) with validation
+
+### AI Integration (future)
+- [ ] Streaming ASR for real-time transcription (lower latency)
+- [ ] Streaming TTS for incremental playback
+- [ ] RTP tap/fork for recording or external AI processing
+- [ ] Audio stream extraction via WebSocket
+- [ ] LLM function calling / tool use instead of text-based action parsing
+- [ ] Conversation analytics and logging
 
 ### WebRTC
 - [ ] Future WebRTC gateway considerations
@@ -271,4 +289,4 @@ Priorities will shift based on:
 
 ---
 
-*Last updated: January 2026*
+*Last updated: March 2026*
