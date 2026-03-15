@@ -339,8 +339,8 @@ func (m *Manager) Terminate(callID string, reason TerminateReason) error {
 		return nil // Already terminated
 	}
 
-	// If confirmed, send BYE
-	if state == StateConfirmed && reason == ReasonLocalBYE {
+	// Send BYE if dialog is confirmed or waiting for ACK (practical: ACK may never arrive)
+	if (state == StateConfirmed || state == StateWaitingACK) && reason == ReasonLocalBYE {
 		slog.Info("[Dialog] Manager.Terminate - sending BYE",
 			"call_id", callID,
 			"direction", d.Direction,

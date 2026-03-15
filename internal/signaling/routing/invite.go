@@ -220,13 +220,24 @@ func (h *InviteHandler) extractCallerName(req *sip.Request) string {
 	return ""
 }
 
+// extractDomain extracts the SIP domain from the To header.
+func (h *InviteHandler) extractDomain(req *sip.Request) string {
+	to := req.To()
+	if to == nil {
+		return ""
+	}
+	return to.Address.Host
+}
+
 // executeDialplan runs the dialplan for the call.
 func (h *InviteHandler) executeDialplan(dlg *dialog.Dialog, destination string) {
 	callerID := ""
 	callerName := ""
+	domain := ""
 	if dlg.InviteRequest != nil {
 		callerID = h.extractCallerID(dlg.InviteRequest)
 		callerName = h.extractCallerName(dlg.InviteRequest)
+		domain = h.extractDomain(dlg.InviteRequest)
 	}
 
 	// Create call session for dialplan execution
@@ -240,6 +251,7 @@ func (h *InviteHandler) executeDialplan(dlg *dialog.Dialog, destination string) 
 		Destination: destination,
 		CallerID:    callerID,
 		CallerName:  callerName,
+		Domain:      domain,
 	})
 
 	// Execute dialplan

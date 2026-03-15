@@ -138,6 +138,90 @@ Originates a call to a target and bridges media.
 - Bridge remains until either party hangs up
 - Original caller is hung up when bridge terminates
 
+### ai_agent
+
+Starts an AI voice conversation powered by an LLM, with speech-to-text and text-to-speech.
+
+```json
+{
+  "type": "ai_agent",
+  "params": {
+    "config": "default",
+    "voice": "alloy",
+    "model": "llama3.1:8b",
+    "mode": "routing"
+  }
+}
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `config` | string | No | Tenant config file name (without `.md`). Loaded from `resources/tenants/`. Supports `${domain}` substitution. Default: `"default"` |
+| `voice` | string | No | TTS voice name. Default: `"alloy"` |
+| `model` | string | No | LLM model name. Default: `"llama3"` |
+| `mode` | string | No | `"conversational"` (multi-turn) or `"routing"` (single-shot). Default: `"conversational"` |
+| `greeting` | string | No | Initial greeting spoken to the caller. Defaults vary by mode |
+| `max_turns` | int | No | Max conversation turns before auto-hangup. Default: `10` |
+| `silence_timeout_ms` | int | No | Silence detection timeout in ms. Default: `2000` |
+| `max_listen_ms` | int | No | Max listen duration per turn in ms. Default: `15000` |
+| `tenants_path` | string | No | Path to tenant config directory. Default: `"resources/tenants"` |
+
+**Modes:**
+
+- **Conversational** -- Greets the caller, then enters a listen/respond loop. Each turn: capture speech (ASR), send to LLM, speak response (TTS). Continues until the LLM emits an action (transfer, hangup, park) or max turns is reached.
+- **Routing** -- Greets the caller, then asks the LLM for a single routing decision based on the tenant config. Speaks the response, executes the action, and returns. No caller input is captured. Use for after-hours messages or simple call routing.
+
+**LLM Actions:**
+
+The LLM can trigger actions by appending an `ACTION:` block to its response. Available actions:
+
+- `ACTION: transfer` with `extension: <number>` -- Transfer the call to a registered extension
+- `ACTION: hangup` -- End the call
+- `ACTION: park` with optional `slot: <number>` -- Park the call with music on hold
+
+The action contract is defined in `resources/config/settings.md` (loaded at startup).
+
+**Tenant Configuration:**
+
+Tenant configs are Markdown files in `resources/tenants/` that define the agent's personality and business context. Example (`resources/tenants/default.md`):
+
+```markdown
+You are a helpful voice assistant for a phone system.
+
+## Context
+You are answering calls for a general business. Nobody is available
+to take calls right now. Let the caller know politely and hang up.
+```
+
+**Requirements:**
+- LLM server (Ollama or OpenAI-compatible) -- set `--llm-server` flag
+- TTS server (openedai-speech) -- used by RTP Manager
+- ASR server (faster-whisper) -- used by RTP Manager for conversational mode
+
+### tts
+
+Synthesizes text to speech and plays it to the caller.
+
+```json
+{
+  "type": "tts",
+  "params": {
+    "text": "Welcome to our service.",
+    "voice": "alloy"
+  }
+}
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `text` | string | Yes | Text to synthesize and play |
+| `voice` | string | No | TTS voice name. Default: `"alloy"` |
+
+**Behavior:**
+- Blocks until playback completes
+- Respects context cancellation (stops on hangup)
+- Requires TTS server configured on the RTP Manager
+
 ### hangup
 
 Terminates the call.
@@ -208,6 +292,7 @@ Action parameters support variable substitution using `${variable}` syntax.
 | `${caller_id}` | Caller's number (From header user part) |
 | `${caller_name}` | Caller's display name |
 | `${call_id}` | SIP Call-ID |
+| `${domain}` | SIP domain (To header host part) |
 
 ### Examples
 
@@ -419,6 +504,7 @@ Planned dialplan features:
 - **Variables**: Set and read custom variables
 - **Loops**: Repeat actions based on conditions
 - **Callbacks**: HTTP webhooks for external logic
+- **Streaming ASR**: Real-time transcription with barge-in detection
 
 ## Related Documents
 

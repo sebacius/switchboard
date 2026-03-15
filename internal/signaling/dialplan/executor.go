@@ -154,6 +154,7 @@ func (e *Executor) substituteVars(params json.RawMessage, session CallSession) j
 		"${destination}": session.Destination(),
 		"${caller_id}":   session.CallerID(),
 		"${call_id}":     session.CallID(),
+		"${domain}":      session.Domain(),
 	}
 
 	// Replace all variables

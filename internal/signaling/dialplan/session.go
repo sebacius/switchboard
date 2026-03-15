@@ -21,6 +21,7 @@ type CallSession interface {
 	CallID() string
 	Destination() string // Dialed number (To URI user part)
 	CallerID() string    // Caller number (From URI user part)
+	Domain() string      // SIP domain (To URI host part)
 
 	// Context returns the call's context. Canceled on BYE or timeout.
 	Context() context.Context
@@ -67,6 +68,7 @@ type sessionImpl struct {
 	destination string
 	callerID    string
 	callerName  string
+	domain      string
 
 	// Core components
 	ctx         context.Context
@@ -94,6 +96,7 @@ type SessionConfig struct {
 	Destination string
 	CallerID    string // From header user part (phone number/extension)
 	CallerName  string // From header display name
+	Domain      string // To header host part (SIP domain)
 }
 
 // NewSession creates a CallSession from an established dialog.
@@ -110,6 +113,7 @@ func NewSession(cfg SessionConfig) CallSession {
 		destination: cfg.Destination,
 		callerID:    cfg.CallerID,
 		callerName:  cfg.CallerName,
+		domain:      cfg.Domain,
 		ctx:         ctx,
 		cancel:      cancel,
 		dialog:      cfg.Dialog,
@@ -125,6 +129,7 @@ func NewSession(cfg SessionConfig) CallSession {
 func (s *sessionImpl) CallID() string           { return s.callID }
 func (s *sessionImpl) Destination() string      { return s.destination }
 func (s *sessionImpl) CallerID() string         { return s.callerID }
+func (s *sessionImpl) Domain() string           { return s.domain }
 func (s *sessionImpl) Context() context.Context { return s.ctx }
 
 func (s *sessionImpl) IsTerminated() bool {

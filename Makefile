@@ -6,6 +6,7 @@
 	docker-save docker-save-signaling docker-save-rtpmanager docker-save-ui \
 	k8s-deploy k8s-delete k8s-status k8s-logs \
 	k8s-deploy-signaling k8s-deploy-rtpmanager k8s-deploy-ui \
+	k8s-deploy-tts k8s-deploy-asr k8s-deploy-ollama k8s-deploy-ai \
 	tts-start tts-stop tts-status \
 	whisper-start whisper-stop whisper-status \
 	services-start services-stop services-status
@@ -50,21 +51,25 @@ help:
 	@echo "  make docker-build-ui        - Build UI Docker image"
 	@echo "  make docker-save            - Save all images to tar files"
 	@echo ""
-	@echo "KUBERNETES (k3s):"
-	@echo "  make k8s-deploy             - Deploy all to Kubernetes"
-	@echo "  make k8s-deploy-signaling   - Build & deploy signaling only"
-	@echo "  make k8s-deploy-rtpmanager  - Build & deploy rtpmanager only"
-	@echo "  make k8s-deploy-ui          - Build & deploy UI only"
-	@echo "  make k8s-delete             - Delete all Switchboard resources"
-	@echo "  make k8s-status             - Show deployment status"
-	@echo "  make k8s-logs               - Tail logs from all pods"
-	@echo ""
 	@echo "AI SERVICES (Docker):"
 	@echo "  make services-start     - Start all AI services (TTS + Whisper)"
 	@echo "  make services-stop      - Stop all AI services"
 	@echo "  make services-status    - Check AI services status"
 	@echo "  make tts-start          - Start TTS server only"
 	@echo "  make whisper-start      - Start Whisper server only"
+	@echo ""
+	@echo "KUBERNETES (k3s):"
+	@echo "  make k8s-deploy             - Deploy all to Kubernetes"
+	@echo "  make k8s-deploy-signaling   - Build & deploy signaling only"
+	@echo "  make k8s-deploy-rtpmanager  - Build & deploy rtpmanager only"
+	@echo "  make k8s-deploy-ui          - Build & deploy UI only"
+	@echo "  make k8s-deploy-tts         - Deploy TTS service to k8s"
+	@echo "  make k8s-deploy-asr         - Deploy ASR (Whisper) service to k8s"
+	@echo "  make k8s-deploy-ollama      - Deploy Ollama LLM service to k8s"
+	@echo "  make k8s-deploy-ai          - Deploy all AI services (TTS + ASR + Ollama)"
+	@echo "  make k8s-delete             - Delete all Switchboard resources"
+	@echo "  make k8s-status             - Show deployment status"
+	@echo "  make k8s-logs               - Tail logs from all pods"
 	@echo ""
 	@echo "TESTING:"
 	@echo "  make test-sip TARGET=<ip>       - Run SIPp test suite"
@@ -245,6 +250,29 @@ k8s-deploy-ui: docker-build-ui docker-save-ui
 	@echo "Restarting ui..."
 	@kubectl rollout restart statefulset/ui -n switchboard
 	@kubectl rollout status statefulset/ui -n switchboard
+
+# AI service k8s deployment targets
+k8s-deploy-tts:
+	@echo "Deploying TTS service to k8s..."
+	@kubectl apply -f deploy/k8s/tts.yaml -n switchboard
+	@kubectl rollout status deployment/tts -n switchboard
+
+k8s-deploy-asr:
+	@echo "Deploying ASR (Whisper) service to k8s..."
+	@kubectl apply -f deploy/k8s/asr.yaml -n switchboard
+	@kubectl rollout status deployment/asr -n switchboard
+
+k8s-deploy-ollama:
+	@echo "Deploying Ollama LLM service to k8s..."
+	@kubectl apply -f deploy/k8s/ollama.yaml -n switchboard
+	@kubectl rollout status deployment/ollama -n switchboard
+
+k8s-deploy-ai: k8s-deploy-tts k8s-deploy-asr k8s-deploy-ollama
+	@echo ""
+	@echo "AI services deployed:"
+	@echo "  TTS:    tts.switchboard.svc.cluster.local:8000"
+	@echo "  ASR:    asr.switchboard.svc.cluster.local:8000"
+	@echo "  Ollama: ollama.switchboard.svc.cluster.local:11434"
 
 # ============================================================================
 # Testing targets

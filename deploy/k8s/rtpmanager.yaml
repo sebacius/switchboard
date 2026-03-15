@@ -68,6 +68,12 @@ spec:
               value: "0.0.0.0"
             - name: AUDIO_PATH
               value: "/app/audio"
+            # TTS server (k8s service)
+            - name: TTS_SERVER
+              value: "http://tts.switchboard.svc.cluster.local:8000"
+            # ASR/Whisper server (k8s service)
+            - name: ASR_SERVER
+              value: "http://asr.switchboard.svc.cluster.local:8000"
             # Node ID for drain coordination - uses pod name (e.g., "rtpmanager-0")
             - name: RTP_NODE_ID
               valueFrom:

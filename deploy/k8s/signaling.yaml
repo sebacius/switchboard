@@ -52,6 +52,9 @@ spec:
             # Format: nodeId=address,nodeId=address (node IDs match pod names for drain coordination)
             - name: RTPMANAGER_ADDRS
               value: "rtpmanager-0=localhost:9090,rtpmanager-1=localhost:9091"
+            # Ollama LLM server (k8s service)
+            - name: LLM_SERVER
+              value: "http://ollama.switchboard.svc.cluster.local:11434"
             # ADVERTISE will be auto-detected from host network
           volumeMounts:
             - name: dialplan-config

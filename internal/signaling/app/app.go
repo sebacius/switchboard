@@ -165,7 +165,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	actionRegistry := dialplan.DefaultRegistry()
 	dialplan.RegisterParkingActions(actionRegistry, parkService)
 	if llmClient != nil {
-		dialplan.RegisterAIAgentAction(actionRegistry, llmClient)
+		dialplan.RegisterAIAgentAction(actionRegistry, llmClient, parkService, "resources/config")
 	}
 	executor := dialplan.NewExecutor(dp, actionRegistry, slog.Default())
 
