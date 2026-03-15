@@ -20,6 +20,12 @@ type Templates struct {
 	sessPartial        *template.Template
 	drainModalPartial  *template.Template
 	parkedCallsPartial *template.Template
+	// Configuration templates
+	configPage       *template.Template
+	configSettings   *template.Template
+	configTenants    *template.Template
+	configTenantEdit *template.Template
+	configDialplan   *template.Template
 }
 
 // TemplateData holds data for rendering templates
@@ -191,6 +197,32 @@ func NewTemplates() (*Templates, error) {
 		return nil, err
 	}
 
+	// Configuration templates
+	t.configPage, err = template.New("config.html").ParseFS(templatesFS, "templates/config.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.configSettings, err = template.New("config_settings.html").ParseFS(templatesFS, "templates/config_settings.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.configTenants, err = template.New("config_tenants.html").ParseFS(templatesFS, "templates/config_tenants.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.configTenantEdit, err = template.New("config_tenant_edit.html").ParseFS(templatesFS, "templates/config_tenant_edit.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.configDialplan, err = template.New("config_dialplan.html").ParseFS(templatesFS, "templates/config_dialplan.html")
+	if err != nil {
+		return nil, err
+	}
+
 	return t, nil
 }
 
@@ -237,4 +269,88 @@ func (t *Templates) RenderDrainModal(w io.Writer, data DrainModalData) error {
 // RenderParkedCalls renders the parked calls partial
 func (t *Templates) RenderParkedCalls(w io.Writer, data TemplateData) error {
 	return t.parkedCallsPartial.Execute(w, data)
+}
+
+// --- Configuration Data Types ---
+
+// BackendInfo holds basic backend info for the config page
+type BackendInfo struct {
+	Name    string
+	Address string
+}
+
+// ConfigPageData holds data for the config page layout
+type ConfigPageData struct {
+	Title          string
+	ActiveTab      string
+	SelectedServer string
+	Backends       []BackendInfo
+}
+
+// ConfigSettingsData holds data for the settings editor
+type ConfigSettingsData struct {
+	Server  string
+	Content string
+	Success string
+	Error   string
+}
+
+// TenantFileData holds tenant file info for display
+type TenantFileData struct {
+	Name     string
+	Size     int64
+	Modified string
+}
+
+// ConfigTenantsData holds data for the tenant list
+type ConfigTenantsData struct {
+	Server  string
+	Tenants []TenantFileData
+	Success string
+	Error   string
+}
+
+// ConfigTenantEditData holds data for the tenant editor
+type ConfigTenantEditData struct {
+	Server  string
+	Name    string
+	Content string
+	IsNew   bool
+	Success string
+	Error   string
+}
+
+// ConfigDialplanData holds data for the dialplan editor
+type ConfigDialplanData struct {
+	Server  string
+	Content string
+	Success string
+	Error   string
+}
+
+// --- Configuration Render Methods ---
+
+// RenderConfig renders the config page
+func (t *Templates) RenderConfig(w io.Writer, data ConfigPageData) error {
+	return t.configPage.Execute(w, data)
+}
+
+// RenderConfigSettings renders the settings editor partial
+func (t *Templates) RenderConfigSettings(w io.Writer, data ConfigSettingsData) error {
+	return t.configSettings.Execute(w, data)
+}
+
+// RenderConfigTenants renders the tenant list partial
+func (t *Templates) RenderConfigTenants(w io.Writer, data ConfigTenantsData) error {
+	return t.configTenants.Execute(w, data)
+}
+
+// RenderConfigTenantEdit renders the tenant editor partial
+func (t *Templates) RenderConfigTenantEdit(w io.Writer, data ConfigTenantEditData) error {
+	return t.configTenantEdit.Execute(w, data)
+}
+
+// RenderConfigDialplan renders the dialplan editor partial
+func (t *Templates) RenderConfigDialplan(w io.Writer, data ConfigDialplanData) error {
+	return t.configDialplan.Execute(w, data)
 }

@@ -75,6 +75,9 @@ func RegisterParkingActions(r *ActionRegistry, parkService interface{}) {
 // RegisterAIAgentAction registers the ai_agent action with an LLM client and optional park service.
 // settingsPath points to the directory containing settings.md (loaded once and cached).
 // Call this after DefaultRegistry() to add AI voice assistant support.
-func RegisterAIAgentAction(r *ActionRegistry, llmClient *llm.Client, parkService *parking.Service, settingsPath string) {
-	r.Register("ai_agent", NewAIAgentActionFactory(llmClient, parkService, settingsPath))
+// Returns the factory so it can be used for settings reload at runtime.
+func RegisterAIAgentAction(r *ActionRegistry, llmClient *llm.Client, parkService *parking.Service, settingsPath string) *AIAgentFactory {
+	factory := NewAIAgentActionFactory(llmClient, parkService, settingsPath)
+	r.Register("ai_agent", factory.Create)
+	return factory
 }

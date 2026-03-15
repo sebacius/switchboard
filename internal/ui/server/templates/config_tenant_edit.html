@@ -1,0 +1,92 @@
+<div>
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <div class="flex items-center space-x-2 mb-1">
+                <button hx-get="/admin/config/partials/tenants?server={{.Server}}"
+                        hx-target="#config-content"
+                        hx-swap="innerHTML"
+                        class="text-slate-400 hover:text-white transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                    </svg>
+                </button>
+                <h2 class="text-xl font-bold text-white">
+                    {{if .IsNew}}New Tenant{{else}}Edit Tenant: {{.Name}}{{end}}
+                </h2>
+            </div>
+            <p class="text-sm text-slate-400 ml-7">
+                {{if .IsNew}}Create a new tenant knowledge base file{{else}}Editing {{.Name}}.md{{end}}
+            </p>
+        </div>
+    </div>
+
+    {{if .Success}}
+    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm">
+        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+        </svg>
+        {{.Success}}
+    </div>
+    {{end}}
+
+    {{if .Error}}
+    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm">
+        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        {{.Error}}
+    </div>
+    {{end}}
+
+    <form hx-post="{{if .IsNew}}/admin/config/tenants/create?server={{.Server}}{{else}}/admin/config/tenants/save?server={{.Server}}{{end}}"
+          hx-target="#config-content"
+          hx-swap="innerHTML">
+
+        {{if .IsNew}}
+        <div class="mb-4">
+            <label class="block text-sm font-medium text-slate-300 mb-2">Tenant Name</label>
+            <input type="text" name="name" value="{{.Name}}"
+                   placeholder="e.g., acme-corp"
+                   class="w-full sm:w-96 bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                   required>
+            <p class="mt-1 text-xs text-slate-500">Use alphanumeric characters, hyphens, underscores, or dots. The .md extension is added automatically.</p>
+        </div>
+        {{else}}
+        <input type="hidden" name="name" value="{{.Name}}">
+        {{end}}
+
+        <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+            <div class="flex items-center justify-between px-4 py-3 bg-slate-700/50 border-b border-slate-700">
+                <div class="flex items-center space-x-2">
+                    <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    <span class="text-sm font-medium text-slate-300">{{if .IsNew}}new-tenant.md{{else}}{{.Name}}.md{{end}}</span>
+                </div>
+                <span class="text-xs text-slate-500">Markdown</span>
+            </div>
+            <textarea name="content"
+                      rows="35"
+                      class="w-full bg-slate-900 text-slate-200 font-mono text-sm p-4 focus:outline-none resize-y border-none"
+                      placeholder="Enter tenant knowledge base content..."
+                      spellcheck="false">{{.Content}}</textarea>
+        </div>
+
+        <div class="mt-4 flex items-center justify-between">
+            <button type="button"
+                    hx-get="/admin/config/partials/tenants?server={{.Server}}"
+                    hx-target="#config-content"
+                    hx-swap="innerHTML"
+                    class="inline-flex items-center px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors text-slate-300 text-sm font-medium">
+                Cancel
+            </button>
+            <button type="submit"
+                    class="inline-flex items-center px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 transition-colors text-white text-sm font-medium shadow-lg">
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+                {{if .IsNew}}Create Tenant{{else}}Save Changes{{end}}
+            </button>
+        </div>
+    </form>
+</div>

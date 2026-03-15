@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sebas/switchboard/internal/signaling/llm"
@@ -35,38 +36,56 @@ type AIAgentAction struct {
 	settingsContent string // cached settings.md content from factory
 }
 
-// aiAgentFactory holds the LLM client for creating actions
-type aiAgentFactory struct {
+// AIAgentFactory holds the LLM client for creating actions.
+// Exported to allow settings reload at runtime.
+type AIAgentFactory struct {
 	llmClient       *llm.Client
 	parkService     *parking.Service
-	settingsContent string // settings.md loaded once at startup
+	settingsPath    string
+	mu              sync.RWMutex
+	settingsContent string // settings.md loaded at startup, refreshable via ReloadSettings
 }
 
 // NewAIAgentActionFactory creates a factory for ai_agent actions.
 // settingsPath is read once at creation time and cached for all subsequent actions.
-func NewAIAgentActionFactory(llmClient *llm.Client, parkService *parking.Service, settingsPath string) ActionFactory {
+func NewAIAgentActionFactory(llmClient *llm.Client, parkService *parking.Service, settingsPath string) *AIAgentFactory {
 	if settingsPath == "" {
 		settingsPath = "resources/config"
 	}
 
-	var settingsContent string
+	factory := &AIAgentFactory{
+		llmClient:    llmClient,
+		parkService:  parkService,
+		settingsPath: settingsPath,
+	}
+
 	settingsFile := filepath.Join(settingsPath, "settings.md")
 	if data, err := os.ReadFile(settingsFile); err == nil {
-		settingsContent = strings.TrimSpace(string(data))
+		factory.settingsContent = strings.TrimSpace(string(data))
 		slog.Info("[AIAgent] Settings loaded at startup", "path", settingsFile)
 	} else {
 		slog.Warn("[AIAgent] Settings file not found, will use defaults", "path", settingsFile, "error", err)
 	}
 
-	factory := &aiAgentFactory{
-		llmClient:       llmClient,
-		parkService:     parkService,
-		settingsContent: settingsContent,
-	}
-	return factory.create
+	return factory
 }
 
-func (f *aiAgentFactory) create(raw json.RawMessage) (Action, error) {
+// ReloadSettings re-reads settings.md from disk and updates the cached content.
+func (f *AIAgentFactory) ReloadSettings() error {
+	settingsFile := filepath.Join(f.settingsPath, "settings.md")
+	data, err := os.ReadFile(settingsFile)
+	if err != nil {
+		return fmt.Errorf("read settings: %w", err)
+	}
+	f.mu.Lock()
+	f.settingsContent = strings.TrimSpace(string(data))
+	f.mu.Unlock()
+	slog.Info("[AIAgent] Settings reloaded", "path", settingsFile)
+	return nil
+}
+
+// Create is the ActionFactory function for creating ai_agent actions.
+func (f *AIAgentFactory) Create(raw json.RawMessage) (Action, error) {
 	var params AIAgentParams
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, fmt.Errorf("parse ai_agent params: %w", err)
@@ -95,11 +114,15 @@ func (f *aiAgentFactory) create(raw json.RawMessage) (Action, error) {
 		params.TenantsPath = "resources/tenants"
 	}
 
+	f.mu.RLock()
+	settings := f.settingsContent
+	f.mu.RUnlock()
+
 	return &AIAgentAction{
 		params:          params,
 		llmClient:       f.llmClient,
 		parkService:     f.parkService,
-		settingsContent: f.settingsContent,
+		settingsContent: settings,
 	}, nil
 }
 

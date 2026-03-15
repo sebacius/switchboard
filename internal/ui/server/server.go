@@ -65,6 +65,20 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Parked calls control endpoints
 	mux.HandleFunc("/admin/park/unpark", s.handleForceUnpark)
 
+	// Configuration management
+	mux.HandleFunc("/admin/config", s.handleConfigPage)
+	mux.HandleFunc("/admin/config/partials/settings", s.handleConfigSettingsPartial)
+	mux.HandleFunc("/admin/config/settings/save", s.handleConfigSettingsSave)
+	mux.HandleFunc("/admin/config/partials/tenants", s.handleConfigTenantsPartial)
+	mux.HandleFunc("/admin/config/tenants/edit", s.handleConfigTenantEdit)
+	mux.HandleFunc("/admin/config/tenants/new", s.handleConfigTenantNew)
+	mux.HandleFunc("/admin/config/tenants/save", s.handleConfigTenantSave)
+	mux.HandleFunc("/admin/config/tenants/create", s.handleConfigTenantCreate)
+	mux.HandleFunc("/admin/config/tenants/delete", s.handleConfigTenantDelete)
+	mux.HandleFunc("/admin/config/partials/dialplan", s.handleConfigDialplanPartial)
+	mux.HandleFunc("/admin/config/dialplan/save", s.handleConfigDialplanSave)
+	mux.HandleFunc("/admin/config/reload", s.handleConfigReload)
+
 	// Health check
 	mux.HandleFunc("/health", s.handleHealth)
 

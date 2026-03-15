@@ -85,3 +85,30 @@ type ParkedCall struct {
 	DurationSeconds int      `json:"duration_seconds"`
 	MohFiles        []string `json:"moh_files,omitempty"`
 }
+
+// --- Configuration Management Types ---
+
+// FileContent is a wrapper for file content in config API responses.
+type FileContent struct {
+	Content string `json:"content"`
+}
+
+// TenantFile represents a tenant markdown file.
+type TenantFile struct {
+	Name     string `json:"name"`
+	Content  string `json:"content,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+	Modified string `json:"modified,omitempty"`
+}
+
+// CreateTenantRequest is the body for creating a new tenant file.
+type CreateTenantRequest struct {
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+// ReloadResponse is the response from POST /api/v1/config/reload.
+type ReloadResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}

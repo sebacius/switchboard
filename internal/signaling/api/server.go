@@ -55,6 +55,7 @@ type Server struct {
 	rtpManagers   RtpManagerProvider
 	drainProvider DrainProvider
 	parkProvider  ParkProvider
+	fileProvider  FileProvider
 	sessionsMu    sync.RWMutex
 	sessions      map[string]*SessionRecord
 	startTime     time.Time
@@ -105,6 +106,13 @@ func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog
 	// Parking
 	mux.HandleFunc("/api/v1/park", s.handleParkList)
 	mux.HandleFunc("/api/v1/park/", s.handleParkSlot)
+
+	// Configuration management
+	mux.HandleFunc("/api/v1/config/settings", s.handleConfigSettings)
+	mux.HandleFunc("/api/v1/config/tenants", s.handleConfigTenantList)
+	mux.HandleFunc("/api/v1/config/tenants/", s.handleConfigTenant)
+	mux.HandleFunc("/api/v1/config/dialplan", s.handleConfigDialplan)
+	mux.HandleFunc("/api/v1/config/reload", s.handleConfigReload)
 
 	// Admin
 	mux.HandleFunc("/api/v1/shutdown", s.handleShutdown)

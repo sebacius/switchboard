@@ -1,9 +1,11 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -265,4 +267,175 @@ func (c *Client) delete(ctx context.Context, path string) (*http.Response, error
 	}
 
 	return resp, nil
+}
+
+// put performs an HTTP PUT request with a JSON body
+func (c *Client) put(ctx context.Context, path string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	return resp, nil
+}
+
+// postWithBody performs an HTTP POST request with a JSON body
+func (c *Client) postWithBody(ctx context.Context, path string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	return resp, nil
+}
+
+// --- Configuration Management ---
+
+// GetSettings fetches the settings.md content
+func (c *Client) GetSettings(ctx context.Context) (string, error) {
+	resp, err := c.get(ctx, "/api/v1/config/settings")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result types.FileContent
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode settings: %w", err)
+	}
+	return result.Content, nil
+}
+
+// PutSettings updates the settings.md content
+func (c *Client) PutSettings(ctx context.Context, content string) error {
+	body, _ := json.Marshal(types.FileContent{Content: content})
+	resp, err := c.put(ctx, "/api/v1/config/settings", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// ListTenants returns all tenant markdown files
+func (c *Client) ListTenants(ctx context.Context) ([]types.TenantFile, error) {
+	resp, err := c.get(ctx, "/api/v1/config/tenants")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var tenants []types.TenantFile
+	if err := json.NewDecoder(resp.Body).Decode(&tenants); err != nil {
+		return nil, fmt.Errorf("decode tenants: %w", err)
+	}
+	return tenants, nil
+}
+
+// GetTenant fetches a tenant markdown file by name
+func (c *Client) GetTenant(ctx context.Context, name string) (string, error) {
+	resp, err := c.get(ctx, "/api/v1/config/tenants/"+name)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode tenant: %w", err)
+	}
+	return result.Content, nil
+}
+
+// CreateTenant creates a new tenant markdown file
+func (c *Client) CreateTenant(ctx context.Context, name, content string) error {
+	body, _ := json.Marshal(types.CreateTenantRequest{Name: name, Content: content})
+	resp, err := c.postWithBody(ctx, "/api/v1/config/tenants", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// PutTenant updates an existing tenant markdown file
+func (c *Client) PutTenant(ctx context.Context, name, content string) error {
+	body, _ := json.Marshal(types.FileContent{Content: content})
+	resp, err := c.put(ctx, "/api/v1/config/tenants/"+name, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// DeleteTenant deletes a tenant markdown file
+func (c *Client) DeleteTenant(ctx context.Context, name string) error {
+	resp, err := c.delete(ctx, "/api/v1/config/tenants/"+name)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// GetDialplan fetches the dialplan.json content
+func (c *Client) GetDialplan(ctx context.Context) (string, error) {
+	resp, err := c.get(ctx, "/api/v1/config/dialplan")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result types.FileContent
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode dialplan: %w", err)
+	}
+	return result.Content, nil
+}
+
+// PutDialplan updates the dialplan.json content
+func (c *Client) PutDialplan(ctx context.Context, content string) error {
+	body, _ := json.Marshal(types.FileContent{Content: content})
+	resp, err := c.put(ctx, "/api/v1/config/dialplan", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// ReloadConfig triggers a configuration reload on the signaling server
+func (c *Client) ReloadConfig(ctx context.Context) error {
+	resp, err := c.post(ctx, "/api/v1/config/reload")
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
 }

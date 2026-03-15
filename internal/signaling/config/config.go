@@ -26,6 +26,10 @@ type Config struct {
 	// LLM settings (for ai_agent action)
 	LLMServerURL string // Ollama server URL (e.g., "http://localhost:11434")
 
+	// File management paths
+	SettingsPath string // Directory containing settings.md (default "resources/config")
+	TenantsPath  string // Directory containing tenant .md files (default "resources/tenants")
+
 	// RTP Manager pool settings - two formats supported:
 	//
 	// Named format (Kubernetes/containers): explicit node IDs for stable pod identification
@@ -56,6 +60,8 @@ func Load() *Config {
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error)")
 	flag.StringVar(&cfg.DialplanPath, "dialplan", "resources/config/dialplan.json", "Path to dialplan configuration file")
 	flag.StringVar(&cfg.LLMServerURL, "llm-server", "http://localhost:11434", "Ollama LLM server URL")
+	flag.StringVar(&cfg.SettingsPath, "settings-path", "resources/config", "Directory containing settings.md")
+	flag.StringVar(&cfg.TenantsPath, "tenants-path", "resources/tenants", "Directory containing tenant .md files")
 
 	var rtpManagerAddrs string
 	flag.StringVar(&rtpManagerAddrs, "rtpmanager", "localhost:9090", "RTP Manager gRPC addresses (comma-separated for multiple)")
@@ -103,6 +109,12 @@ func Load() *Config {
 	}
 	if llmServer := os.Getenv("LLM_SERVER"); llmServer != "" {
 		cfg.LLMServerURL = llmServer
+	}
+	if settingsPath := os.Getenv("SETTINGS_PATH"); settingsPath != "" {
+		cfg.SettingsPath = settingsPath
+	}
+	if tenantsPath := os.Getenv("TENANTS_PATH"); tenantsPath != "" {
+		cfg.TenantsPath = tenantsPath
 	}
 
 	return cfg
