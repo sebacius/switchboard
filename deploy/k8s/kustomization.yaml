@@ -12,6 +12,10 @@ resources:
   - postgres.yaml
   - redis.yaml
   - nats.yaml
+  # AI Services
+  - tts.yaml
+  - asr.yaml
+  - ollama.yaml
   # Application
   - rtpmanager.yaml
   - signaling.yaml

@@ -21,6 +21,7 @@ type CallSession interface {
 	CallID() string
 	Destination() string // Dialed number (To URI user part)
 	CallerID() string    // Caller number (From URI user part)
+	Domain() string      // SIP domain (To URI host part)
 
 	// Context returns the call's context. Canceled on BYE or timeout.
 	Context() context.Context
@@ -29,6 +30,7 @@ type CallSession interface {
 	PlayAudio(ctx context.Context, file string) error
 	PlayTTS(ctx context.Context, text, voice string) error
 	StopAudio() error
+	Listen(ctx context.Context, maxDurationMs, silenceTimeoutMs int) (text string, err error)
 
 	// B2BUA operations (for dial action)
 	// Dial initiates an outbound call to the target.
@@ -66,6 +68,7 @@ type sessionImpl struct {
 	destination string
 	callerID    string
 	callerName  string
+	domain      string
 
 	// Core components
 	ctx         context.Context
@@ -93,6 +96,7 @@ type SessionConfig struct {
 	Destination string
 	CallerID    string // From header user part (phone number/extension)
 	CallerName  string // From header display name
+	Domain      string // To header host part (SIP domain)
 }
 
 // NewSession creates a CallSession from an established dialog.
@@ -109,6 +113,7 @@ func NewSession(cfg SessionConfig) CallSession {
 		destination: cfg.Destination,
 		callerID:    cfg.CallerID,
 		callerName:  cfg.CallerName,
+		domain:      cfg.Domain,
 		ctx:         ctx,
 		cancel:      cancel,
 		dialog:      cfg.Dialog,
@@ -124,6 +129,7 @@ func NewSession(cfg SessionConfig) CallSession {
 func (s *sessionImpl) CallID() string           { return s.callID }
 func (s *sessionImpl) Destination() string      { return s.destination }
 func (s *sessionImpl) CallerID() string         { return s.callerID }
+func (s *sessionImpl) Domain() string           { return s.domain }
 func (s *sessionImpl) Context() context.Context { return s.ctx }
 
 func (s *sessionImpl) IsTerminated() bool {
@@ -257,6 +263,43 @@ func (s *sessionImpl) StopAudio() error {
 	}
 
 	return s.transport.StopAudio(s.ctx, sessionID)
+}
+
+// Listen captures audio from the caller and returns transcribed text.
+func (s *sessionImpl) Listen(ctx context.Context, maxDurationMs, silenceTimeoutMs int) (string, error) {
+	s.mu.Lock()
+	sessionID := s.sessionID
+	s.mu.Unlock()
+
+	if sessionID == "" {
+		return "", fmt.Errorf("no RTP session established")
+	}
+
+	s.logger.Debug("[Session] Listening for audio",
+		"call_id", s.callID,
+		"max_duration_ms", maxDurationMs,
+		"silence_timeout_ms", silenceTimeoutMs,
+	)
+
+	listenReq := mediaclient.ListenRequest{
+		SessionID:        sessionID,
+		MaxDurationMs:    maxDurationMs,
+		SilenceTimeoutMs: silenceTimeoutMs,
+	}
+
+	result, err := s.transport.Listen(ctx, listenReq)
+	if err != nil {
+		return "", fmt.Errorf("listen failed: %w", err)
+	}
+
+	s.logger.Debug("[Session] Listen complete",
+		"call_id", s.callID,
+		"text", result.Text,
+		"duration_ms", result.DurationMs,
+		"timeout", result.Timeout,
+	)
+
+	return result.Text, nil
 }
 
 // Dial initiates an outbound call and bridges on answer.

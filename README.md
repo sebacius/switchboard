@@ -78,6 +78,109 @@ make run
 ./switchboard-ui --backends http://localhost:8080
 ```
 
+## AI Voice Agent
+
+Switchboard includes an AI-powered voice agent that can answer calls, converse with callers, and take actions like transferring or parking calls. It connects three external services: speech-to-text (Whisper), text-to-speech (Piper), and an LLM (Ollama).
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Signaling
+    participant RTP as RTP Manager
+    participant ASR as Whisper (ASR)
+    participant TTS as Piper (TTS)
+    participant LLM as Ollama (LLM)
+
+    Caller->>Signaling: SIP INVITE
+    Signaling->>RTP: CreateSession (gRPC)
+    Signaling->>Caller: 200 OK + SDP
+
+    Note over Signaling: Dialplan matches ai_agent action
+
+    Signaling->>TTS: Synthesize greeting
+    TTS-->>RTP: Audio
+    RTP-->>Caller: RTP (greeting)
+
+    loop Conversational mode
+        Caller-->>RTP: RTP (speech)
+        RTP->>ASR: Transcribe audio
+        ASR-->>Signaling: Text
+        Signaling->>LLM: Chat completion
+        LLM-->>Signaling: Response + optional ACTION
+        Signaling->>TTS: Synthesize response
+        TTS-->>RTP: Audio
+        RTP-->>Caller: RTP (response)
+    end
+
+    Note over Signaling: LLM returns ACTION: hangup/transfer/park
+    Signaling->>Caller: BYE
+```
+
+### Operating Modes
+
+The AI agent operates in two modes, configured per-route in the dialplan:
+
+- **Conversational** (default) -- Multi-turn dialogue. The agent greets the caller, listens for speech, sends it to the LLM, speaks the response, and repeats. The LLM can trigger actions (transfer, park, hangup) at any point.
+- **Routing** -- Single-shot. The agent plays a greeting, asks the LLM for a routing decision based on tenant instructions (no caller input), speaks the response, executes the action, and hangs up. Use this for after-hours messages, announcements, or simple call routing.
+
+### Configuration
+
+The AI agent uses a two-layer prompt system:
+
+1. **Settings** (`resources/config/settings.md`) -- Loaded once at startup. Defines the action contract (available actions, response format, rules). Shared across all tenants.
+2. **Tenant config** (`resources/tenants/<name>.md`) -- Loaded per-call. Defines the business context, personality, and instructions for the agent. Selected via the `config` param in the dialplan route.
+
+### Quick Start
+
+```bash
+# 1. Start the AI services (Docker)
+make services-start    # TTS + Whisper
+
+# 2. Start Ollama (install from ollama.com if not installed)
+ollama serve &
+ollama pull llama3.1:8b
+
+# 3. Run Switchboard with LLM enabled
+./build/switchboard-rtpmanager --grpc-port 9090 &
+./build/switchboard-signaling --rtpmanager localhost:9090 --llm-server http://localhost:11434 &
+
+# 4. Call extension 600 from a SIP client to reach the AI agent
+```
+
+### Dialplan Example
+
+```json
+{
+  "id": "after_hours",
+  "pattern": "600",
+  "actions": [
+    {
+      "type": "ai_agent",
+      "params": {
+        "config": "default",
+        "voice": "alloy",
+        "model": "llama3.1:8b",
+        "mode": "routing"
+      }
+    }
+  ]
+}
+```
+
+See the [Dialplan Reference](docs/DIALPLAN.md) for all `ai_agent` parameters.
+
+### Kubernetes Deployment
+
+```bash
+# Deploy AI services to k3s
+make k8s-deploy-ai     # Deploys TTS, ASR, and Ollama
+
+# Or individually
+make k8s-deploy-tts
+make k8s-deploy-asr
+make k8s-deploy-ollama
+```
+
 ## Documentation
 
 Complete documentation is available in the [docs/](docs/) folder:

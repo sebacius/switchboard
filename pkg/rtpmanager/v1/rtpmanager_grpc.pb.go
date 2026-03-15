@@ -28,6 +28,7 @@ const (
 	RTPManagerService_BridgeMedia_FullMethodName         = "/rtpmanager.v1.RTPManagerService/BridgeMedia"
 	RTPManagerService_UnbridgeMedia_FullMethodName       = "/rtpmanager.v1.RTPManagerService/UnbridgeMedia"
 	RTPManagerService_PlayTTS_FullMethodName             = "/rtpmanager.v1.RTPManagerService/PlayTTS"
+	RTPManagerService_Listen_FullMethodName              = "/rtpmanager.v1.RTPManagerService/Listen"
 )
 
 // RTPManagerServiceClient is the client API for RTPManagerService service.
@@ -65,6 +66,9 @@ type RTPManagerServiceClient interface {
 	// The audio is fetched from the configured TTS server, resampled to 8kHz,
 	// encoded to PCMU, and streamed as RTP packets.
 	PlayTTS(ctx context.Context, in *PlayTTSRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PlaybackEvent], error)
+	// Listen captures incoming RTP audio until silence is detected,
+	// then transcribes it using the configured ASR server (Whisper).
+	Listen(ctx context.Context, in *ListenRequest, opts ...grpc.CallOption) (*ListenResponse, error)
 }
 
 type rTPManagerServiceClient struct {
@@ -183,6 +187,16 @@ func (c *rTPManagerServiceClient) PlayTTS(ctx context.Context, in *PlayTTSReques
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RTPManagerService_PlayTTSClient = grpc.ServerStreamingClient[PlaybackEvent]
 
+func (c *rTPManagerServiceClient) Listen(ctx context.Context, in *ListenRequest, opts ...grpc.CallOption) (*ListenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListenResponse)
+	err := c.cc.Invoke(ctx, RTPManagerService_Listen_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RTPManagerServiceServer is the server API for RTPManagerService service.
 // All implementations must embed UnimplementedRTPManagerServiceServer
 // for forward compatibility.
@@ -218,6 +232,9 @@ type RTPManagerServiceServer interface {
 	// The audio is fetched from the configured TTS server, resampled to 8kHz,
 	// encoded to PCMU, and streamed as RTP packets.
 	PlayTTS(*PlayTTSRequest, grpc.ServerStreamingServer[PlaybackEvent]) error
+	// Listen captures incoming RTP audio until silence is detected,
+	// then transcribes it using the configured ASR server (Whisper).
+	Listen(context.Context, *ListenRequest) (*ListenResponse, error)
 	mustEmbedUnimplementedRTPManagerServiceServer()
 }
 
@@ -254,6 +271,9 @@ func (UnimplementedRTPManagerServiceServer) UnbridgeMedia(context.Context, *Unbr
 }
 func (UnimplementedRTPManagerServiceServer) PlayTTS(*PlayTTSRequest, grpc.ServerStreamingServer[PlaybackEvent]) error {
 	return status.Error(codes.Unimplemented, "method PlayTTS not implemented")
+}
+func (UnimplementedRTPManagerServiceServer) Listen(context.Context, *ListenRequest) (*ListenResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Listen not implemented")
 }
 func (UnimplementedRTPManagerServiceServer) mustEmbedUnimplementedRTPManagerServiceServer() {}
 func (UnimplementedRTPManagerServiceServer) testEmbeddedByValue()                           {}
@@ -424,6 +444,24 @@ func _RTPManagerService_PlayTTS_Handler(srv interface{}, stream grpc.ServerStrea
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RTPManagerService_PlayTTSServer = grpc.ServerStreamingServer[PlaybackEvent]
 
+func _RTPManagerService_Listen_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RTPManagerServiceServer).Listen(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RTPManagerService_Listen_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RTPManagerServiceServer).Listen(ctx, req.(*ListenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RTPManagerService_ServiceDesc is the grpc.ServiceDesc for RTPManagerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -458,6 +496,10 @@ var RTPManagerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UnbridgeMedia",
 			Handler:    _RTPManagerService_UnbridgeMedia_Handler,
+		},
+		{
+			MethodName: "Listen",
+			Handler:    _RTPManagerService_Listen_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

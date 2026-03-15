@@ -257,3 +257,101 @@ func PCMToPCMU(pcm []byte) []byte {
 	// Use the battle-tested g711 library which handles the conversion properly
 	return g711.EncodeUlaw(pcm)
 }
+
+// PCMUToPCM converts PCMU (µ-law) encoded bytes to 16-bit PCM samples
+func PCMUToPCM(ulaw []byte) []byte {
+	return g711.DecodeUlaw(ulaw)
+}
+
+// Upsample8to16 converts 8kHz 16-bit PCM to 16kHz 16-bit PCM using linear interpolation
+func Upsample8to16(pcm8k []byte) []byte {
+	// Each sample is 2 bytes (16-bit), output will be 2x the samples
+	numSamples := len(pcm8k) / 2
+	if numSamples == 0 {
+		return nil
+	}
+
+	// Output: 2x samples (each original sample becomes 2)
+	output := make([]byte, numSamples*4)
+
+	for i := 0; i < numSamples; i++ {
+		// Read current sample (16-bit little-endian)
+		sample := int16(pcm8k[i*2]) | int16(pcm8k[i*2+1])<<8
+
+		// Get next sample for interpolation (or use current for last sample)
+		var nextSample int16
+		if i+1 < numSamples {
+			nextSample = int16(pcm8k[(i+1)*2]) | int16(pcm8k[(i+1)*2+1])<<8
+		} else {
+			nextSample = sample
+		}
+
+		// Write original sample
+		output[i*4] = byte(sample & 0xFF)
+		output[i*4+1] = byte((sample >> 8) & 0xFF)
+
+		// Write interpolated sample (midpoint)
+		interpolated := int16((int32(sample) + int32(nextSample)) / 2)
+		output[i*4+2] = byte(interpolated & 0xFF)
+		output[i*4+3] = byte((interpolated >> 8) & 0xFF)
+	}
+
+	return output
+}
+
+// CalculateEnergy calculates the RMS energy of 16-bit PCM samples
+// Returns a value that can be compared to a threshold for silence detection
+func CalculateEnergy(pcm []byte) float64 {
+	if len(pcm) < 2 {
+		return 0
+	}
+
+	var sum int64
+	numSamples := len(pcm) / 2
+
+	for i := 0; i < numSamples; i++ {
+		sample := int16(pcm[i*2]) | int16(pcm[i*2+1])<<8
+		sum += int64(sample) * int64(sample)
+	}
+
+	// Return RMS energy
+	return float64(sum) / float64(numSamples)
+}
+
+// BuildWAVHeader creates a WAV file header for the given audio parameters
+func BuildWAVHeader(dataSize int, sampleRate uint32, numChannels uint16, bitsPerSample uint16) []byte {
+	byteRate := sampleRate * uint32(numChannels) * uint32(bitsPerSample) / 8
+	blockAlign := numChannels * bitsPerSample / 8
+
+	header := make([]byte, 44)
+
+	// RIFF header
+	copy(header[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(header[4:8], uint32(36+dataSize))
+	copy(header[8:12], "WAVE")
+
+	// fmt subchunk
+	copy(header[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(header[16:20], 16) // Subchunk1Size for PCM
+	binary.LittleEndian.PutUint16(header[20:22], 1)  // AudioFormat (1 = PCM)
+	binary.LittleEndian.PutUint16(header[22:24], numChannels)
+	binary.LittleEndian.PutUint32(header[24:28], sampleRate)
+	binary.LittleEndian.PutUint32(header[28:32], byteRate)
+	binary.LittleEndian.PutUint16(header[32:34], blockAlign)
+	binary.LittleEndian.PutUint16(header[34:36], bitsPerSample)
+
+	// data subchunk
+	copy(header[36:40], "data")
+	binary.LittleEndian.PutUint32(header[40:44], uint32(dataSize))
+
+	return header
+}
+
+// BuildWAVData creates a complete WAV file from 16-bit PCM data
+func BuildWAVData(pcmData []byte, sampleRate uint32) []byte {
+	header := BuildWAVHeader(len(pcmData), sampleRate, 1, 16)
+	wav := make([]byte, len(header)+len(pcmData))
+	copy(wav, header)
+	copy(wav[len(header):], pcmData)
+	return wav
+}

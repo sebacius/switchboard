@@ -43,6 +43,10 @@ service RTPManagerService {
   // The audio is fetched from the configured TTS server, resampled to 8kHz,
   // encoded to PCMU, and streamed as RTP packets.
   rpc PlayTTS(PlayTTSRequest) returns (stream PlaybackEvent);
+
+  // Listen captures incoming RTP audio until silence is detected,
+  // then transcribes it using the configured ASR server (Whisper).
+  rpc Listen(ListenRequest) returns (ListenResponse);
 }
 
 // Session Management
@@ -222,4 +226,20 @@ message UnbridgeMediaRequest {
 message UnbridgeMediaResponse {
   string bridge_id = 1;
   SessionStatus status = 2;
+}
+
+// Speech Recognition (ASR)
+
+message ListenRequest {
+  string session_id = 1;
+  int32 max_duration_ms = 2;     // Maximum recording duration (default 10000ms)
+  int32 silence_timeout_ms = 3;  // Stop after this much silence (default 1500ms)
+  int32 silence_threshold = 4;   // Energy threshold for silence detection (default auto)
+}
+
+message ListenResponse {
+  string session_id = 1;
+  string text = 2;               // Transcribed text from ASR
+  int32 duration_ms = 3;         // How long caller spoke
+  bool timeout = 4;              // True if max_duration was reached
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/sebas/switchboard/internal/signaling/llm"
 	"github.com/sebas/switchboard/internal/signaling/parking"
 )
 
@@ -69,4 +70,11 @@ func RegisterParkingActions(r *ActionRegistry, parkService interface{}) {
 		r.Register("park", NewParkActionFactory(ps))
 		r.Register("unpark", NewUnparkActionFactory(ps))
 	}
+}
+
+// RegisterAIAgentAction registers the ai_agent action with an LLM client and optional park service.
+// settingsPath points to the directory containing settings.md (loaded once and cached).
+// Call this after DefaultRegistry() to add AI voice assistant support.
+func RegisterAIAgentAction(r *ActionRegistry, llmClient *llm.Client, parkService *parking.Service, settingsPath string) {
+	r.Register("ai_agent", NewAIAgentActionFactory(llmClient, parkService, settingsPath))
 }

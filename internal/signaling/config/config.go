@@ -23,6 +23,9 @@ type Config struct {
 	// Dialplan settings
 	DialplanPath string // Path to dialplan.json config file
 
+	// LLM settings (for ai_agent action)
+	LLMServerURL string // Ollama server URL (e.g., "http://localhost:11434")
+
 	// RTP Manager pool settings - two formats supported:
 	//
 	// Named format (Kubernetes/containers): explicit node IDs for stable pod identification
@@ -52,6 +55,7 @@ func Load() *Config {
 	flag.StringVar(&cfg.AdvertiseAddr, "advertise", "", "Address to advertise in SIP headers (auto-detected if not set)")
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error)")
 	flag.StringVar(&cfg.DialplanPath, "dialplan", "resources/config/dialplan.json", "Path to dialplan configuration file")
+	flag.StringVar(&cfg.LLMServerURL, "llm-server", "http://localhost:11434", "Ollama LLM server URL")
 
 	var rtpManagerAddrs string
 	flag.StringVar(&rtpManagerAddrs, "rtpmanager", "localhost:9090", "RTP Manager gRPC addresses (comma-separated for multiple)")
@@ -96,6 +100,9 @@ func Load() *Config {
 	}
 	if dialplanPath := os.Getenv("DIALPLAN_PATH"); dialplanPath != "" {
 		cfg.DialplanPath = dialplanPath
+	}
+	if llmServer := os.Getenv("LLM_SERVER"); llmServer != "" {
+		cfg.LLMServerURL = llmServer
 	}
 
 	return cfg

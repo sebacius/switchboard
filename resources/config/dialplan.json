@@ -2,6 +2,43 @@
   "version": "1.0",
   "routes": [
     {
+      "id": "route_aiagent",
+      "name": "AiAgent (after hours)",
+      "pattern": "600",
+      "priority": 10,
+      "enabled": true,
+      "actions": [
+        {
+          "type": "ai_agent",
+          "params": {
+            "config": "default",
+            "voice": "alloy",
+            "model": "llama3.1:8b",
+            "mode": "conversational",
+            "greeting": "Thank you for calling. Our office is currently closed, but I may be able to help you or take a message. What can I do for you?"
+          }
+        }
+      ]
+    },
+    {
+      "id": "route_aiagent_conversational",
+      "name": "AiAgent Conversational",
+      "pattern": "601",
+      "priority": 10,
+      "enabled": true,
+      "actions": [
+        {
+          "type": "ai_agent",
+          "params": {
+            "config": "${domain}",
+            "voice": "alloy",
+            "model": "llama3.1:8b",
+            "mode": "conversational"
+          }
+        }
+      ]
+    },
+    {
       "id": "route_ivr",
       "name": "Main IVR",
       "pattern": "500",
@@ -9,12 +46,12 @@
       "enabled": true,
       "actions": [
         {                                                                                                                                                                     
-          "type": "tts",                                                                                                                                                      
-          "params": {                                                                                                                                                         
-            "text": "Hello, welcome to our service. This is the most insteresting experience i have ever had. Please press 1 for sales, 2 for support, or 3 for billing.",                                                                                                                         
-            "voice": "alloy"                                                                                                                                                  
-          }                                                                                                                                                                   
-        }   
+          "type": "tts",
+          "params": {
+            "text": "Hello, welcome to our service. This is the most insteresting experience i have ever had. Please press 1 for sales, 2 for support, or 3 for billing.",
+            "voice": "alloy"
+          }
+        }
       ]
     },
     {
