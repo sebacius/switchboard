@@ -14,6 +14,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/dialog"
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/drain"
+	"github.com/sebas/switchboard/internal/signaling/filemanager"
 	"github.com/sebas/switchboard/internal/signaling/llm"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
@@ -164,10 +165,24 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Create dialplan executor with default actions + parking + ai_agent actions
 	actionRegistry := dialplan.DefaultRegistry()
 	dialplan.RegisterParkingActions(actionRegistry, parkService)
+	var aiFactory *dialplan.AIAgentFactory
 	if llmClient != nil {
-		dialplan.RegisterAIAgentAction(actionRegistry, llmClient, parkService, "resources/config")
+		aiFactory = dialplan.RegisterAIAgentAction(actionRegistry, llmClient, parkService, cfg.SettingsPath)
 	}
 	executor := dialplan.NewExecutor(dp, actionRegistry, slog.Default())
+
+	// Create file manager for config API
+	fmCfg := filemanager.Config{
+		SettingsDir:  cfg.SettingsPath,
+		TenantsDir:   cfg.TenantsPath,
+		DialplanPath: cfg.DialplanPath,
+		Dialplan:     dp,
+	}
+	if aiFactory != nil {
+		fmCfg.SettingsReloader = aiFactory
+	}
+	fileMgr := filemanager.New(fmCfg)
+	apiServer.SetFileProvider(fileMgr)
 
 	// Create resolver registry for dial targets
 	resolver := b2bua.NewTargetResolver()
