@@ -10,53 +10,92 @@
 Switchboard is a VoIP platform that separates signaling and media into independently scalable components. It uses SIP for call control, RTP for media transport, and gRPC to coordinate services.
 
 ```mermaid
-flowchart TB
-  %% Nodes
-  ClientsTop["SIP Clients"]
-  Signaling["Signaling Server<br/>(SIP B2BUA + REST)"]
-  ClientsBottom["SIP Clients"]
+flowchart LR
+  UI["UI Server<br/>(Dashboard)"]
+  Clients["SIP Clients"]
 
-  subgraph MediaPlane["Media Plane"]
-    direction LR
-    RTP1["RTP Manager #1<br/>(Media Bridge)"]
-    RTP2["RTP Manager #2<br/>(Media Bridge)"]
-    RTPN["RTP Manager #N<br/>(Media Bridge)"]
+  subgraph Core["Switchboard"]
+    direction TB
+    Sig1["Signaling #1<br/>(SIP B2BUA + REST)"]
+    Sig2["Signaling #2<br/>(SIP B2BUA + REST)"]
+    RTP1["RTP Manager #1"]
+    RTP2["RTP Manager #2"]
+    RTP3["RTP Manager #N"]
+    Sig1 --> RTP1
+    Sig1 --> RTP2
+    Sig1 --> RTP3
+    Sig2 --> RTP1
+    Sig2 --> RTP2
+    Sig2 --> RTP3
   end
 
-  UI["UI Server<br/>(Admin Dashboard)<br/>Aggregates backends"]
+  subgraph AI["AI Services"]
+    direction TB
+    LLM["Ollama<br/>(LLM)"]
+    TTS["Piper<br/>(TTS)"]
+    ASR["Whisper<br/>(ASR)"]
+  end
 
   %% Edges
-  ClientsTop -->|"SIP :5060"| Signaling
-  Signaling -->|"gRPC :9090"| RTP1
-  Signaling -->|"gRPC :9090"| RTP2
-  Signaling -->|"gRPC :9090"| RTPN
-  RTP1 -->|"RTP"| ClientsBottom
-  RTP2 -->|"RTP"| ClientsBottom
-  RTPN -->|"RTP"| ClientsBottom
-  UI <-->|"HTTP :3000"| Signaling
+  UI <-->|"HTTP"| Sig1
+  UI <-->|"HTTP"| Sig2
+  Clients <-->|"SIP"| Sig1
+  Clients <-->|"SIP"| Sig2
+  Clients <-->|"RTP"| RTP1
+  Clients <-->|"RTP"| RTP2
+  Clients <-->|"RTP"| RTP3
+  Sig1 -->|"HTTP"| LLM
+  Sig2 -->|"HTTP"| LLM
+  RTP1 -->|"HTTP"| TTS
+  RTP1 -->|"HTTP"| ASR
+  RTP2 -->|"HTTP"| TTS
+  RTP2 -->|"HTTP"| ASR
+  RTP3 -->|"HTTP"| TTS
+  RTP3 -->|"HTTP"| ASR
 
   %% Styling
   classDef clients fill:#0b3d91,stroke:#0b3d91,color:#ffffff,stroke-width:2px;
   classDef signaling fill:#6a00ff,stroke:#6a00ff,color:#ffffff,stroke-width:2px;
   classDef media fill:#00a86b,stroke:#00a86b,color:#ffffff,stroke-width:2px;
   classDef ui fill:#ff7a00,stroke:#ff7a00,color:#ffffff,stroke-width:2px;
+  classDef ai fill:#e11d48,stroke:#e11d48,color:#ffffff,stroke-width:2px;
   classDef plane fill:#111827,stroke:#9ca3af,color:#ffffff,stroke-width:1px;
 
-  class ClientsTop,ClientsBottom clients;
-  class Signaling signaling;
-  class RTP1,RTP2,RTPN media;
+  class Clients clients;
+  class Sig1,Sig2 signaling;
+  class RTP1,RTP2,RTP3 media;
   class UI ui;
-  class MediaPlane plane;
+  class TTS,ASR,LLM ai;
+  class Core,AI plane;
 
-  %% Link styling (index-based)
-  linkStyle 0 stroke:#0b3d91,stroke-width:3px;
-  linkStyle 1 stroke:#6a00ff,stroke-width:3px;
-  linkStyle 2 stroke:#6a00ff,stroke-width:3px;
-  linkStyle 3 stroke:#6a00ff,stroke-width:3px;
-  linkStyle 4 stroke:#00a86b,stroke-width:3px;
-  linkStyle 5 stroke:#00a86b,stroke-width:3px;
-  linkStyle 6 stroke:#00a86b,stroke-width:3px;
-  linkStyle 7 stroke:#ff7a00,stroke-width:3px,stroke-dasharray: 5 5;
+  %% Internal: Sig1 → RTP1,2,3
+  linkStyle 0 stroke:#6a00ff,stroke-width:2px;
+  linkStyle 1 stroke:#6a00ff,stroke-width:2px;
+  linkStyle 2 stroke:#6a00ff,stroke-width:2px;
+  %% Internal: Sig2 → RTP1,2,3
+  linkStyle 3 stroke:#6a00ff,stroke-width:2px;
+  linkStyle 4 stroke:#6a00ff,stroke-width:2px;
+  linkStyle 5 stroke:#6a00ff,stroke-width:2px;
+  %% UI ↔ Sig1, Sig2
+  linkStyle 6 stroke:#ff7a00,stroke-width:2px,stroke-dasharray: 5 5;
+  linkStyle 7 stroke:#ff7a00,stroke-width:2px,stroke-dasharray: 5 5;
+  %% Clients ↔ Sig1, Sig2 (SIP)
+  linkStyle 8 stroke:#0b3d91,stroke-width:3px;
+  linkStyle 9 stroke:#0b3d91,stroke-width:3px;
+  %% Clients ↔ RTP1, RTP2, RTP3
+  linkStyle 10 stroke:#00a86b,stroke-width:2px;
+  linkStyle 11 stroke:#00a86b,stroke-width:2px;
+  linkStyle 12 stroke:#00a86b,stroke-width:2px;
+  %% Sig1, Sig2 → LLM
+  linkStyle 13 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
+  linkStyle 14 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
+  %% RTP → TTS, ASR
+  linkStyle 15 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
+  linkStyle 16 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
+  linkStyle 17 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
+  linkStyle 18 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
+  linkStyle 19 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
+  linkStyle 20 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
 ```
 
 ## Quick Start
