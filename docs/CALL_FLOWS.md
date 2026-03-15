@@ -193,6 +193,118 @@ Caller              Signaling              RTP Manager           Callee
    |                    |-- DestroySession B -->|                   |
 ```
 
+## AI Agent Call Flow
+
+The `ai_agent` dialplan action enables LLM-driven voice conversations. The signaling server owns the conversation loop and context, while the RTP Manager handles media I/O (TTS and ASR) by delegating to external AI services.
+
+### Conversational Mode
+
+Multi-turn dialogue: greeting, then a listen-think-speak loop until the LLM emits an action or max turns is reached.
+
+```
+Caller              Signaling              RTP Manager         Ollama    Piper    Whisper
+   |                    |                       |                 |        |         |
+   |-- INVITE --------->|                       |                 |        |         |
+   |                    |-- CreateSession ----->|                 |        |         |
+   |                    |<-- session_id + SDP --|                 |        |         |
+   |<-- 200 OK ---------|                       |                 |        |         |
+   |-- ACK ------------>|                       |                 |        |         |
+   |                    |                       |                 |        |         |
+   |                    |   [load system prompt: settings.md + tenant.md]  |         |
+   |                    |                       |                 |        |         |
+   |                    |   --- greeting TTS --------------------------->|         |
+   |                    |                       |<-- audio -------|--------|         |
+   |<---------------------------------[RTP]----|                 |        |         |
+   |                    |                       |                 |        |         |
+   |                    |   [conversation loop begins]            |        |         |
+   |                    |                       |                 |        |         |
+   |----------------------------[RTP]---------->|   (caller speaks)        |         |
+   |                    |                       |-- ASR ---------|---------|-------->|
+   |                    |                       |<-- transcript --|---------|---------|
+   |                    |<-- user text ---------|                 |        |         |
+   |                    |                       |                 |        |         |
+   |                    |-- LLM request --------|---------------->|        |         |
+   |                    |<-- LLM response ------|-----------------|        |         |
+   |                    |                       |                 |        |         |
+   |                    |   [parse response: spoken text + action?]        |         |
+   |                    |                       |                 |        |         |
+   |                    |-- speak TTS --------->|-----------------|------->|         |
+   |                    |                       |<-- audio -------|--------|         |
+   |<---------------------------------[RTP]----|                 |        |         |
+   |                    |                       |                 |        |         |
+   |                    |   [repeat until ACTION or max turns]    |        |         |
+   |                    |                       |                 |        |         |
+   |                    |   [ACTION: transfer extension 100]      |        |         |
+   |                    |-- Dial user/100 ----->|                 |        |         |
+   |                    |   (B2BUA flow)        |                 |        |         |
+```
+
+### Conversational Mode Details
+
+1. **Call setup** -- Standard INVITE/200 OK/ACK, same as any dialplan action
+2. **System prompt assembly** -- Settings (action contract from `settings.md`, cached at startup) combined with tenant config (loaded per-call from `resources/tenants/<config>.md`)
+3. **Greeting** -- Spoken via TTS before the loop starts. Configurable in dialplan params, defaults to "Hello, how can I help you today?"
+4. **Listen** -- RTP Manager captures caller audio, sends to Whisper for ASR, returns transcript to signaling
+5. **Think** -- Signaling sends transcript to Ollama with full conversation history, receives response
+6. **Speak** -- Response text sent to RTP Manager, which calls Piper for TTS synthesis, then streams audio as RTP
+7. **Action** -- If the LLM response contains an ACTION block, signaling parses and executes it (transfer, hangup, park)
+8. **Loop termination** -- Conversation ends when an action executes successfully, max turns is reached, or the caller hangs up
+
+### Routing Mode
+
+Single-shot decision: greeting, then one LLM call to determine what action to take. No caller input is captured.
+
+```
+Caller              Signaling              RTP Manager         Ollama    Piper
+   |                    |                       |                 |        |
+   |-- INVITE --------->|                       |                 |        |
+   |                    |-- CreateSession ----->|                 |        |
+   |                    |<-- session_id + SDP --|                 |        |
+   |<-- 200 OK ---------|                       |                 |        |
+   |-- ACK ------------>|                       |                 |        |
+   |                    |                       |                 |        |
+   |                    |   [load system prompt: settings.md + tenant.md]  |
+   |                    |                       |                 |        |
+   |                    |   --- greeting TTS --------------------------->|
+   |                    |                       |<-- audio -------|--------|
+   |<---------------------------------[RTP]----|                 |        |
+   |                    |                       |                 |        |
+   |                    |-- LLM routing req ----|---------------->|        |
+   |                    |<-- LLM response ------|-----------------|        |
+   |                    |                       |                 |        |
+   |                    |   [parse response: spoken text + action]|        |
+   |                    |                       |                 |        |
+   |                    |-- speak TTS --------->|-----------------|------->|
+   |                    |                       |<-- audio -------|--------|
+   |<---------------------------------[RTP]----|                 |        |
+   |                    |                       |                 |        |
+   |                    |   [execute ACTION]    |                 |        |
+   |                    |                       |                 |        |
+   |<-- BYE ------------|   (if hangup)         |                 |        |
+   |-- 200 OK --------->|                       |                 |        |
+   |                    |-- DestroySession ---->|                 |        |
+```
+
+### Routing Mode Details
+
+1. **Call setup** -- Identical to conversational mode
+2. **Greeting** -- Spoken via TTS. Defaults to "Thank you for calling." in routing mode
+3. **LLM decision** -- Single prompt sent to Ollama: "The caller has connected and heard the greeting. Based on your instructions, respond with what to say and what action to take."
+4. **Response** -- LLM returns spoken text and an ACTION block based on tenant instructions
+5. **Execution** -- Action is validated and executed. If no action is present, defaults to hangup
+6. **No ASR** -- Whisper is not involved in routing mode since there is no caller input
+
+### AI Agent Error Handling
+
+| Scenario | Behavior |
+|----------|----------|
+| LLM unavailable at call start | Action returns error, call terminated |
+| LLM error mid-conversation | "I'm having trouble thinking right now" spoken, turn continues |
+| ASR returns empty transcript | "I didn't catch that" spoken, turn retried |
+| Transfer fails | Caller informed, conversation continues (conversational mode only) |
+| Invalid action from LLM | Action ignored, conversation continues |
+| Max turns reached | Goodbye message spoken, call ends naturally |
+
 ## Dialog State Transitions
 
 ```
@@ -338,4 +450,4 @@ Caller              Signaling              Location
 
 ---
 
-*Last updated: January 2026*
+*Last updated: March 2026*

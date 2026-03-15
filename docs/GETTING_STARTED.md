@@ -13,6 +13,8 @@ This guide covers installing, building, and running Switchboard for the first ti
 
 - **A SIP client** for testing - Opal, Opal, sipexer, Opal, etc.
 - **make** - For using Makefile targets
+- **Docker** - Required for running TTS and ASR services locally
+- **Ollama** - Required for AI agent functionality ([Install Ollama](https://ollama.com/download))
 
 ### Installing protoc
 
@@ -54,6 +56,20 @@ go build -o switchboard-signaling ./cmd/signaling
 go build -o switchboard-rtpmanager ./cmd/rtpmanager
 go build -o switchboard-ui ./cmd/ui
 ```
+
+### Start AI Services (Optional)
+
+If you want to use the AI agent functionality, start the AI services before running Switchboard:
+
+```bash
+# Start TTS (Piper) and ASR (Whisper) via Docker
+make services-start
+
+# Start Ollama (runs natively)
+ollama serve
+```
+
+The AI services must be running before calls to the AI agent extension (600) will work. Switchboard's core SIP functionality works without them.
 
 ### Run All Services
 
@@ -99,6 +115,9 @@ open http://localhost:3000
 | RTP Manager | 9090 | gRPC | Media control |
 | RTP Manager | 10000-20000 | UDP | RTP media |
 | UI Server | 3000 | HTTP | Admin dashboard |
+| TTS (Piper) | 8000 | HTTP | Text-to-speech |
+| ASR (Whisper) | 8001 | HTTP | Speech recognition |
+| Ollama | 11434 | HTTP | LLM inference |
 
 ## Testing with a SIP Client
 
@@ -125,6 +144,28 @@ sipexer -register -timeout 5 -user 1001 udp:localhost:5060
 
 # Send INVITE
 sipexer -invite -user 1001 sip:1002@localhost:5060
+```
+
+### Testing the AI Agent
+
+To test the AI agent, ensure all three AI services are running (TTS, ASR, and Ollama), then call extension 600 from a registered SIP client:
+
+1. Start the AI services (`make services-start` and `ollama serve`)
+2. Register a SIP client (e.g., user 1001) against `localhost:5060`
+3. Dial extension **600**
+4. Speak into the microphone -- the AI agent will transcribe your speech, generate a response via the LLM, and play it back as synthesized audio
+
+If the AI agent does not respond, check that all three services are healthy:
+
+```bash
+# Verify TTS is running
+curl http://localhost:8000/health
+
+# Verify ASR is running
+curl http://localhost:8001/health
+
+# Verify Ollama is running
+curl http://localhost:11434/api/tags
 ```
 
 ## Scaling RTP Managers
@@ -232,4 +273,4 @@ netstat -an | grep 5060
 
 ---
 
-*Last updated: January 2026*
+*Last updated: March 2026*

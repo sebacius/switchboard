@@ -90,6 +90,7 @@ docker run -d --name ui \
 | `BIND` | `0.0.0.0` | Bind address |
 | `DIALPLAN_PATH` | `/app/config/dialplan.json` | Dialplan configuration file |
 | `RTPMANAGER_ADDRS` | - | Comma-separated RTP Manager addresses |
+| `LLM_SERVER` | `http://localhost:11434` | Ollama LLM server URL |
 | `DATABASE_URL` | - | PostgreSQL connection string |
 | `REDIS_ADDR` | - | Redis address (host:port) |
 | `NATS_URL` | - | NATS connection URL |
@@ -103,6 +104,8 @@ docker run -d --name ui \
 | `RTP_PORT_MIN` | `10000` | Minimum RTP port |
 | `RTP_PORT_MAX` | `10100` | Maximum RTP port |
 | `AUDIO_PATH` | `/app/audio` | Audio files directory |
+| `TTS_SERVER` | `http://localhost:8000` | Piper TTS server URL |
+| `ASR_SERVER` | `http://localhost:8001` | Whisper ASR server URL |
 
 **UI Server:**
 | Variable | Default | Description |
@@ -147,6 +150,10 @@ deploy/k8s/
 ├── postgres.yaml       # PostgreSQL database
 ├── redis.yaml          # Redis cache
 ├── nats.yaml           # NATS messaging
+# AI Services
+├── tts.yaml            # Piper TTS server
+├── asr.yaml            # Whisper ASR server
+├── ollama.yaml         # Ollama LLM server
 # Application
 ├── signaling.yaml      # Signaling Deployment + Service
 ├── rtpmanager.yaml     # RTP Manager Deployment + Service
@@ -231,6 +238,47 @@ switchboard.sessions.{id}.{event}       # RTP session events
 switchboard.cdr.raw                     # CDR stream (JetStream)
 ```
 
+#### AI Services
+
+Three AI services support the `ai_agent` dialplan action. These are deployed as separate pods in the switchboard namespace.
+
+##### Piper TTS (Text-to-Speech)
+
+**Purpose**: Converts LLM-generated text responses into audio for RTP streaming.
+
+| Setting | Value |
+|---------|-------|
+| Image | `ghcr.io/matatonic/openedai-speech` |
+| Port | 8000 |
+| Manifest | `deploy/k8s/tts.yaml` |
+| K8s DNS | `tts.switchboard.svc.cluster.local:8000` |
+
+##### Whisper ASR (Automatic Speech Recognition)
+
+**Purpose**: Transcribes incoming caller audio into text for the LLM.
+
+| Setting | Value |
+|---------|-------|
+| Image | `fedirz/faster-whisper-server:latest-cpu` |
+| Port | 8000 (K8s) / 8001 (local) |
+| Manifest | `deploy/k8s/asr.yaml` |
+| K8s DNS | `asr.switchboard.svc.cluster.local:8000` |
+
+Note: The ASR service listens on port 8000 inside the container. In local development, it is mapped to port 8001 to avoid conflicting with the TTS service.
+
+##### Ollama LLM (Large Language Model)
+
+**Purpose**: Generates conversational responses from caller speech transcripts.
+
+| Setting | Value |
+|---------|-------|
+| Image | `ollama/ollama` |
+| Port | 11434 |
+| Manifest | `deploy/k8s/ollama.yaml` |
+| K8s DNS | `ollama.switchboard.svc.cluster.local:11434` |
+
+Ollama requires significantly more memory than other services due to model loading. Allocate at least 2Gi of memory (more for larger models).
+
 ### Infrastructure Resource Limits
 
 | Service | CPU Request | CPU Limit | Memory Request | Memory Limit |
@@ -238,6 +286,9 @@ switchboard.cdr.raw                     # CDR stream (JetStream)
 | PostgreSQL | 100m | 500m | 256Mi | 512Mi |
 | Redis | 50m | 200m | 64Mi | 256Mi |
 | NATS | 50m | 500m | 64Mi | 512Mi |
+| TTS (Piper) | 100m | 1000m | 256Mi | 1Gi |
+| ASR (Whisper) | 100m | 1000m | 256Mi | 1Gi |
+| Ollama (LLM) | 200m | 2000m | 1Gi | 4Gi |
 
 ### Deploying to k3s
 
@@ -283,6 +334,9 @@ NAME                          READY   STATUS    RESTARTS   AGE
 postgres-0                    1/1     Running   0          1m
 redis-0                       1/1     Running   0          1m
 nats-0                        1/1     Running   0          1m
+tts-0                         1/1     Running   0          1m
+asr-0                         1/1     Running   0          1m
+ollama-0                      1/1     Running   0          1m
 rtpmanager-0                  1/1     Running   0          1m
 rtpmanager-1                  1/1     Running   0          1m
 signaling-0                   1/1     Running   0          1m
@@ -481,6 +535,9 @@ Ensure these ports are accessible:
 | 8080 | TCP | REST API |
 | 9090 | TCP | gRPC (internal) |
 | 3000 | TCP | UI dashboard |
+| 8000 | TCP | TTS (Piper) |
+| 8001 | TCP | ASR (Whisper, local only) |
+| 11434 | TCP | LLM (Ollama) |
 | 10000-10100 | UDP | RTP media |
 
 ### Troubleshooting
@@ -537,6 +594,11 @@ The dashboard runs with `cluster-admin` privileges within the switchboard namesp
 | `make k8s-deploy-signaling` | Build, load, and restart signaling only |
 | `make k8s-deploy-rtpmanager` | Build, load, and restart rtpmanager only |
 | `make k8s-deploy-ui` | Build, load, and restart UI only |
+| `make k8s-deploy-tts` | Deploy TTS service to k8s |
+| `make k8s-deploy-asr` | Deploy ASR service to k8s |
+| `make k8s-deploy-ollama` | Deploy Ollama LLM service to k8s |
+| `make k8s-deploy-ai` | Deploy all three AI services to k8s |
+| `make services-start` | Start TTS and Whisper containers locally (Docker) |
 | `make k8s-delete` | Remove all resources |
 | `make k8s-status` | Show deployment status |
 | `make k8s-logs` | Tail logs from all pods |
