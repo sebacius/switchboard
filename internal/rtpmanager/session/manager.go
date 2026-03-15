@@ -529,7 +529,7 @@ func (m *Manager) Listen(ctx context.Context, sessionID string, maxDurationMs, s
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("failed to bind to local RTP port %d: %w", sess.LocalPort, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Set read deadline based on silence timeout
 	silenceTimeout := time.Duration(silenceTimeoutMs) * time.Millisecond
@@ -561,7 +561,7 @@ func (m *Manager) Listen(ctx context.Context, sessionID string, maxDurationMs, s
 		}
 
 		// Set read deadline for silence detection
-		conn.SetReadDeadline(time.Now().Add(silenceTimeout))
+		_ = conn.SetReadDeadline(time.Now().Add(silenceTimeout))
 
 		n, _, err := conn.ReadFromUDP(buf)
 		if err != nil {
