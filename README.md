@@ -7,7 +7,7 @@
 
 ## About
 
-Switchboard is a VoIP platform that separates signaling and media into independently scalable components. It uses SIP for call control, RTP for media transport, and gRPC to coordinate services.
+Switchboard is a **full-stack VoIP server and AI-driven call routing engine**. It handles the complete telephony lifecycle — SIP registrations, presence, inbound and outbound calls, call bridging, parking, and transfers — while using a small LLM to make intelligent routing decisions based on tenant-specific configuration. It separates signaling and media into independently scalable components, using SIP for call control, RTP for media transport, and gRPC to coordinate services. At its core, Switchboard replaces static IVR trees with a conversational AI agent that understands context and makes decisions like a human receptionist would.
 
 ```mermaid
 flowchart LR
@@ -117,9 +117,52 @@ make run
 ./switchboard-ui --backends http://localhost:8080
 ```
 
-## AI Voice Agent
+## How It Works
 
-Switchboard includes an AI-powered voice agent that can answer calls, converse with callers, and take actions like transferring or parking calls. It connects three external services: speech-to-text (Whisper), text-to-speech (Piper), and an LLM (Ollama).
+Switchboard is built around two core ideas: a **dialplan** for system-level routing and data gathering, and an **AI engine** that makes per-tenant decisions using natural language configuration.
+
+### The Two Layers
+
+**1. Dialplan — System-level orchestration**
+
+The dialplan is a single execution pipeline that runs for every inbound call. It handles multi-tenant concerns: identifying the caller, determining which tenant they belong to, and gathering any data needed before the AI engine takes over. The dialplan is powerful enough to make routing decisions on its own (pattern matching, time-based rules, header inspection), but its primary role in an AI-driven setup is **preparation** — it identifies the tenant, pulls context from external systems (via HTTP requests, database lookups, etc.), and then hands off to the AI engine with the right configuration.
+
+**2. AI Engine — Tenant-level decision making**
+
+Once the dialplan has identified the tenant and gathered the necessary context, it engages the AI engine with a **tenant-specific markdown file** (`resources/tenants/<name>.md`). This file is the tenant's complete configuration: business identity, routing rules, staff directory, hours of operation, escalation paths, call queues — everything the AI needs to make intelligent decisions for that specific business. The AI engine reads this configuration and makes routing decisions accordingly.
+
+This is how Switchboard does **multi-tenancy**: the dialplan is shared infrastructure that identifies and prepares; the tenant markdown file is the per-tenant brain that drives decisions.
+
+```mermaid
+flowchart TB
+    Call["Inbound Call"] --> Dialplan["Dialplan<br/>(shared, system-level)"]
+    Dialplan -->|"identify tenant<br/>gather data<br/>(curl, DB, headers)"| Prep["Tenant Identified<br/>+ Context Gathered"]
+    Prep --> AI["AI Engine<br/>+ tenant config.md"]
+    AI -->|"routing decision"| Action["Transfer / Park /<br/>Hangup / Announce"]
+
+    style Call fill:#0b3d91,stroke:#0b3d91,color:#fff
+    style Dialplan fill:#6a00ff,stroke:#6a00ff,color:#fff
+    style Prep fill:#ff7a00,stroke:#ff7a00,color:#fff
+    style AI fill:#e11d48,stroke:#e11d48,color:#fff
+    style Action fill:#00a86b,stroke:#00a86b,color:#fff
+```
+
+### Operating Modes
+
+The AI engine operates in two modes, configured per-route in the dialplan:
+
+- **Conversational** (default) — Multi-turn dialogue. The agent greets the caller, listens for speech, sends it to the LLM, speaks the response, and repeats. The LLM can trigger actions (transfer, park, hangup) at any point. Use this for full receptionist replacement, intake, and complex routing.
+- **Routing** — Single-shot decision. The agent plays a greeting, asks the LLM for a routing decision based on tenant instructions (no caller input), speaks the response, executes the action, and ends the call. Use this for after-hours messages, announcements, or simple call routing.
+
+Both modes use the same tenant markdown file and the same small LLM. The difference is whether the caller participates in the conversation or the AI decides on its own.
+
+### AI Services
+
+The AI engine connects three external services:
+
+- **LLM** (Ollama) — Makes routing and conversational decisions
+- **ASR** (Whisper) — Speech-to-text for caller input
+- **TTS** (Piper) — Text-to-speech for agent responses
 
 ```mermaid
 sequenceDiagram
@@ -134,7 +177,7 @@ sequenceDiagram
     Signaling->>RTP: CreateSession (gRPC)
     Signaling->>Caller: 200 OK + SDP
 
-    Note over Signaling: Dialplan matches ai_agent action
+    Note over Signaling: Dialplan identifies tenant, loads config
 
     Signaling->>TTS: Synthesize greeting
     TTS-->>RTP: Audio
@@ -144,7 +187,7 @@ sequenceDiagram
         Caller-->>RTP: RTP (speech)
         RTP->>ASR: Transcribe audio
         ASR-->>Signaling: Text
-        Signaling->>LLM: Chat completion
+        Signaling->>LLM: Chat completion (tenant config + history)
         LLM-->>Signaling: Response + optional ACTION
         Signaling->>TTS: Synthesize response
         TTS-->>RTP: Audio
@@ -155,19 +198,14 @@ sequenceDiagram
     Signaling->>Caller: BYE
 ```
 
-### Operating Modes
+### Tenant Configuration
 
-The AI agent operates in two modes, configured per-route in the dialplan:
+The AI engine uses a two-layer prompt system:
 
-- **Conversational** (default) -- Multi-turn dialogue. The agent greets the caller, listens for speech, sends it to the LLM, speaks the response, and repeats. The LLM can trigger actions (transfer, park, hangup) at any point.
-- **Routing** -- Single-shot. The agent plays a greeting, asks the LLM for a routing decision based on tenant instructions (no caller input), speaks the response, executes the action, and hangs up. Use this for after-hours messages, announcements, or simple call routing.
+1. **Settings** (`resources/config/settings.md`) — Loaded once at startup. Defines the action contract (available actions, response format, rules). Shared across all tenants.
+2. **Tenant config** (`resources/tenants/<name>.md`) — Loaded per-call. Contains the complete business knowledge base: identity, departments, staff directory, routing rules, hours, escalation paths, scripted responses. Selected via the `config` param in the dialplan route.
 
-### Configuration
-
-The AI agent uses a two-layer prompt system:
-
-1. **Settings** (`resources/config/settings.md`) -- Loaded once at startup. Defines the action contract (available actions, response format, rules). Shared across all tenants.
-2. **Tenant config** (`resources/tenants/<name>.md`) -- Loaded per-call. Defines the business context, personality, and instructions for the agent. Selected via the `config` param in the dialplan route.
+A tenant config file is a self-contained document — it tells the AI everything it needs to know to act as a virtual receptionist for that specific business. See [`resources/tenants/default.md`](resources/tenants/default.md) for a full example.
 
 ### Quick Start
 
@@ -190,8 +228,9 @@ ollama pull llama3.1:8b
 
 ```json
 {
-  "id": "after_hours",
-  "pattern": "600",
+  "id": "5a1c18fd-f20c-4ddd-ae76-3430fb1fca55",
+  "customer_id": "720fd275-a196-444c-949a-b90b2531c4a7",
+  "pattern": "5558889999",
   "actions": [
     {
       "type": "ai_agent",
@@ -208,6 +247,61 @@ ollama pull llama3.1:8b
 
 See the [Dialplan Reference](docs/DIALPLAN.md) for all `ai_agent` parameters.
 
+## Vision & Roadmap
+
+Switchboard aims to replace static IVR trees and rigid call routing with an AI engine that reads natural language configuration and makes decisions like a human receptionist would.
+
+### What Works Today
+
+- SIP REGISTER with in-memory location service
+- Inbound INVITE -> 183 Session Progress -> 200 OK flow
+- B2BUA call bridging (A-leg to B-leg)
+- RTP media bridging between sessions
+- Dialplan with pattern matching and Dial action
+- Basic admin dashboard with live updates
+- Multiple RTP Manager load balancing with session affinity
+- AI voice agent as a dialplan action (`ai_agent`) with two modes:
+  - **Conversational**: multi-turn listen/LLM/speak loop with ASR and TTS
+  - **Routing**: single-shot LLM decision (transfer, park, or hangup)
+- LLM integration via Ollama (OpenAI-compatible API) with multi-turn conversation history
+- Speech recognition via Whisper ASR server (batch transcription)
+- Text-to-speech playback through TTS server
+- Per-tenant LLM personalities loaded from markdown files
+
+### What Doesn't Work Yet
+
+- Authentication (anyone can register as anyone)
+- Persistent storage (everything is in-memory)
+- SRTP/TLS (plaintext only)
+- Most SIP edge cases (re-INVITE, UPDATE, REFER, etc.)
+- Proper error handling in many places
+- Tests (there are almost none)
+
+### What Might Be Wrong
+
+- The entire B2BUA implementation
+- SDP manipulation
+- RTP timing and jitter handling
+- Basically anything that has not been tested with real traffic
+
+### Where We're Headed
+
+**Dialplan as a data-gathering powerhouse.** The dialplan should be able to make HTTP requests, query databases, inspect SIP headers, and pull data from external systems — all before the AI engine is engaged. This makes it the right place to handle tenant identification, caller lookup, and context enrichment. The dialplan is deterministic and fast; the AI engine is flexible and intelligent. Each does what it's best at.
+
+**Tenant config caching.** Today, tenant markdown files are loaded from disk on every call. As configurations grow and external data sources are added, we'll want to cache processed tenant configs to avoid redundant work. This is a natural optimization once the system proves itself.
+
+**Small, focused models.** We deliberately use small LLMs (8B parameters) for routing decisions. The AI engine is not meant to be a general-purpose chatbot — it's a decision-making engine that operates within the boundaries of a tenant's configuration. Small models are faster, cheaper, and more predictable. We accept that they may occasionally make odd decisions, but the bounded context (tenant config + settings) keeps them on track.
+
+**Known trade-offs.** AI routing will sometimes do unexpected things. We mitigate this by keeping the model small, the configuration explicit, and the action set limited. The tenant markdown file is the guardrail — if the AI doesn't know something, it should say so and take a safe default action (take a message, transfer to a general queue). Over time, we'll add monitoring and feedback loops to catch and correct bad decisions.
+
+**Recording and real-time transcription.** Call recording with automatic transcription is planned. Real-time transcription will allow live captions and enable features like supervisor monitoring and compliance tooling.
+
+**Barging and supervisor tools.** Call barging (listen, whisper, barge-in) will give supervisors the ability to monitor and intervene in live calls. Combined with real-time transcription, this enables a full contact center toolkit.
+
+**WebRTC gateway.** A WebRTC gateway will allow browser-based communication — agents, supervisors, and end users connecting directly from a web browser without a SIP client. This opens up softphone UIs, click-to-call, and embedded voice widgets.
+
+**MCP (Model Context Protocol) support.** MCP integration will allow the AI engine to use external tools during a call — looking up customer records, checking order status, querying CRMs — giving the LLM access to live data rather than relying solely on the static tenant configuration file.
+
 ### Kubernetes Deployment
 
 ```bash
@@ -222,21 +316,11 @@ make k8s-deploy-ollama
 
 ## Documentation
 
-Complete documentation is available in the [docs/](docs/) folder:
-
 | Document | Description |
 |----------|-------------|
-| [Getting Started](docs/GETTING_STARTED.md) | Installation and quick start guide |
-| [Architecture](docs/ARCHITECTURE.md) | System design and philosophy |
-| [Configuration](docs/CONFIGURATION.md) | Environment variables and flags |
-| [API Reference](docs/API_REFERENCE.md) | REST and gRPC documentation |
-| [Call Flows](docs/CALL_FLOWS.md) | Detailed call sequence diagrams |
-| [Dialplan](docs/DIALPLAN.md) | Route matching and actions |
-| [B2BUA Design](docs/B2BUA.md) | Back-to-Back User Agent details |
-| [Code Map](docs/CODE_MAP.md) | Codebase navigation guide |
-| [Development](docs/DEVELOPMENT.md) | Build, test, and contribute |
-| [Deployment](docs/DEPLOYMENT.md) | Docker and Kubernetes deployment |
-| [Roadmap](docs/ROADMAP.md) | Planned features |
+| [Dialplan Reference](docs/DIALPLAN.md) | Route patterns, actions, AI agent parameters, variable substitution |
+| [Configuration](docs/CONFIGURATION.md) | All flags and environment variables per service |
+| [Deployment](docs/DEPLOYMENT.md) | Docker, Kubernetes, scaling, troubleshooting |
 
 ## Technology Stack
 

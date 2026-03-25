@@ -603,3 +603,36 @@ The dashboard runs with `cluster-admin` privileges within the switchboard namesp
 | `make k8s-status` | Show deployment status |
 | `make k8s-logs` | Tail logs from all pods |
 | `make k8s-restart` | Restart all deployments |
+
+## Local Troubleshooting
+
+### Service Won't Start
+
+Check the logs:
+```bash
+journalctl -u switchboard-signaling -n 50
+```
+
+Common issues:
+- Port already in use — another service on 5060, 8080, or 9090
+- RTP Manager not reachable — check `--rtpmanager` flag
+
+### No Audio
+
+Verify RTP ports are open:
+```bash
+# Check if RTP Manager allocated ports
+curl http://localhost:8080/api/v1/sessions
+```
+
+Common issues:
+- Firewall blocking UDP 10000-20000
+- NAT traversal issues — set `ADVERTISE` to public IP
+
+### SIP Clients Can't Register
+
+Verify signaling server is listening:
+```bash
+# Check UDP 5060
+netstat -an | grep 5060
+```
