@@ -2,6 +2,19 @@
 
 All Switchboard services can be configured via environment variables or command-line flags. Flags take precedence over environment variables.
 
+## Default Ports
+
+| Service | Port | Protocol | Purpose |
+|---------|------|----------|---------|
+| Signaling | 5060 | UDP | SIP signaling |
+| Signaling | 8080 | HTTP | REST API |
+| RTP Manager | 9090 | gRPC | Media control |
+| RTP Manager | 10000-20000 | UDP | RTP media |
+| UI Server | 3000 | HTTP | Admin dashboard |
+| TTS (Piper) | 8000 | HTTP | Text-to-speech |
+| ASR (Whisper) | 8001 | HTTP | Speech recognition |
+| Ollama | 11434 | HTTP | LLM inference |
+
 ## Signaling Server
 
 ### Network Configuration
@@ -341,9 +354,8 @@ LOGLEVEL=info
 
 ## Related Documents
 
-- [Getting Started](GETTING_STARTED.md) - Initial setup
 - [Dialplan](DIALPLAN.md) - Dialplan configuration format
-- [Development](DEVELOPMENT.md) - Development environment
+- [Deployment](DEPLOYMENT.md) - Docker and Kubernetes deployment
 
 ---
 

@@ -3,7 +3,7 @@
   "routes": [
     {
       "id": "route_aiagent",
-      "name": "AiAgent (after hours)",
+      "name": "Customer Service AI Agent",
       "pattern": "600",
       "priority": 10,
       "enabled": true,

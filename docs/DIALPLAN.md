@@ -509,9 +509,8 @@ Planned dialplan features:
 ## Related Documents
 
 - [Configuration](CONFIGURATION.md) - DIALPLAN_PATH setting
-- [Call Flows](CALL_FLOWS.md) - How dialplan fits in call setup
-- [Code Map](CODE_MAP.md) - Dialplan implementation details
+- [Deployment](DEPLOYMENT.md) - Docker and Kubernetes deployment
 
 ---
 
-*Last updated: January 2026*
+*Last updated: March 2026*
