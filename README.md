@@ -11,6 +11,8 @@ Switchboard is a **full-stack VoIP server and AI-driven call routing engine**. I
 
 Switchboard is **Kubernetes-native by design**. Live media re-anchoring allows active calls to be migrated between RTP Manager pods mid-call, making graceful drain, rolling updates, and autoscaling possible without dropping calls.
 
+The routing agent **stays with the caller for the entire duration of the call**. Switchboard's agent maintains full context throughout — if a transfer fails because nobody picked up, the agent comes back, apologizes, and offers alternatives (try another person, take a voicemail, schedule a callback). The caller is never left in a dead end. It's like having a real switchboard receptionist who stays with you until you're taken care of.
+
 ```mermaid
 flowchart LR
   UI["UI Server<br/>(Dashboard)"]
@@ -153,7 +155,7 @@ flowchart TB
 
 The AI engine operates in two modes, configured per-route in the dialplan:
 
-- **Conversational** (default) — Multi-turn dialogue. The agent greets the caller, listens for speech, sends it to the LLM, speaks the response, and repeats. The LLM can trigger actions (transfer, park, hangup) at any point. Use this for full receptionist replacement, intake, and complex routing.
+- **Conversational** (default) — Multi-turn dialogue. The agent greets the caller, listens for speech, sends it to the LLM, speaks the response, and repeats. The LLM can trigger actions (transfer, park, hangup) at any point. Crucially, the agent retains context and stays engaged — if a transfer fails, it returns to the caller and offers alternatives rather than abandoning them. Use this for full receptionist replacement, intake, and complex routing.
 - **Routing** — Single-shot decision. The agent plays a greeting, asks the LLM for a routing decision based on tenant instructions (no caller input), speaks the response, executes the action, and ends the call. Use this for after-hours messages, announcements, or simple call routing.
 
 Both modes use the same tenant markdown file and the same small LLM. The difference is whether the caller participates in the conversation or the AI decides on its own.
