@@ -211,22 +211,38 @@ The AI engine uses a two-layer prompt system:
 
 A tenant config file is a self-contained document — it tells the AI everything it needs to know to act as a virtual receptionist for that specific business. See [`resources/tenants/default.md`](resources/tenants/default.md) for a full example.
 
-### Quick Start
+### Running with AI Services
+
+Switchboard talks to LLM, ASR, and TTS over HTTP. It doesn't care how you bring those up — install them however you like and point Switchboard at their endpoints with `--llm-server`, `--asr-server`, and `--tts-server`. The example commands below are one way to run them; pick your own versions and hosts.
 
 ```bash
-# 1. Start the AI services (Docker)
-make services-start    # TTS + Whisper
-
-# 2. Start Ollama (install from ollama.com if not installed)
+# 1. Ollama (LLM) — install from https://ollama.com
 ollama serve &
 ollama pull llama3.1:8b
 
-# 3. Run Switchboard with LLM enabled
-./build/switchboard-rtpmanager --grpc-port 9090 &
-./build/switchboard-signaling --rtpmanager localhost:9090 --llm-server http://localhost:11434 &
+# 2. Whisper (ASR) — https://github.com/fedirz/faster-whisper-server
+docker run -d --name whisper-asr -p 8001:8000 \
+  -e WHISPER__MODEL=Systran/faster-whisper-tiny \
+  fedirz/faster-whisper-server:latest-cpu
 
-# 4. Call extension 600 from a SIP client to reach the AI agent
+# 3. Piper TTS — https://github.com/matatonic/openedai-speech
+docker run -d --name piper-tts -p 8000:8000 \
+  ghcr.io/matatonic/openedai-speech
+
+# 4. Run Switchboard, pointing at the endpoints above
+go run cmd/rtpmanager/main.go \
+  --asr-server http://localhost:8001 \
+  --tts-server http://localhost:8000 &
+
+go run cmd/signaling/main.go \
+  --llm-server http://localhost:11434 &
+
+go run cmd/ui/main.go
+
+# 5. Call extension 600 from a SIP client to reach the AI agent
 ```
+
+The AI services can run on any reachable host — replace `localhost` with the IP of wherever you started them.
 
 ### Dialplan Example
 
@@ -310,25 +326,12 @@ Switchboard aims to replace static IVR trees and rigid call routing with an AI e
 
 **MCP (Model Context Protocol) support.** MCP integration will allow the AI engine to use external tools during a call — looking up customer records, checking order status, querying CRMs — giving the LLM access to live data rather than relying solely on the static tenant configuration file.
 
-### Kubernetes Deployment
-
-```bash
-# Deploy AI services to k3s
-make k8s-deploy-ai     # Deploys TTS, ASR, and Ollama
-
-# Or individually
-make k8s-deploy-tts
-make k8s-deploy-asr
-make k8s-deploy-ollama
-```
-
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
 | [Dialplan Reference](docs/DIALPLAN.md) | Route patterns, actions, AI agent parameters, variable substitution |
 | [Configuration](docs/CONFIGURATION.md) | All flags and environment variables per service |
-| [Deployment](docs/DEPLOYMENT.md) | Docker, Kubernetes, scaling, troubleshooting |
 
 ## Technology Stack
 

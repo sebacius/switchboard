@@ -8,4 +8,3 @@ For an overview of the project, architecture, and AI engine, see the [main READM
 |----------|-------------|
 | [Dialplan](DIALPLAN.md) | Route patterns, actions, AI agent parameters, variable substitution |
 | [Configuration](CONFIGURATION.md) | All flags and environment variables per service |
-| [Deployment](DEPLOYMENT.md) | Docker, Kubernetes, scaling, troubleshooting |
