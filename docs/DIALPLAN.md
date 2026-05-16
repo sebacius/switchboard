@@ -509,7 +509,6 @@ Planned dialplan features:
 ## Related Documents
 
 - [Configuration](CONFIGURATION.md) - DIALPLAN_PATH setting
-- [Deployment](DEPLOYMENT.md) - Docker and Kubernetes deployment
 
 ---
 

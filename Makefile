@@ -1,15 +1,8 @@
 .PHONY: build run clean help proto \
 	build-signaling build-rtpmanager build-ui build-all build-linux \
-	test-register test-multi test-api test-deregister \
-	run-ui \
-	docker-build docker-build-signaling docker-build-rtpmanager docker-build-ui \
-	docker-save docker-save-signaling docker-save-rtpmanager docker-save-ui \
-	k8s-deploy k8s-delete k8s-status k8s-logs \
-	k8s-deploy-signaling k8s-deploy-rtpmanager k8s-deploy-ui \
-	k8s-deploy-tts k8s-deploy-asr k8s-deploy-ollama k8s-deploy-ai \
-	tts-start tts-stop tts-status \
-	whisper-start whisper-stop whisper-status \
-	services-start services-stop services-status
+	run-signaling run-rtpmanager run-ui \
+	test-sip test-register test-multi test-api test-deregister \
+	docker-build docker-build-signaling docker-build-rtpmanager docker-build-ui
 
 # Docker image names
 IMAGE_SIGNALING ?= switchboard-signaling
@@ -49,27 +42,6 @@ help:
 	@echo "  make docker-build-signaling - Build signaling Docker image"
 	@echo "  make docker-build-rtpmanager- Build rtpmanager Docker image"
 	@echo "  make docker-build-ui        - Build UI Docker image"
-	@echo "  make docker-save            - Save all images to tar files"
-	@echo ""
-	@echo "AI SERVICES (Docker):"
-	@echo "  make services-start     - Start all AI services (TTS + Whisper)"
-	@echo "  make services-stop      - Stop all AI services"
-	@echo "  make services-status    - Check AI services status"
-	@echo "  make tts-start          - Start TTS server only"
-	@echo "  make whisper-start      - Start Whisper server only"
-	@echo ""
-	@echo "KUBERNETES (k3s):"
-	@echo "  make k8s-deploy             - Deploy all to Kubernetes"
-	@echo "  make k8s-deploy-signaling   - Build & deploy signaling only"
-	@echo "  make k8s-deploy-rtpmanager  - Build & deploy rtpmanager only"
-	@echo "  make k8s-deploy-ui          - Build & deploy UI only"
-	@echo "  make k8s-deploy-tts         - Deploy TTS service to k8s"
-	@echo "  make k8s-deploy-asr         - Deploy ASR (Whisper) service to k8s"
-	@echo "  make k8s-deploy-ollama      - Deploy Ollama LLM service to k8s"
-	@echo "  make k8s-deploy-ai          - Deploy all AI services (TTS + ASR + Ollama)"
-	@echo "  make k8s-delete             - Delete all Switchboard resources"
-	@echo "  make k8s-status             - Show deployment status"
-	@echo "  make k8s-logs               - Tail logs from all pods"
 	@echo ""
 	@echo "TESTING:"
 	@echo "  make test-sip TARGET=<ip>       - Run SIPp test suite"
@@ -159,121 +131,6 @@ docker-build-ui:
 docker-build: docker-build-signaling docker-build-rtpmanager docker-build-ui
 	@echo "All Docker images built"
 
-# Save images to tar files for k3s import
-docker-save: $(BUILD_DIR)
-	@echo "Saving Docker images to tar files..."
-	@docker save $(IMAGE_SIGNALING):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-signaling.tar
-	@docker save $(IMAGE_RTPMANAGER):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-rtpmanager.tar
-	@docker save $(IMAGE_UI):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-ui.tar
-	@echo "Saved to $(BUILD_DIR)/: switchboard-signaling.tar, switchboard-rtpmanager.tar, switchboard-ui.tar"
-
-docker-save-signaling: $(BUILD_DIR)
-	@docker save $(IMAGE_SIGNALING):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-signaling.tar
-
-docker-save-rtpmanager: $(BUILD_DIR)
-	@docker save $(IMAGE_RTPMANAGER):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-rtpmanager.tar
-
-docker-save-ui: $(BUILD_DIR)
-	@docker save $(IMAGE_UI):$(IMAGE_TAG) -o $(BUILD_DIR)/switchboard-ui.tar
-
-docker: docker-build docker-save
-	@echo "Docker build, save, and load complete"
-
-# ============================================================================
-# Kubernetes targets
-# ============================================================================
-
-# Full deployment: build images, load into k3s, apply manifests
-# Load images into k3s containerd
-k8s-load:
-	@echo "Loading images into k3s..."
-	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-signaling.tar
-	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-rtpmanager.tar
-	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-ui.tar
-	@echo "Images loaded into k3s"
-
-k8s-deploy: k8s-load
-	@echo "Deploying to Kubernetes..."
-	@kubectl apply -k deploy/k8s/
-	@echo ""
-	@echo "Deployment complete. Run 'make k8s-status' to check status."
-	@echo "UI available at: http://<node-ip>:30000"
-
-# Delete all switchboard resources
-k8s-delete:
-	@echo "Deleting Switchboard resources..."
-	@kubectl delete -k deploy/k8s/ --ignore-not-found
-	@echo "Resources deleted"
-
-# Show deployment status
-k8s-status:
-	@echo "=== Namespace ==="
-	@kubectl get namespace switchboard 2>/dev/null || echo "Namespace not found"
-	@echo ""
-	@echo "=== Pods ==="
-	@kubectl get pods -n switchboard -o wide 2>/dev/null || echo "No pods"
-	@echo ""
-	@echo "=== Services ==="
-	@kubectl get services -n switchboard 2>/dev/null || echo "No services"
-	@echo ""
-	@echo "=== Deployments ==="
-	@kubectl get deployments -n switchboard 2>/dev/null || echo "No deployments"
-
-# Tail logs from all pods
-k8s-logs:
-	@kubectl logs -n switchboard -l app.kubernetes.io/part-of=switchboard --all-containers -f --prefix --max-log-requests=10
-
-# Restart all deployments (useful after image updates)
-k8s-restart:
-	@echo "Restarting deployments..."
-	@kubectl rollout restart statefulset -n switchboard
-	@kubectl rollout status statefulset -n switchboard
-
-# Individual service deployment targets
-k8s-deploy-signaling: docker-build-signaling docker-save-signaling
-	@echo "Loading signaling image into k3s..."
-	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-signaling.tar
-	@echo "Restarting signaling..."
-	@kubectl rollout restart statefulset/signaling -n switchboard
-	@kubectl rollout status statefulset/signaling -n switchboard
-
-k8s-deploy-rtpmanager: docker-build-rtpmanager docker-save-rtpmanager
-	@echo "Loading rtpmanager image into k3s..."
-	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-rtpmanager.tar
-	@echo "Restarting rtpmanager..."
-	@kubectl rollout restart statefulset/rtpmanager -n switchboard
-	@kubectl rollout status statefulset/rtpmanager -n switchboard
-
-k8s-deploy-ui: docker-build-ui docker-save-ui
-	@echo "Loading ui image into k3s..."
-	@sudo k3s ctr images import $(BUILD_DIR)/switchboard-ui.tar
-	@echo "Restarting ui..."
-	@kubectl rollout restart statefulset/ui -n switchboard
-	@kubectl rollout status statefulset/ui -n switchboard
-
-# AI service k8s deployment targets
-k8s-deploy-tts:
-	@echo "Deploying TTS service to k8s..."
-	@kubectl apply -f deploy/k8s/tts.yaml -n switchboard
-	@kubectl rollout status deployment/tts -n switchboard
-
-k8s-deploy-asr:
-	@echo "Deploying ASR (Whisper) service to k8s..."
-	@kubectl apply -f deploy/k8s/asr.yaml -n switchboard
-	@kubectl rollout status deployment/asr -n switchboard
-
-k8s-deploy-ollama:
-	@echo "Deploying Ollama LLM service to k8s..."
-	@kubectl apply -f deploy/k8s/ollama.yaml -n switchboard
-	@kubectl rollout status deployment/ollama -n switchboard
-
-k8s-deploy-ai: k8s-deploy-tts k8s-deploy-asr k8s-deploy-ollama
-	@echo ""
-	@echo "AI services deployed:"
-	@echo "  TTS:    tts.switchboard.svc.cluster.local:8000"
-	@echo "  ASR:    asr.switchboard.svc.cluster.local:8000"
-	@echo "  Ollama: ollama.switchboard.svc.cluster.local:11434"
-
 # ============================================================================
 # Testing targets
 # ============================================================================
@@ -307,99 +164,3 @@ test-api:
 test-deregister:
 	@echo "Deregistering alice..."
 	@sipexer -register -au alice -ex 0 -cb $(TEST_SIP_SERVER)
-
-# ============================================================================
-# TTS Server (OpenAI-compatible speech API)
-# ============================================================================
-
-TTS_CONTAINER_NAME ?= piper-tts
-TTS_IMAGE ?= ghcr.io/matatonic/openedai-speech
-TTS_PORT ?= 8000
-
-# Start TTS server if not running
-tts-start:
-	@if docker ps -q -f name=$(TTS_CONTAINER_NAME) | grep -q .; then \
-		echo "TTS server already running"; \
-	elif docker ps -aq -f name=$(TTS_CONTAINER_NAME) | grep -q .; then \
-		echo "Starting existing TTS container..."; \
-		docker start $(TTS_CONTAINER_NAME) && echo "TTS server available at http://localhost:$(TTS_PORT)"; \
-	else \
-		echo "Starting TTS server on port $(TTS_PORT)..."; \
-		docker run -d --name $(TTS_CONTAINER_NAME) -p $(TTS_PORT):8000 $(TTS_IMAGE) && \
-		echo "TTS server available at http://localhost:$(TTS_PORT)"; \
-	fi
-
-# Stop TTS server
-tts-stop:
-	@if docker ps -q -f name=$(TTS_CONTAINER_NAME) | grep -q .; then \
-		echo "Stopping TTS server..."; \
-		docker stop $(TTS_CONTAINER_NAME); \
-	else \
-		echo "TTS server not running"; \
-	fi
-
-# Check TTS server status
-tts-status:
-	@if docker ps -q -f name=$(TTS_CONTAINER_NAME) | grep -q .; then \
-		echo "TTS server: running"; \
-		docker ps -f name=$(TTS_CONTAINER_NAME) --format "  Container: {{.Names}}\n  Port: {{.Ports}}\n  Status: {{.Status}}"; \
-	else \
-		echo "TTS server: not running"; \
-	fi
-
-# ============================================================================
-# Whisper Server (Speech-to-Text / ASR)
-# ============================================================================
-
-WHISPER_CONTAINER_NAME ?= whisper-asr
-WHISPER_IMAGE ?= fedirz/faster-whisper-server:latest-cpu
-WHISPER_MODEL ?= Systran/faster-whisper-tiny
-WHISPER_PORT ?= 8001
-
-# Start Whisper server if not running
-whisper-start:
-	@if docker ps -q -f name=$(WHISPER_CONTAINER_NAME) | grep -q .; then \
-		echo "Whisper server already running"; \
-	elif docker ps -aq -f name=$(WHISPER_CONTAINER_NAME) | grep -q .; then \
-		echo "Starting existing Whisper container..."; \
-		docker start $(WHISPER_CONTAINER_NAME) && echo "Whisper server available at http://localhost:$(WHISPER_PORT)"; \
-	else \
-		echo "Starting Whisper server on port $(WHISPER_PORT)..."; \
-		docker run -d --name $(WHISPER_CONTAINER_NAME) -p $(WHISPER_PORT):8000 -e WHISPER__MODEL=$(WHISPER_MODEL) $(WHISPER_IMAGE) && \
-		echo "Whisper server available at http://localhost:$(WHISPER_PORT)"; \
-	fi
-
-# Stop Whisper server
-whisper-stop:
-	@if docker ps -q -f name=$(WHISPER_CONTAINER_NAME) | grep -q .; then \
-		echo "Stopping Whisper server..."; \
-		docker stop $(WHISPER_CONTAINER_NAME); \
-	else \
-		echo "Whisper server not running"; \
-	fi
-
-# Check Whisper server status
-whisper-status:
-	@if docker ps -q -f name=$(WHISPER_CONTAINER_NAME) | grep -q .; then \
-		echo "Whisper server: running"; \
-		docker ps -f name=$(WHISPER_CONTAINER_NAME) --format "  Container: {{.Names}}\n  Port: {{.Ports}}\n  Status: {{.Status}}"; \
-	else \
-		echo "Whisper server: not running"; \
-	fi
-
-# ============================================================================
-# Combined AI Services
-# ============================================================================
-
-# Start all AI services
-services-start: tts-start whisper-start
-	@echo ""
-	@echo "AI services ready:"
-	@echo "  TTS:     http://localhost:$(TTS_PORT)"
-	@echo "  Whisper: http://localhost:$(WHISPER_PORT)"
-
-# Stop all AI services
-services-stop: tts-stop whisper-stop
-
-# Check all AI services status
-services-status: tts-status whisper-status

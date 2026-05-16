@@ -224,27 +224,9 @@ Switchboard integrates three external AI services to support the `ai_agent` dial
 2. The **LLM** service (on the Signaling Server) generates a conversational response from the transcript.
 3. The **TTS** service (on the RTP Manager) converts the LLM response text into audio streamed back over RTP.
 
-### Local Development
+### Running the AI Services
 
-For local development, TTS and Whisper run as Docker containers while Ollama runs natively:
-
-```bash
-# Start TTS and Whisper containers
-make services-start
-
-# Start Ollama (runs natively, not in Docker)
-ollama serve
-```
-
-### Kubernetes DNS
-
-When deployed to Kubernetes, the AI services are accessible via cluster DNS:
-
-| Service | Internal DNS | Port |
-|---------|-------------|------|
-| TTS | `tts.switchboard.svc.cluster.local` | 8000 |
-| ASR | `asr.switchboard.svc.cluster.local` | 8000 |
-| Ollama | `ollama.switchboard.svc.cluster.local` | 11434 |
+The Go services accept `--llm-server`, `--asr-server`, and `--tts-server` flags pointing at any reachable HTTP endpoint. Bring those services up however suits your environment — see the README for example `docker run` / `ollama serve` commands you can copy-paste — and point Switchboard at the resulting IP and port.
 
 ## Tenant and Settings Configuration
 
@@ -355,7 +337,6 @@ LOGLEVEL=info
 ## Related Documents
 
 - [Dialplan](DIALPLAN.md) - Dialplan configuration format
-- [Deployment](DEPLOYMENT.md) - Docker and Kubernetes deployment
 
 ---
 
