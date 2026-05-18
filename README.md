@@ -213,7 +213,24 @@ A tenant config file is a self-contained document — it tells the AI everything
 
 ### Running with AI Services
 
-Switchboard talks to LLM, ASR, and TTS over HTTP. It doesn't care how you bring those up — install them however you like and point Switchboard at their endpoints with `--llm-server`, `--asr-server`, and `--tts-server`. The example commands below are one way to run them; pick your own versions and hosts.
+Switchboard talks to LLM, ASR, and TTS over HTTP. It doesn't care how you bring those up — install them however you like and point Switchboard at their endpoints with `--llm-server`, `--asr-server`, and `--tts-server`.
+
+The fastest path is the bundled compose file, which starts Ollama, Whisper, and Piper on the ports Switchboard defaults to:
+
+```bash
+make services-up        # starts Ollama (:11434), Whisper (:8001), Piper (:8000)
+                        # and pulls the LLM model on first run
+
+go run cmd/rtpmanager/main.go &
+go run cmd/signaling/main.go &
+go run cmd/ui/main.go
+
+# Call extension 600 from a SIP client to reach the AI agent
+```
+
+Override the models via env vars (e.g. `OLLAMA_MODEL=llama3.2:3b WHISPER_MODEL=Systran/faster-whisper-base make services-up`). `make services-down` stops them; `make services-logs` tails output. Models persist in named volumes across restarts.
+
+If you'd rather run the services manually (e.g. on a different host, with GPUs, or a different image):
 
 ```bash
 # 1. Ollama (LLM) — install from https://ollama.com
@@ -229,7 +246,7 @@ docker run -d --name whisper-asr -p 8001:8000 \
 docker run -d --name piper-tts -p 8000:8000 \
   ghcr.io/matatonic/openedai-speech
 
-# 4. Run Switchboard, pointing at the endpoints above
+# 4. Point Switchboard at non-default hosts/ports if needed
 go run cmd/rtpmanager/main.go \
   --asr-server http://localhost:8001 \
   --tts-server http://localhost:8000 &
@@ -238,8 +255,6 @@ go run cmd/signaling/main.go \
   --llm-server http://localhost:11434 &
 
 go run cmd/ui/main.go
-
-# 5. Call extension 600 from a SIP client to reach the AI agent
 ```
 
 The AI services can run on any reachable host — replace `localhost` with the IP of wherever you started them.
