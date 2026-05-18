@@ -2,7 +2,8 @@
 	build-signaling build-rtpmanager build-ui build-all build-linux \
 	run-signaling run-rtpmanager run-ui \
 	test-sip test-register test-multi test-api test-deregister \
-	docker-build docker-build-signaling docker-build-rtpmanager docker-build-ui
+	docker-build docker-build-signaling docker-build-rtpmanager docker-build-ui \
+	services-up services-down services-logs
 
 # Docker image names
 IMAGE_SIGNALING ?= switchboard-signaling
@@ -42,6 +43,11 @@ help:
 	@echo "  make docker-build-signaling - Build signaling Docker image"
 	@echo "  make docker-build-rtpmanager- Build rtpmanager Docker image"
 	@echo "  make docker-build-ui        - Build UI Docker image"
+	@echo ""
+	@echo "SUPPORTING SERVICES (Ollama / Whisper / Piper):"
+	@echo "  make services-up      - Start LLM/ASR/TTS via docker compose"
+	@echo "  make services-down    - Stop supporting services"
+	@echo "  make services-logs    - Tail supporting service logs"
 	@echo ""
 	@echo "TESTING:"
 	@echo "  make test-sip TARGET=<ip>       - Run SIPp test suite"
@@ -130,6 +136,22 @@ docker-build-ui:
 
 docker-build: docker-build-signaling docker-build-rtpmanager docker-build-ui
 	@echo "All Docker images built"
+
+# ============================================================================
+# Supporting services (Ollama / Whisper / Piper) via docker compose
+# ============================================================================
+
+COMPOSE_SERVICES ?= deploy/docker/docker-compose.services.yml
+
+services-up:
+	@docker compose -f $(COMPOSE_SERVICES) up -d
+	@echo "Supporting services starting. ollama-init will pull the model on first run."
+
+services-down:
+	@docker compose -f $(COMPOSE_SERVICES) down
+
+services-logs:
+	@docker compose -f $(COMPOSE_SERVICES) logs -f
 
 # ============================================================================
 # Testing targets
