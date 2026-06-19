@@ -11,7 +11,6 @@ var (
 	ErrNoRouteMatch    = errors.New("no matching route")
 	ErrSessionCanceled = errors.New("session canceled")
 	ErrActionNotFound  = errors.New("unknown action type")
-	ErrUserNotFound    = errors.New("user not registered")
 	ErrDialTimeout     = errors.New("dial timeout")
 	ErrDialRejected    = errors.New("dial rejected")
 )
@@ -32,24 +31,5 @@ func (e *ExecutionError) Error() string {
 }
 
 func (e *ExecutionError) Unwrap() error {
-	return e.Cause
-}
-
-// DialError provides details when dial fails.
-type DialError struct {
-	Target    string
-	SIPCode   int // 0 if not a SIP error
-	SIPReason string
-	Cause     error
-}
-
-func (e *DialError) Error() string {
-	if e.SIPCode > 0 {
-		return fmt.Sprintf("dial %s: SIP %d %s", e.Target, e.SIPCode, e.SIPReason)
-	}
-	return fmt.Sprintf("dial %s: %v", e.Target, e.Cause)
-}
-
-func (e *DialError) Unwrap() error {
 	return e.Cause
 }

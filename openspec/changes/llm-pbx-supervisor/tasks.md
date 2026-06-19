@@ -13,7 +13,7 @@
 
 ## 3. Agent package: session, context, events, nested-ctx spine
 
-- [ ] 3.1 Move `CallSession` interface + impl from `dialplan/session.go` to `agent/session.go`
+- [x] 3.1 Move `CallSession` interface + impl from `dialplan/session.go` to `agent/session.go` (+`DialError`/`ErrUserNotFound`); dialplan keeps a transitional alias shim (`agent_compat.go`) so it compiles until deletion
 - [x] 3.2 Add `agent/context.go`: `CallContext{Caller, Callee, Direction, Tenant}` + `FormatForPrompt()`
 - [x] 3.3 Add `agent/events.go`: `Event{Kind, Payload}` + `EventKind` enum (speech now; dtmf/signaling/media forward-compat); never-close-channel discipline documented
 - [ ] 3.4 Establish the three nested context scopes (`callCtx ⊃ turnCtx ⊃ playbackCtx`) in the runner skeleton
