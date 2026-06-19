@@ -120,6 +120,12 @@ func (e *fakeExecutor) callCount() int {
 	return len(e.calls)
 }
 
+// buildExec adapts a fixed executor into the per-call BuildExecutor seam the
+// runner now uses; every call gets the same fake.
+func buildExec(e ToolExecutor) func(CallContext) ToolExecutor {
+	return func(CallContext) ToolExecutor { return e }
+}
+
 func toolCall(name string) llm.ToolCall {
 	return llm.ToolCall{Function: llm.ToolCallFunction{Name: name}}
 }
@@ -145,7 +151,7 @@ func TestFirstTurnSilentRoute(t *testing.T) {
 	})
 	exec := &fakeExecutor{resp: []execResp{{result: "forwarded", disp: DispositionTerminal}}}
 	sess := newFakeSession()
-	r := NewRunner(RunnerConfig{Chat: chat, Tools: exec})
+	r := NewRunner(RunnerConfig{Chat: chat, BuildExecutor: buildExec(exec)})
 
 	if err := runWithTimeout(t, r, sess, time.Second); err != nil {
 		t.Fatalf("HandleCall: %v", err)
@@ -173,7 +179,7 @@ func TestConversationalTurns(t *testing.T) {
 	sess := newFakeSession()
 	sess.queueTranscript("I want billing") // drives the second turn
 
-	r := NewRunner(RunnerConfig{Chat: chat, Tools: exec})
+	r := NewRunner(RunnerConfig{Chat: chat, BuildExecutor: buildExec(exec)})
 	if err := runWithTimeout(t, r, sess, 2*time.Second); err != nil {
 		t.Fatalf("HandleCall: %v", err)
 	}
@@ -196,7 +202,7 @@ func TestTerminalToolTeardownOnce(t *testing.T) {
 	})
 	exec := &fakeExecutor{resp: []execResp{{result: "done", disp: DispositionTerminal}}}
 	sess := newFakeSession()
-	r := NewRunner(RunnerConfig{Chat: chat, Tools: exec})
+	r := NewRunner(RunnerConfig{Chat: chat, BuildExecutor: buildExec(exec)})
 
 	if err := runWithTimeout(t, r, sess, time.Second); err != nil {
 		t.Fatalf("HandleCall: %v", err)
@@ -211,7 +217,7 @@ func TestTerminalToolTeardownOnce(t *testing.T) {
 
 func TestTeardownIdempotent(t *testing.T) {
 	sess := newFakeSession()
-	r := NewRunner(RunnerConfig{Chat: llm.NewScriptedClient(), Tools: &fakeExecutor{}})
+	r := NewRunner(RunnerConfig{Chat: llm.NewScriptedClient(), BuildExecutor: buildExec(&fakeExecutor{})})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -261,10 +267,10 @@ func TestRunawayBreaker(t *testing.T) {
 	// cap at or below the soft cap exercises the teardown branch. Here hard=4
 	// fires before soft=10 ever would.
 	r := NewRunner(RunnerConfig{
-		Chat:    chat,
-		Tools:   exec,
-		SoftCap: 10,
-		HardCap: 4,
+		Chat:          chat,
+		BuildExecutor: buildExec(exec),
+		SoftCap:       10,
+		HardCap:       4,
 	})
 
 	if err := runWithTimeout(t, r, sess, 2*time.Second); err != nil {
@@ -300,10 +306,10 @@ func TestRunawaySoftCapWaitsForCaller(t *testing.T) {
 	sess := newFakeSession()
 
 	r := NewRunner(RunnerConfig{
-		Chat:    chat,
-		Tools:   exec,
-		SoftCap: 2,
-		HardCap: 100, // far away, so the soft cap is what stops the spin
+		Chat:          chat,
+		BuildExecutor: buildExec(exec),
+		SoftCap:       2,
+		HardCap:       100, // far away, so the soft cap is what stops the spin
 	})
 
 	// No caller transcripts: after the soft cap the runner parks on events and
@@ -325,7 +331,7 @@ func TestCancellationStopsLoop(t *testing.T) {
 	exec := &fakeExecutor{}
 	sess := newFakeSession() // no transcripts: Listen blocks, loop parks on events
 
-	r := NewRunner(RunnerConfig{Chat: chat, Tools: exec})
+	r := NewRunner(RunnerConfig{Chat: chat, BuildExecutor: buildExec(exec)})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

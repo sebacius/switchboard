@@ -27,11 +27,11 @@
 
 ## 5. Tools, per-call registry & policy
 
-- [ ] 5.1 Add `agent/tools.go`: build the tool registry **per call** from `(tenant, direction)`; inbound has no external dial
-- [ ] 5.2 Implement `dial` with forward-vs-bridge behavior (port B2BUA dial from `action_dial.go`); forward before answer, bridge after
-- [ ] 5.3 Implement `hangup` (Terminal), `play_audio` (Continue), `park` (Parked — no blocking), `unpark` (port `BridgeMedia` from `action_unpark.go`)
-- [ ] 5.4 Add `agent/policy.go` (`tool-authorization`): zero-authority adjudication; Class of Service on dial (default-deny external, allowlist, barred classes); capability narrowing via symbolic targets + a separate gated caller-provided-number tool; per-tenant spend circuit breaker; decision logging to the call record
-- [ ] 5.5 Arg validation + self-correction: unknown tool → hangup; missing/invalid arg → actionable error into conversation; refuse identical just-failed call
+- [x] 5.1 Add `agent/tools.go`: build the tool registry **per call** from `(tenant, direction)`; inbound has no external dial (affordance removed in `BuildRegistry`)
+- [x] 5.2 Implement `dial`: policy-gated, runs against the resolved target via the existing adopt-and-bridge `session.Dial`. **Forward-before-answer path is `TODO(group7)`** (needs answer-deferral + B2BUA INVITE forwarding)
+- [x] 5.3 `hangup` (Terminal) + `play_audio` (Continue) implemented; **`park`/`unpark` deferred to group 7** (need `parking.Service` wiring + the answer model) — `TODO(group7)`
+- [x] 5.4 Add `agent/policy.go` (`tool-authorization`): zero-authority adjudication; Class of Service on dial (default-deny external, allowlist, barred classes); capability narrowing via symbolic targets + a separate gated caller-provided-number tool; per-tenant spend circuit breaker; decision logging (slog now, `TODO(cdr)` for the call record)
+- [x] 5.5 Arg validation + self-correction: unknown tool → Terminal/hangup; missing/invalid arg → actionable result + Continue; refuse identical just-failed call
 
 ## 6. Runner: turns, first-turn decision, runaway breaker
 

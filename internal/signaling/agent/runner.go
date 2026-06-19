@@ -39,8 +39,12 @@ type RunnerConfig struct {
 	// Chat is the native tool-calling LLM client.
 	Chat llm.ChatClient
 
-	// Tools executes tool calls the model emits (registry + policy live behind it).
-	Tools ToolExecutor
+	// BuildExecutor constructs the per-call tool executor from the CallContext.
+	// The tool registry (and thus the executor) depends on (tenant, direction),
+	// so it cannot be a single shared instance — each HandleCall builds its own.
+	// The returned executor carries that call's registry, authorization policy,
+	// and per-call dedup state (registry + policy live behind it).
+	BuildExecutor func(cc CallContext) ToolExecutor
 
 	// Logger is the structured logger; slog.Default() is used when nil.
 	Logger *slog.Logger
@@ -108,9 +112,10 @@ func NewRunner(cfg RunnerConfig) *Runner {
 // context tree, the conversation, the events channel, and the once-guarded
 // teardown funnel (decision #5, #6, #13).
 type callRun struct {
-	cfg     RunnerConfig
-	log     *slog.Logger
-	session CallSession
+	cfg      RunnerConfig
+	log      *slog.Logger
+	session  CallSession
+	executor ToolExecutor
 
 	// callCtx is the whole-call scope. Cancelling it (BYE/CANCEL/timeout/terminal
 	// tool) is the only shutdown signal; the events channel is never closed.
@@ -144,8 +149,15 @@ func (r *Runner) HandleCall(callCtx context.Context, session CallSession, cc Cal
 	if r.cfg.Chat == nil {
 		return fmt.Errorf("runner: no chat client configured")
 	}
-	if r.cfg.Tools == nil {
-		return fmt.Errorf("runner: no tool executor configured")
+	if r.cfg.BuildExecutor == nil {
+		return fmt.Errorf("runner: no executor builder configured")
+	}
+
+	// The tool registry depends on (tenant, direction), so the executor is built
+	// per call from the CallContext rather than shared across calls.
+	executor := r.cfg.BuildExecutor(cc)
+	if executor == nil {
+		return fmt.Errorf("runner: executor builder returned nil")
 	}
 
 	ctx, cancel := context.WithCancel(callCtx)
@@ -153,6 +165,7 @@ func (r *Runner) HandleCall(callCtx context.Context, session CallSession, cc Cal
 		cfg:        r.cfg,
 		log:        r.log.With("call_id", session.CallID()),
 		session:    session,
+		executor:   executor,
 		callCtx:    ctx,
 		callCancel: cancel,
 		events:     make(chan Event, r.cfg.EventBuffer),
@@ -287,7 +300,7 @@ func (c *callRun) executeTools(turnCtx context.Context, calls []llm.ToolCall) er
 		default:
 		}
 
-		result, disp, err := c.cfg.Tools.Execute(turnCtx, call, c.session)
+		result, disp, err := c.executor.Execute(turnCtx, call, c.session)
 		if err != nil {
 			// Executor-internal failure: feed an actionable result back so the
 			// model can recover, and keep going (decision #12).
