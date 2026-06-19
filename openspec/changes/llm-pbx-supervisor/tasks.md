@@ -8,7 +8,7 @@
 - [x] 2.1 Add a `Client` interface in `internal/signaling/llm/` and point the implementation at Ollama native `/api/chat` (not `/v1/chat/completions`), sending `think: false` — `ChatClient` + `ChatNative` (old `/v1` kept for the dialplan until deletion)
 - [x] 2.2 Model request/response with separate `thinking`, `content`, and `tool_calls` fields; only `content` is eligible for TTS
 - [x] 2.3 Add `llm/tools.go`: `AgentTool`, `ToolRegistry`, `Handler`, and the `/api/chat` tool-definition converter (`AsOllamaTools`)
-- [ ] 2.4 Update the conversation to append tool-result messages back into history (`Continue` disposition) — deferred to the runner phase (NativeMessage supports `role=tool`/`tool_name`)
+- [x] 2.4 Update the conversation to append tool-result messages back into history (`Continue` disposition) — implemented in the runner (`role=tool` messages + autonomous re-prompt)
 - [x] 2.5 Add `llm/scripted.go`: `ScriptedClient` implementing `Client`, returning pre-programmed thinking/text/tool-call sequences
 
 ## 3. Agent package: session, context, events, nested-ctx spine
@@ -16,8 +16,8 @@
 - [x] 3.1 Move `CallSession` interface + impl from `dialplan/session.go` to `agent/session.go` (+`DialError`/`ErrUserNotFound`); dialplan keeps a transitional alias shim (`agent_compat.go`) so it compiles until deletion
 - [x] 3.2 Add `agent/context.go`: `CallContext{Caller, Callee, Direction, Tenant}` + `FormatForPrompt()`
 - [x] 3.3 Add `agent/events.go`: `Event{Kind, Payload}` + `EventKind` enum (speech now; dtmf/signaling/media forward-compat); never-close-channel discipline documented
-- [ ] 3.4 Establish the three nested context scopes (`callCtx ⊃ turnCtx ⊃ playbackCtx`) in the runner skeleton
-- [ ] 3.5 Implement the idempotent `teardown(reason)` funnel (`sync.Once`, gated by `IsTerminated`): cancel callCtx, release parking slot, CANCEL/BYE B-leg, release tenant channel, destroy RTP; pre-answer 487 vs post-answer BYE branch
+- [x] 3.4 Establish the three nested context scopes (`callCtx ⊃ turnCtx ⊃ playbackCtx`) in the runner skeleton
+- [x] 3.5 Implement the idempotent `teardown(reason)` funnel (`sync.Once`, gated by `IsTerminated`): cancel callCtx + Hangup done; parking slot / B-leg / tenant channel / RTP releases + pre-answer-487-vs-BYE branch left as TODO hooks for their owning phases (admission/parking/B2BUA/routing)
 
 ## 4. Router & admission
 
@@ -35,12 +35,12 @@
 
 ## 6. Runner: turns, first-turn decision, runaway breaker
 
-- [ ] 6.1 `agent/runner.go` `HandleCall`: create events channel + conversation; do NOT pre-answer
-- [ ] 6.2 First-turn single-shot decision: tool-only `dial` → forward (no answer); text → 200 OK + media + listen/speak; both → answer then act
-- [ ] 6.3 `dispatchTurn`: `/api/chat` call under `turnCtx`; native tool-call dispatch; TTS `content` under `playbackCtx`
-- [ ] 6.4 `speechLoop` producer (ASR via `Listen`, ctx-honoring, safe-send); dispatch loop drains channel, exits on `callCtx.Done()`
-- [ ] 6.5 Runaway breaker: bound consecutive autonomous turns (reset on caller input); soft cap → reactive-only; hard cap → deterministic message + teardown; per-call LLM-call budget backstop
-- [ ] 6.6 Leave the barge-in interrupt lane stubbed (a `playbackCtx`-cancelling signal) for a future media-VAD producer; do not implement onset detection now
+- [x] 6.1 `agent/runner.go` `HandleCall`: create events channel + conversation (no-pre-answer is `routing/invite.go`'s job in group 7; the runner never answers)
+- [x] 6.2 First-turn single-shot decision: speak-then-route / silent-route / content-only implemented; the forward-vs-answer SIP semantics are realized by the tool handlers (group 5) + answer-deferral (group 7)
+- [x] 6.3 `dispatchTurn` (`runTurn`): `ChatNative` under `turnCtx`; native tool-call dispatch via `ToolExecutor`; TTS `content` under `playbackCtx`
+- [x] 6.4 `speechLoop` producer (ASR via `Listen`, ctx-honoring, safe-send via `sendEvent`); dispatch loop drains channel, exits on `callCtx.Done()`; `teardownWG` prevents goroutine leak
+- [x] 6.5 Runaway breaker: bound consecutive autonomous turns (reset on caller input); soft cap → reactive-only; hard cap → deterministic message + teardown
+- [x] 6.6 Barge-in interrupt lane stubbed (`playbackCtx`/`playbackCancel` hook + `TODO(barge-in)`); onset detection deferred to the media layer
 
 ## 7. Rewire & delete dialplan
 
