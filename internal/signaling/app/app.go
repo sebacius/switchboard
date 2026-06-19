@@ -20,6 +20,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 	"github.com/sebas/switchboard/internal/signaling/parking"
 	"github.com/sebas/switchboard/internal/signaling/routing"
+	"github.com/sebas/switchboard/internal/signaling/trunk"
 )
 
 type SwitchBoard struct {
@@ -205,6 +206,24 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Wire BridgeMapper to migrator for bridged call migration during drain
 	migrator.SetBridgeMapper(callService.GetBridgeMapper())
 
+	// Load SIP trunk peers and DID->tenant routes
+	trunkPeers, err := trunk.LoadPeers(cfg.TrunkConfigPath)
+	if err != nil {
+		_ = ua.Close()
+		locStore.Close()
+		_ = mediaTransport.Close()
+		return nil, fmt.Errorf("failed to load trunk peers: %w", err)
+	}
+	didRoutes, err := trunk.LoadRoutes(cfg.RoutesPath)
+	if err != nil {
+		_ = ua.Close()
+		locStore.Close()
+		_ = mediaTransport.Close()
+		return nil, fmt.Errorf("failed to load routes: %w", err)
+	}
+	sipTrunk := trunk.NewStaticTrunk(trunkPeers, "")
+	slog.Info("Trunk loaded", "peers", trunkPeers.Count(), "dids", didRoutes.Count())
+
 	// Create SIP method handlers
 	inviteHandler := routing.NewInviteHandler(
 		mediaTransport,
@@ -215,6 +234,8 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		executor,
 		locStore,
 		callService,
+		sipTrunk,
+		didRoutes,
 	)
 	byeHandler := routing.NewBYEHandler(dialogMgr, callService)
 	ackHandler := routing.NewACKHandler(dialogMgr)

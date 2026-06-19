@@ -30,6 +30,10 @@ type Config struct {
 	SettingsPath string // Directory containing settings.md (default "resources/config")
 	TenantsPath  string // Directory containing tenant .md files (default "resources/tenants")
 
+	// Trunk settings
+	TrunkConfigPath string // Path to trunk peers JSON (list of {name,host,port,role})
+	RoutesPath      string // Path to DID->tenant mapping (routes.json)
+
 	// RTP Manager pool settings - two formats supported:
 	//
 	// Named format (Kubernetes/containers): explicit node IDs for stable pod identification
@@ -62,6 +66,8 @@ func Load() *Config {
 	flag.StringVar(&cfg.LLMServerURL, "llm-server", "http://localhost:11434", "Ollama LLM server URL")
 	flag.StringVar(&cfg.SettingsPath, "settings-path", "resources/config", "Directory containing settings.md")
 	flag.StringVar(&cfg.TenantsPath, "tenants-path", "resources/tenants", "Directory containing tenant .md files")
+	flag.StringVar(&cfg.TrunkConfigPath, "trunk-config", "resources/config/trunk_peers.json", "Path to trunk peers configuration")
+	flag.StringVar(&cfg.RoutesPath, "routes-path", "resources/config/routes.json", "Path to DID->tenant routes (routes.json)")
 
 	var rtpManagerAddrs string
 	flag.StringVar(&rtpManagerAddrs, "rtpmanager", "localhost:9090", "RTP Manager gRPC addresses (comma-separated for multiple)")
@@ -115,6 +121,12 @@ func Load() *Config {
 	}
 	if tenantsPath := os.Getenv("TENANTS_PATH"); tenantsPath != "" {
 		cfg.TenantsPath = tenantsPath
+	}
+	if trunkConfig := os.Getenv("TRUNK_CONFIG"); trunkConfig != "" {
+		cfg.TrunkConfigPath = trunkConfig
+	}
+	if routesPath := os.Getenv("ROUTES_PATH"); routesPath != "" {
+		cfg.RoutesPath = routesPath
 	}
 
 	return cfg

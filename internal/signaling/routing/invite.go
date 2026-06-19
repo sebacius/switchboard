@@ -15,6 +15,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
+	"github.com/sebas/switchboard/internal/signaling/trunk"
 )
 
 // SessionRecorder records session info for the API
@@ -32,6 +33,8 @@ type InviteHandler struct {
 	executor        *dialplan.Executor
 	locStore        location.LocationStore
 	callService     b2bua.CallService
+	trunk           trunk.Trunk
+	didRoutes       *trunk.DIDRoutes
 }
 
 // NewInviteHandler creates a new INVITE handler
@@ -44,6 +47,8 @@ func NewInviteHandler(
 	executor *dialplan.Executor,
 	locStore location.LocationStore,
 	callService b2bua.CallService,
+	sipTrunk trunk.Trunk,
+	didRoutes *trunk.DIDRoutes,
 ) *InviteHandler {
 	return &InviteHandler{
 		transport:       transport,
@@ -54,12 +59,23 @@ func NewInviteHandler(
 		executor:        executor,
 		locStore:        locStore,
 		callService:     callService,
+		trunk:           sipTrunk,
+		didRoutes:       didRoutes,
 	}
 }
 
 // HandleINVITE processes incoming INVITE requests
 func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction) {
 	slog.Info("Received INVITE", "from", req.From(), "to", req.To(), "call_id", req.CallID())
+
+	// Classify the source before doing any work: an INVITE must come from a
+	// registered directory user or a configured trunk peer. Unknown sources are
+	// rejected (toll-fraud ingress protection); inbound trunk calls for an
+	// unmapped DID are declined.
+	srcIP, _ := parseSourceAddr(req.Source())
+	if !h.classifyAndAuthorize(req, tx, srcIP) {
+		return
+	}
 
 	// Create dialog via manager
 	dlg, err := h.dialogMgr.CreateFromInvite(req, tx)
@@ -180,6 +196,54 @@ func (h *InviteHandler) extractSDPInfo(req *sip.Request) (clientAddr string, cli
 	}
 
 	return clientAddr, clientPort, codecs, nil
+}
+
+// classifyAndAuthorize gates an incoming INVITE by source. It returns true when
+// the call may proceed. Registered directory users and inbound trunk peers are
+// allowed; any other source is rejected with 403. For trunk-origin calls the
+// dialed DID must map to a tenant, otherwise the call is declined with 603.
+func (h *InviteHandler) classifyAndAuthorize(req *sip.Request, tx sip.ServerTransaction, srcIP string) bool {
+	// Registered directory user?
+	isUser := false
+	if from := req.From(); from != nil {
+		aor := from.Address.String()
+		if h.locStore.Has(aor) || len(h.locStore.LookupByUser(from.Address.User)) > 0 {
+			isUser = true
+		}
+	}
+
+	// Configured inbound trunk peer?
+	var peer *trunk.Peer
+	isTrunk := false
+	if h.trunk != nil {
+		peer, isTrunk = h.trunk.MatchInbound(srcIP)
+	}
+
+	if !isUser && !isTrunk {
+		slog.Warn("Rejecting INVITE from unknown source", "source", srcIP, "from", req.From())
+		resp := sip.NewResponseFromRequest(req, sip.StatusForbidden, "Forbidden - unknown source", nil)
+		_ = tx.Respond(resp)
+		return false
+	}
+
+	// Inbound trunk call: resolve DID -> tenant; reject unmapped DIDs (no default).
+	if isTrunk && !isUser {
+		did := h.extractDestination(req)
+		var tenant string
+		var ok bool
+		if h.didRoutes != nil {
+			tenant, ok = h.didRoutes.TenantForDID(did)
+		}
+		if !ok {
+			slog.Warn("Declining inbound trunk call for unmapped DID", "did", did, "peer", peer.Name)
+			resp := sip.NewResponseFromRequest(req, sip.StatusGlobalDecline, "Declined - unmapped DID", nil)
+			_ = tx.Respond(resp)
+			return false
+		}
+		slog.Info("Inbound trunk call", "peer", peer.Name, "did", did, "tenant", tenant)
+	}
+
+	return true
 }
 
 // extractDestination extracts the destination from the To header.
