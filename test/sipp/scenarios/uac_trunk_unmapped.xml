@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<!--
+  UAC: simulate an inbound trunk call to an UNMAPPED DID and expect 603 Decline.
+  Requires the sipp host IP to be configured as a trunk peer in trunk_peers.json
+  (otherwise the gate returns 403 instead of 603).
+  Pass an unregistered From via -s, the unmapped DID via -key callee.
+  Example: sipp ... -s 15550000000 -key callee 9999
+-->
+<scenario name="UAC - Trunk unmapped DID (expect 603)">
+  <!-- Send INVITE -->
+  <send retrans="500">
+    <![CDATA[
+INVITE sip:[callee]@[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+From: <sip:[service]@[remote_ip]:[remote_port]>;tag=[pid]uac[call_number]
+To: <sip:[callee]@[remote_ip]:[remote_port]>
+Call-ID: [call_id]
+CSeq: 1 INVITE
+Contact: <sip:[service]@[local_ip]:[local_port];transport=[transport]>
+Max-Forwards: 70
+Content-Type: application/sdp
+User-Agent: SIPp/TotallyNotARobot/1.0
+Content-Length: [len]
+
+v=0
+o=sipp 0 0 IN IP4 [local_ip]
+s=-
+c=IN IP4 [local_ip]
+t=0 0
+m=audio [media_port] RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+    ]]>
+  </send>
+
+  <!-- Unmapped DID on a trunk source is declined. sipp auto-ACKs the 603. -->
+  <recv response="603" rtd="true"/>
+</scenario>
