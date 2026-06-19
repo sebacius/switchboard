@@ -21,9 +21,9 @@
 
 ## 4. Router & admission
 
-- [ ] 4.1 Add `agent/router.go`: direction classification (directory-user via full-AOR lookup / trunk-origin / external) consuming `basic-sip-trunk`
-- [ ] 4.2 Tenant resolution: subdomain for internal/outbound, DID→tenant for inbound; no default — unresolved/unloaded → reject
-- [ ] 4.3 Add `agent/admission.go`: deterministic preflight (tenant loaded, prompt non-empty) + per-tenant channel semaphore; reject pre-answer (4xx/486); acquire slot, release via teardown
+- [x] 4.1 Add `agent/router.go`: direction classification (trunk-origin first, then registered directory-user via `Directory` adapter over `LocationStore`) consuming `basic-sip-trunk`; takes a plain `RouteInput` (no sipgo import)
+- [x] 4.2 Tenant resolution: subdomain (leftmost label) for internal/outbound, DID→tenant for inbound; no default — unresolved → `ok=false` (group 7 maps to reject)
+- [x] 4.3 Add `agent/admission.go`: deterministic preflight (`PromptSource` non-empty) + per-tenant channel semaphore with idempotent `Release`; returns decision+slot (group 7 maps reject → 4xx/486 and wires `Release` into teardown)
 
 ## 5. Tools, per-call registry & policy
 
