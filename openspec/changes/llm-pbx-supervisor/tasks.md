@@ -1,21 +1,21 @@
 ## 1. Prerequisite & branch
 
-- [ ] 1.1 Land `basic-sip-trunk` first; this change depends on its trunk recognition + DID→tenant routing
-- [ ] 1.2 Cut/continue the branch off main (not `llm-tool-registry` or `llm-supervisor-phase1`); create `internal/signaling/agent/`
+- [x] 1.1 Land `basic-sip-trunk` first; this change depends on its trunk recognition + DID→tenant routing
+- [x] 1.2 Cut/continue the branch off main (not `llm-tool-registry` or `llm-supervisor-phase1`); create `internal/signaling/agent/`
 
 ## 2. LLM client: native /api/chat tool calling
 
-- [ ] 2.1 Add a `Client` interface in `internal/signaling/llm/` and point the implementation at Ollama native `/api/chat` (not `/v1/chat/completions`), sending `think: false`
-- [ ] 2.2 Model request/response with separate `thinking`, `content`, and `tool_calls` fields; only `content` is eligible for TTS
-- [ ] 2.3 Add `llm/tools.go`: `AgentTool`, `ToolRegistry`, `Handler`, and the `/api/chat` tool-definition converter
-- [ ] 2.4 Update the conversation to append tool-result messages back into history (`Continue` disposition)
-- [ ] 2.5 Add `llm/scripted.go`: `ScriptedClient` implementing `Client`, returning pre-programmed thinking/text/tool-call sequences
+- [x] 2.1 Add a `Client` interface in `internal/signaling/llm/` and point the implementation at Ollama native `/api/chat` (not `/v1/chat/completions`), sending `think: false` — `ChatClient` + `ChatNative` (old `/v1` kept for the dialplan until deletion)
+- [x] 2.2 Model request/response with separate `thinking`, `content`, and `tool_calls` fields; only `content` is eligible for TTS
+- [x] 2.3 Add `llm/tools.go`: `AgentTool`, `ToolRegistry`, `Handler`, and the `/api/chat` tool-definition converter (`AsOllamaTools`)
+- [ ] 2.4 Update the conversation to append tool-result messages back into history (`Continue` disposition) — deferred to the runner phase (NativeMessage supports `role=tool`/`tool_name`)
+- [x] 2.5 Add `llm/scripted.go`: `ScriptedClient` implementing `Client`, returning pre-programmed thinking/text/tool-call sequences
 
 ## 3. Agent package: session, context, events, nested-ctx spine
 
 - [ ] 3.1 Move `CallSession` interface + impl from `dialplan/session.go` to `agent/session.go`
-- [ ] 3.2 Add `agent/context.go`: `CallContext{Caller, Callee, Direction, Tenant}` + `FormatForPrompt()`
-- [ ] 3.3 Add `agent/events.go`: `Event{Kind, Payload}` + `EventKind` enum (speech now; dtmf/signaling/media forward-compat); never-close-channel discipline documented
+- [x] 3.2 Add `agent/context.go`: `CallContext{Caller, Callee, Direction, Tenant}` + `FormatForPrompt()`
+- [x] 3.3 Add `agent/events.go`: `Event{Kind, Payload}` + `EventKind` enum (speech now; dtmf/signaling/media forward-compat); never-close-channel discipline documented
 - [ ] 3.4 Establish the three nested context scopes (`callCtx ⊃ turnCtx ⊃ playbackCtx`) in the runner skeleton
 - [ ] 3.5 Implement the idempotent `teardown(reason)` funnel (`sync.Once`, gated by `IsTerminated`): cancel callCtx, release parking slot, CANCEL/BYE B-leg, release tenant channel, destroy RTP; pre-answer 487 vs post-answer BYE branch
 
