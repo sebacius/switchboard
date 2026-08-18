@@ -182,9 +182,9 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 		h.sessionRecorder.RecordSession(dlg.CallID, clientAddr, clientPort, sessionResult.LocalAddr, sessionResult.LocalPort)
 	}
 
-	// NOTE: no 183 and no 200 OK here. The answer SDP is handed to the session
-	// and held until agent.CallSession.Answer sends it — the supervisor's first
-	// turn decides whether this call is forwarded or answered.
+	// The answer SDP is handed to the session and held until
+	// agent.CallSession.Answer sends it — the supervisor's first turn still
+	// decides whether this call is forwarded or answered. No 183, no 200 OK.
 	session := agent.NewSession(agent.SessionConfig{
 		Dialog:      dlg,
 		Transport:   h.transport,
@@ -198,6 +198,25 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 		Domain:      h.extractDomain(req),
 		SDPBody:     sessionResult.SDPBody,
 	})
+
+	// Ring the caller BEFORE the first LLM turn. The turn can take tens of
+	// seconds on modest hardware, and until some provisional response arrives the
+	// caller's INVITE client transaction is still retransmitting against Timer B
+	// — so the call was being CANCELled before the supervisor ever decided
+	// anything. A provisional moves that transaction to Proceeding, which buys
+	// the decision as much time as it needs, and the caller hears real ringback
+	// instead of dead air.
+	//
+	// 180 is deliberately not 200: it holds the transaction without answering, so
+	// a first turn that chooses to forward can still relay the target's own 200,
+	// and one that chooses to speak still sends our 200 at that point. Ordinary
+	// SIP either way — the phone rings, then somebody picks up.
+	if err := h.dialogMgr.SendRinging(dlg); err != nil {
+		// Not fatal: the call can still complete, the caller just waits in silence.
+		slog.Warn("[Routing] Failed to send 180 Ringing", "call_id", dlg.CallID, "error", err)
+	} else {
+		session.MarkRinging()
+	}
 
 	admitted = true
 	go h.superviseCall(dlg, session, cc, decision.Release)

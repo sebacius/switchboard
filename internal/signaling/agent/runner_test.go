@@ -30,6 +30,7 @@ type fakeSession struct {
 	// and dialled record which SIP path the dial tool took.
 	answeredVal atomic.Bool
 	answerCalls atomic.Int32
+	rangEarly   atomic.Bool
 	forwarded   []string
 	dialled     []string
 
@@ -80,6 +81,10 @@ func (f *fakeSession) Answer(context.Context) error {
 }
 
 func (f *fakeSession) HasAnswered() bool { return f.answeredVal.Load() }
+
+// MarkRinging records the early 180 the INVITE handler sends before the first
+// turn, so a later Forward knows not to send a second one.
+func (f *fakeSession) MarkRinging() { f.rangEarly.Store(true) }
 
 // Forward is the pre-answer routing path. It never answers: that is the whole
 // invariant under test for a silent internal route.

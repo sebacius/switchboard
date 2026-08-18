@@ -41,6 +41,10 @@ type CallSession interface {
 	// media operation (PlayTTS/PlayAudio/Listen) requires an answered leg.
 	Answer(ctx context.Context) error
 
+	// MarkRinging records that a 180 Ringing has already been sent for this leg,
+	// so the dial path does not send a second one.
+	MarkRinging()
+
 	// HasAnswered reports whether this leg has been answered by the supervisor.
 	// It is the branch the dial tool takes between forwarding and bridging, and
 	// the branch teardown takes between a 487 and a BYE.
@@ -120,6 +124,10 @@ type sessionImpl struct {
 	// bLeg is the outbound leg created by Forward/Dial, retained so teardown can
 	// cancel an orphaned leg when the caller abandons mid-forward.
 	bLeg b2bua.Leg
+
+	// ringingSent records that a 180 has gone out, so the early ring from the
+	// INVITE handler and Forward's own ring do not both fire.
+	ringingSent bool
 }
 
 // SessionConfig contains dependencies for creating a CallSession.

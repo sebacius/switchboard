@@ -28,6 +28,31 @@ import (
 // timeout.
 const forwardRingTimeout = 45 * time.Second
 
+// MarkRinging records that a 180 has already been sent for this leg, so a later
+// Forward does not send a duplicate. The INVITE handler calls this after ringing
+// the caller up front to hold the transaction open across a slow first turn.
+func (s *sessionImpl) MarkRinging() {
+	s.mu.Lock()
+	s.ringingSent = true
+	s.mu.Unlock()
+}
+
+// ringOnce sends 180 Ringing unless one has already gone out. It returns
+// silently when there is nothing to do, so callers need no bookkeeping.
+func (s *sessionImpl) ringOnce() {
+	s.mu.Lock()
+	already := s.ringingSent
+	s.ringingSent = true
+	s.mu.Unlock()
+
+	if already || s.dialogMgr == nil {
+		return
+	}
+	if err := s.dialogMgr.SendRinging(s.dialog); err != nil {
+		s.logger.Warn("[Session] Failed to send 180 Ringing", "call_id", s.callID, "error", err)
+	}
+}
+
 // HasAnswered reports whether the 200 OK has been sent for this leg.
 func (s *sessionImpl) HasAnswered() bool {
 	s.mu.Lock()
@@ -98,13 +123,11 @@ func (s *sessionImpl) Forward(ctx context.Context, target string, timeout time.D
 
 	s.logger.Info("[Session] Forwarding (pre-answer)", "call_id", s.callID, "target", target, "timeout", timeout)
 
-	// Relay 180 upstream so the caller hears ringback while we dial. A failure
-	// here is not fatal — the forward can still complete — so we only log it.
-	if s.dialogMgr != nil {
-		if err := s.dialogMgr.SendRinging(s.dialog); err != nil {
-			s.logger.Warn("[Session] Failed to send 180 Ringing", "call_id", s.callID, "error", err)
-		}
-	}
+	// Relay 180 upstream so the caller hears ringback while we dial — unless the
+	// INVITE handler already rang to hold the transaction open across the first
+	// turn, in which case a second 180 would be redundant. A failure here is not
+	// fatal; the forward can still complete.
+	s.ringOnce()
 
 	callerName := s.callerName
 	if callerName == "" {

@@ -198,6 +198,9 @@ func (f *fakeSession) GetTransport() mediaclient.Transport {
 	return nil
 }
 
+// MarkRinging is a no-op here: the harness has no SIP transaction to hold open.
+func (f *fakeSession) MarkRinging() {}
+
 func (f *fakeSession) HasAnswered() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()

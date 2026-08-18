@@ -679,3 +679,42 @@ func TestFirstTurnDirectiveIsDirectionSpecificAndLast(t *testing.T) {
 		t.Fatal("the directive must come after the tenant prompt, not before it")
 	}
 }
+
+// --- Scenario: the early 180 does not become a duplicate. ---
+//
+// routing/invite.go rings the caller before the first LLM turn, so the
+// transaction survives a decision that takes tens of seconds. Forward then must
+// not send a second 180. This drives the real sessionImpl bookkeeping rather
+// than a fake, since the whole point is which of two real call sites rings.
+func TestRingOnceSuppressesDuplicateRinging(t *testing.T) {
+	sess := &sessionImpl{callID: "ring-call", logger: quietLogger()}
+
+	// No dialog manager wired, so ringOnce cannot actually send — what is under
+	// test is the once-only bookkeeping, which must hold either way.
+	if sess.ringingSent {
+		t.Fatal("a fresh session should not think it has rung")
+	}
+
+	sess.MarkRinging()
+	if !sess.ringingSent {
+		t.Fatal("MarkRinging must record that the caller was already rung")
+	}
+
+	// A subsequent Forward calls ringOnce; the flag stays set and no second
+	// send is attempted.
+	sess.ringOnce()
+	if !sess.ringingSent {
+		t.Fatal("ringOnce must leave the flag set")
+	}
+}
+
+// A session nobody rang up front still rings when the forward path runs, so
+// Forward remains correct on its own.
+func TestRingOnceRingsWhenNotAlreadyRung(t *testing.T) {
+	sess := &sessionImpl{callID: "ring-call-2", logger: quietLogger()}
+
+	sess.ringOnce()
+	if !sess.ringingSent {
+		t.Fatal("the first ringOnce on an un-rung session must mark it rung")
+	}
+}

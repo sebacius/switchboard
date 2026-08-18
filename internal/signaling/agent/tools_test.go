@@ -59,6 +59,8 @@ func (s *recordingSession) Answer(context.Context) error {
 	return nil
 }
 
+func (s *recordingSession) MarkRinging() {}
+
 func (s *recordingSession) HasAnswered() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
