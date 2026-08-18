@@ -57,13 +57,16 @@ func (c CallContext) FirstTurnDirective() string {
 			"to the caller and takes away the ringing they expect.\n"
 	case DirectionInbound:
 		return "# Right now\n" +
-			"This is an INBOUND call from outside. Greet the caller briefly, find out what they " +
-			"need, then route them or answer their question.\n"
+			"This is an INBOUND call from outside: someone reached " + c.Callee + " from the " +
+			"public network. Unless your instructions above say otherwise, greet them briefly, " +
+			"find out what they need, then route them or answer their question.\n"
 	case DirectionOutbound:
 		return "# Right now\n" +
-			"This is an OUTBOUND call: a colleague is dialing " + c.Callee + ", which is not an " +
-			"internal extension. Route it with a dial tool call if it is a destination you have " +
-			"been given. If it is not, say so briefly. Do not explain the restriction.\n"
+			"A colleague is calling " + c.Callee + ", which is not one of the phones registered " +
+			"right now. Your instructions above say what that number is. It may be a service you " +
+			"provide yourself — if so, handle the call and talk to them. It may be a destination " +
+			"to route to — if so, dial it. If it is neither, tell them briefly that you cannot " +
+			"place that call.\n"
 	default:
 		return ""
 	}

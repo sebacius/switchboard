@@ -639,6 +639,32 @@ func TestFirstTurnDirectiveIsDirectionSpecificAndLast(t *testing.T) {
 	if d := inbound.FirstTurnDirective(); !strings.Contains(strings.ToLower(d), "greet") {
 		t.Fatalf("inbound directive should ask for a greeting, got %q", d)
 	}
+
+	// The directive is the LAST thing in the system message, so anything
+	// absolute in it overrides the tenant's own configuration. Only the internal
+	// case earns that, because silent routing is a hard requirement there. The
+	// other two must defer to the tenant file, or a tenant cannot declare what
+	// its own extensions mean (e.g. "600 is the assistant, talk to them").
+	outbound := CallContext{Caller: "100", Callee: "600", Direction: DirectionOutbound, Tenant: "devtenant"}
+	od := outbound.FirstTurnDirective()
+	if !strings.Contains(od, "600") {
+		t.Fatalf("outbound directive should name the dialed number, got %q", od)
+	}
+	if !strings.Contains(strings.ToLower(od), "instructions above") {
+		t.Fatalf("outbound directive must defer to the tenant instructions, got %q", od)
+	}
+	if !strings.Contains(strings.ToLower(od), "service you provide yourself") {
+		t.Fatalf("outbound directive must allow the assistant to handle the call itself, got %q", od)
+	}
+	if strings.Contains(od, "Do not explain") {
+		t.Fatal("outbound directive must not carry an unconditional gag on explaining itself")
+	}
+	if !strings.Contains(strings.ToLower(inbound.FirstTurnDirective()), "unless your instructions") {
+		t.Fatal("inbound directive should offer a default the tenant can override, not an order")
+	}
+	if od == internal.FirstTurnDirective() || od == inbound.FirstTurnDirective() {
+		t.Fatal("all three directions must produce distinct directives")
+	}
 	if internal.FirstTurnDirective() == inbound.FirstTurnDirective() {
 		t.Fatal("the directive must differ by direction")
 	}
