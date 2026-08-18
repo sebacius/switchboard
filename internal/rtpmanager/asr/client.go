@@ -11,15 +11,23 @@ import (
 	"time"
 )
 
+// DefaultModel is the transcription model requested when none is configured.
+// The OpenAI /v1/audio/transcriptions contract makes `model` REQUIRED, and
+// faster-whisper style servers reject the request with 422 when it is missing,
+// so there is no useful "unset" behaviour to fall back on.
+const DefaultModel = "Systran/faster-whisper-base"
+
 // Client is a Whisper ASR server client (OpenAI-compatible API)
 type Client struct {
 	serverURL  string
+	model      string
 	httpClient *http.Client
 }
 
 // Config holds ASR client configuration
 type Config struct {
-	ServerURL string        // Base URL of Whisper server (e.g., "http://localhost:8001")
+	ServerURL string        // Base URL of Whisper server (e.g., "http://localhost:9000")
+	Model     string        // Transcription model id (default DefaultModel)
 	Timeout   time.Duration // Request timeout (default 30s)
 }
 
@@ -30,8 +38,14 @@ func NewClient(cfg Config) *Client {
 		timeout = 30 * time.Second
 	}
 
+	model := cfg.Model
+	if model == "" {
+		model = DefaultModel
+	}
+
 	return &Client{
 		serverURL: cfg.ServerURL,
+		model:     model,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
@@ -61,6 +75,14 @@ func (c *Client) Transcribe(ctx context.Context, audioData []byte) (string, erro
 	}
 	if _, err := part.Write(audioData); err != nil {
 		return "", fmt.Errorf("write audio data: %w", err)
+	}
+
+	// The model field is REQUIRED by the OpenAI transcription contract. Omitting
+	// it makes faster-whisper style servers reject the whole request with a 422,
+	// which surfaces as every Listen failing and the supervisor never hearing
+	// the caller — so this is not an optional refinement.
+	if err := writer.WriteField("model", c.model); err != nil {
+		return "", fmt.Errorf("write model field: %w", err)
 	}
 
 	// Close multipart writer

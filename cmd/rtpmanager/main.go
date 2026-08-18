@@ -33,6 +33,7 @@ func main() {
 		{Label: "Audio Path", Value: cfg.AudioBasePath},
 		{Label: "TTS Server", Value: cfg.TTSServerURL},
 		{Label: "ASR Server", Value: cfg.ASRServerURL},
+		{Label: "ASR Model", Value: cfg.ASRModel},
 		{Label: "Log Level", Value: cfg.LogLevel},
 	})
 
@@ -49,6 +50,7 @@ func main() {
 		AudioBasePath: cfg.AudioBasePath,
 		TTSServerURL:  cfg.TTSServerURL,
 		ASRServerURL:  cfg.ASRServerURL,
+		ASRModel:      cfg.ASRModel,
 	}
 
 	rtpSrv, err := server.NewServer(srvCfg)

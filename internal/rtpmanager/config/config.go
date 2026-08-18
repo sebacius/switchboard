@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 	"strconv"
+
+	"github.com/sebas/switchboard/internal/rtpmanager/asr"
 )
 
 // Config holds the RTP Manager configuration
@@ -17,7 +19,8 @@ type Config struct {
 	AudioBasePath string
 	LogLevel      string
 	TTSServerURL  string // TTS server URL (e.g., "http://localhost:8000")
-	ASRServerURL  string // ASR/Whisper server URL (e.g., "http://localhost:8001")
+	ASRServerURL  string // ASR/Whisper server URL (e.g., "http://localhost:9000")
+	ASRModel      string // Transcription model id; required by the OpenAI /v1/audio/transcriptions contract
 }
 
 // Load loads configuration from command line flags and environment variables
@@ -33,6 +36,7 @@ func Load() *Config {
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level")
 	flag.StringVar(&cfg.TTSServerURL, "tts-server", "http://localhost:8000", "TTS server URL")
 	flag.StringVar(&cfg.ASRServerURL, "asr-server", "http://localhost:8001", "ASR/Whisper server URL")
+	flag.StringVar(&cfg.ASRModel, "asr-model", asr.DefaultModel, "Transcription model id sent to the ASR server (required by the API; override for a different Whisper build)")
 
 	flag.Parse()
 
@@ -62,6 +66,9 @@ func Load() *Config {
 	}
 	if v := os.Getenv("TTS_SERVER"); v != "" {
 		cfg.TTSServerURL = v
+	}
+	if v := os.Getenv("ASR_MODEL"); v != "" {
+		cfg.ASRModel = v
 	}
 	if v := os.Getenv("ASR_SERVER"); v != "" {
 		cfg.ASRServerURL = v

@@ -24,6 +24,7 @@ type Config struct {
 	AudioBasePath string
 	TTSServerURL  string
 	ASRServerURL  string
+	ASRModel      string
 }
 
 // Server implements the RTPManagerService gRPC server
@@ -65,9 +66,14 @@ func NewServer(cfg *Config) (*Server, error) {
 	if cfg.ASRServerURL != "" {
 		asrClient = asr.NewClient(asr.Config{
 			ServerURL: cfg.ASRServerURL,
+			Model:     cfg.ASRModel,
 		})
-		slog.Info("[gRPC] ASR client configured", "server", cfg.ASRServerURL)
+		slog.Info("[gRPC] ASR client configured", "server", cfg.ASRServerURL, "model", cfg.ASRModel)
 	}
+
+	// Verify the media endpoints actually answer before a caller depends on
+	// them. This is advisory only — it warns and continues.
+	probeMediaServices(context.Background(), cfg)
 
 	return &Server{
 		sessionMgr: sessionMgr,
