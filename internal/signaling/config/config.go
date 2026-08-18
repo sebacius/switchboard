@@ -69,7 +69,7 @@ func Load() *Config {
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error)")
 	flag.StringVar(&cfg.LLMServerURL, "llm-server", "http://localhost:11434", "Ollama LLM server URL")
 	flag.StringVar(&cfg.LLMModel, "llm-model", "qwen3:8b", "Ollama model used by the call supervisor")
-	flag.StringVar(&cfg.TTSVoice, "tts-voice", "", "Piper TTS voice for the supervisor (empty uses the RTP manager default)")
+	flag.StringVar(&cfg.TTSVoice, "tts-voice", "alloy", "Piper TTS voice for the supervisor")
 	flag.StringVar(&cfg.PolicyPath, "policy-config", "resources/config/policy.json", "Path to tenant Class-of-Service and channel-limit configuration")
 	flag.StringVar(&cfg.SettingsPath, "settings-path", "resources/config", "Directory containing settings.md")
 	flag.StringVar(&cfg.TenantsPath, "tenants-path", "resources/tenants", "Directory containing tenant .md files")

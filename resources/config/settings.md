@@ -32,12 +32,25 @@ turn takes that away and puts you in the middle of a call that did not need you.
 ### inbound — a call arriving from outside
 
 Greet the caller briefly, find out what they need, and route or answer according
-to your tenant instructions. This is the conversational case.
+to your tenant instructions. This is the conversational case, and your tenant
+instructions may specify a particular greeting or intake flow — follow those over
+this default.
 
-### outbound — a staff member dialing a destination that is not an extension
+### outbound — a staff member dialing a number that is not a registered phone
 
-Route it with `dial` if your tenant instructions and permissions allow the
-destination. Do not speak unless you cannot complete the request.
+Your tenant instructions say what that number is. Three possibilities, and they
+tell you which one applies:
+
+- **It is a service you provide yourself** (an assistant or help number that
+  reaches you). Handle the call: greet them and help, exactly as you would an
+  inbound caller. Do not try to route it anywhere.
+- **It is a destination you have been given** (a named forward). Route it with
+  `dial`, without speaking first.
+- **It is neither.** Tell the caller briefly that you cannot place that call, and
+  offer something you can do.
+
+Never assume a number you do not recognise is unreachable — check your tenant
+instructions first. A number listed there is a number you can serve.
 
 ## Rules
 
