@@ -37,19 +37,74 @@ Example with multiple RTP Managers:
 ./switchboard-signaling --rtpmanager "rtpmanager1:9090,rtpmanager2:9090,rtpmanager3:9090"
 ```
 
-### Dialplan Configuration
+### Call Supervisor
+
+Every INVITE is handled by the LLM supervisor; there is no dialplan.
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--dialplan` | `DIALPLAN_PATH` | dialplan.json | Path to dialplan configuration file |
+| `--llm-server` | `LLM_SERVER` | http://localhost:11434 | Ollama server URL |
+| `--llm-model` | `LLM_MODEL` | qwen3:8b | Model used by the call supervisor |
+| `--tts-voice` | `TTS_VOICE` | *(empty)* | Piper voice for the supervisor (empty uses the RTP manager default) |
+| `--policy-config` | `POLICY_CONFIG` | resources/config/policy.json | Class-of-Service and channel-limit configuration |
 
-### LLM Server Connection
+The signaling server **requires** a reachable LLM server: without a supervisor
+there is nothing to route calls, so it refuses to start rather than running
+unsupervised. It uses Ollama's native `/api/chat` endpoint with `think: false`,
+so `thinking`, `content`, and `tool_calls` come back as separate fields and
+reasoning is never spoken.
+
+### Prompts and Tenants
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--llm-server` | `LLM_SERVER` | http://localhost:11434 | Ollama LLM server URL |
+| `--settings-path` | `SETTINGS_PATH` | resources/config | Directory containing settings.md |
+| `--tenants-path` | `TENANTS_PATH` | resources/tenants | Directory containing tenant .md files |
 
-The signaling server connects to an Ollama instance for AI agent functionality. The LLM is used by the dialplan `ai_agent` action to generate conversational responses during calls.
+A tenant's prompt is `settings.md` followed by `tenants/<name>.md`. A tenant with
+no file of its own is **not admissible** — there is no default tenant, and an
+unattributable call is rejected rather than supervised by a guess.
+
+### Trunk and DID Routing
+
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `--trunk-config` | `TRUNK_CONFIG` | resources/config/trunk_peers.json | SIP trunk peers |
+| `--routes-path` | `ROUTES_PATH` | resources/config/routes.json | DID → tenant mapping |
+
+### Policy Configuration
+
+`policy.json` is the deterministic authorization boundary — the supervisor cannot
+change it, and anything it does not grant is denied. A **missing file is not an
+error**: it yields the safest posture (no external dialing anywhere, default
+channel limit).
+
+```json
+{
+  "default_channel_limit": 10,
+  "tenants": {
+    "acme": {
+      "channel_limit": 20,
+      "symbolic_targets": { "sales": "user/160", "support": "user/105" },
+      "allow_external_dial": false,
+      "external_allowlist": [],
+      "max_external_units_per_day": 0,
+      "allow_caller_provided_number": false
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `default_channel_limit` | Per-tenant concurrent-call cap when the tenant sets none. Rejects with 486 at the limit; keeps the first-turn LLM call from queueing past SIP Timer B |
+| `channel_limit` | Per-tenant override |
+| `symbolic_targets` | Capability narrowing: the names the model may dial, mapped to real targets. The model cannot express a raw number through `dial` |
+| `allow_external_dial` | Default-deny gate for any non-`user/` destination |
+| `external_allowlist` | Prefix allowlist, consulted only when external dial is enabled. Empty with external enabled denies everything |
+| `barred_prefixes` | Overrides the built-in barred classes (premium-rate, satellite, IRSF-heavy codes). Omit to inherit the defaults |
+| `max_external_units_per_day` | Spend circuit breaker. Zero permits no external spend |
+| `allow_caller_provided_number` | Gates the separate hard-gated tool that dials a raw caller-supplied number |
 
 ### Logging
 
@@ -65,8 +120,10 @@ export PORT=5060
 export BIND=0.0.0.0
 export ADVERTISE=192.168.1.10
 export RTPMANAGER=rtpmanager1:9090,rtpmanager2:9090
-export DIALPLAN_PATH=/etc/switchboard/dialplan.json
 export LLM_SERVER=http://localhost:11434
+export LLM_MODEL=qwen3:8b
+export POLICY_CONFIG=/etc/switchboard/policy.json
+export TENANTS_PATH=/etc/switchboard/tenants
 export LOGLEVEL=debug
 
 ./switchboard-signaling
@@ -77,8 +134,10 @@ export LOGLEVEL=debug
   --bind 0.0.0.0 \
   --advertise 192.168.1.10 \
   --rtpmanager rtpmanager1:9090,rtpmanager2:9090 \
-  --dialplan /etc/switchboard/dialplan.json \
   --llm-server http://localhost:11434 \
+  --llm-model qwen3:8b \
+  --policy-config /etc/switchboard/policy.json \
+  --tenants-path /etc/switchboard/tenants \
   --loglevel debug
 ```
 
@@ -208,7 +267,7 @@ export UI_LOGLEVEL=info
 
 ## AI Services
 
-Switchboard integrates three external AI services to support the `ai_agent` dialplan action. These services are not part of Switchboard itself but must be running and reachable for AI-powered call handling.
+Switchboard integrates three external AI services that the call supervisor depends on. These services are not part of Switchboard itself but must be running and reachable for AI-powered call handling.
 
 ### Service Overview
 
@@ -336,7 +395,6 @@ LOGLEVEL=info
 
 ## Related Documents
 
-- [Dialplan](DIALPLAN.md) - Dialplan configuration format
 
 ---
 

@@ -21,8 +21,6 @@ type FileProvider interface {
 	CreateTenant(name, content string) error
 	PutTenant(name, content string) error
 	DeleteTenant(name string) error
-	GetDialplan() (string, error)
-	PutDialplan(content string) error
 	Reload() error
 }
 
@@ -201,48 +199,6 @@ func (s *Server) handleConfigTenant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.writeJSON(w, map[string]string{"status": "deleted", "name": name})
-
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// handleConfigDialplan handles GET/PUT /api/v1/config/dialplan
-func (s *Server) handleConfigDialplan(w http.ResponseWriter, r *http.Request) {
-	if s.fileProvider == nil {
-		http.Error(w, "File management not configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		content, err := s.fileProvider.GetDialplan()
-		if err != nil {
-			slog.Error("[API] Failed to read dialplan", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		s.writeJSON(w, map[string]string{"content": content})
-
-	case http.MethodPut:
-		body, err := io.ReadAll(io.LimitReader(r.Body, 512*1024))
-		if err != nil {
-			http.Error(w, "Failed to read body", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			Content string `json:"content"`
-		}
-		if err := json.Unmarshal(body, &req); err != nil {
-			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
-			return
-		}
-		if err := s.fileProvider.PutDialplan(req.Content); err != nil {
-			slog.Error("[API] Failed to write dialplan", "error", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		s.writeJSON(w, map[string]string{"status": "ok"})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

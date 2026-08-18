@@ -616,3 +616,33 @@ func (m *Manager) SendReINVITE(ctx context.Context, d *Dialog, localContact sip.
 		}
 	}
 }
+
+// SendRinging sends 180 Ringing (no SDP). It is the pre-answer signal the agent
+// supervisor relays to the caller while an outbound leg is being dialed, so the
+// caller's phone generates local ringback instead of silence. It does NOT
+// answer the call and does NOT create a sipgo dialog session — the 200 OK is
+// still deferred until the outbound leg answers (or the supervisor engages media).
+func (m *Manager) SendRinging(d *Dialog) error {
+	ringing := sip.NewResponseFromRequest(d.InviteRequest, sip.StatusRinging, "Ringing", nil)
+	if err := d.Transaction.Respond(ringing); err != nil {
+		return fmt.Errorf("failed to send 180 Ringing: %w", err)
+	}
+
+	slog.Debug("[Dialog] Sent 180 Ringing", "call_id", d.CallID)
+	return nil
+}
+
+// RespondStatus sends a final non-2xx response on the INVITE transaction. It is
+// the pre-answer abort path: a caller CANCEL becomes 487 Request Terminated, an
+// admission rejection becomes 486/404, and a failed forward relays the outbound
+// leg's failure code upstream. It must not be used after SendOK — once answered,
+// termination is a BYE (see Terminate).
+func (m *Manager) RespondStatus(d *Dialog, code sip.StatusCode, reason string) error {
+	resp := sip.NewResponseFromRequest(d.InviteRequest, code, reason, nil)
+	if err := d.Transaction.Respond(resp); err != nil {
+		return fmt.Errorf("failed to send %d %s: %w", code, reason, err)
+	}
+
+	slog.Info("[Dialog] Sent pre-answer failure response", "call_id", d.CallID, "code", int(code), "reason", reason)
+	return nil
+}

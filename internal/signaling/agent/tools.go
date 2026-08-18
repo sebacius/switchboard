@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -51,8 +52,25 @@ type Tool struct {
 //     coarse affordance filter, the Policy is the fine-grained authorizer.
 //
 // hangup and play_audio are unconditional (no external reach).
-func BuildRegistry(cc CallContext, policy *Policy) []Tool {
+func BuildRegistry(cc CallContext, policy *Policy, deps RegistryDeps) []Tool {
+	logger := deps.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	tools := []Tool{hangupTool(), playAudioTool()}
+
+	// Parking is offered whenever the system has a parking service: holding a
+	// caller reaches nothing external, so it carries no fraud exposure. unpark
+	// is internal-only — retrieving a parked call is a directory-user action,
+	// and an inbound caller who guessed a slot number must not be able to pick
+	// up someone else's held call.
+	if deps.Parking != nil {
+		tools = append(tools, parkTool(deps.Parking, logger))
+		if cc.Direction == DirectionInternal {
+			tools = append(tools, unparkTool(deps.Parking, logger))
+		}
+	}
 
 	// Inbound trunk peers never receive a dial affordance. Internal directory
 	// users and outbound directory users may dial, gated by policy below.
@@ -65,12 +83,17 @@ func BuildRegistry(cc CallContext, policy *Policy) []Tool {
 	// for internal/outbound regardless, and the Policy denies external reach.
 	tools = append(tools, dialTool(policy != nil && policy.cfg.AllowExternalDial))
 
-	// TODO(group7): register park (DispositionParked) and unpark (BridgeMedia
-	// port) here once parking.Service is wired in. They are entangled with the
-	// answer model (a parked call must already own media) and need the parking
-	// slot lifecycle, so they are deliberately NOT registered yet.
-
 	return tools
+}
+
+// RegistryDeps are the process-level services a per-call registry may draw on.
+// They are passed in rather than held globally so the registry stays a pure
+// function of (tenant, direction, policy, available services).
+type RegistryDeps struct {
+	// Parking enables the park/unpark tools. Nil omits them entirely.
+	Parking ParkingService
+	// Logger is used by tool handlers; nil falls back to slog.Default().
+	Logger *slog.Logger
 }
 
 // CallExecutor is the per-call ToolExecutor. It holds this call's registry, the
@@ -80,6 +103,7 @@ func BuildRegistry(cc CallContext, policy *Policy) []Tool {
 // guard it anyway to stay safe if a future producer dispatches concurrently.
 type CallExecutor struct {
 	tools  map[string]Tool
+	order  []Tool // registry in build order, for ToolDefs advertisement
 	policy *Policy
 
 	mu       sync.Mutex
@@ -92,8 +116,12 @@ func NewCallExecutor(tools []Tool, policy *Policy) *CallExecutor {
 	for _, t := range tools {
 		m[t.Name] = t
 	}
-	return &CallExecutor{tools: m, policy: policy}
+	return &CallExecutor{tools: m, order: tools, policy: policy}
 }
+
+// ToolDefs returns the wire-format definitions for this call's registry, so the
+// runner advertises precisely the tools this executor will accept.
+func (e *CallExecutor) ToolDefs() []llm.ToolDef { return ToolDefs(e.order) }
 
 // Execute adjudicates and runs one tool call (design #10 / #12). The contract
 // with the runner: a returned Go error aborts nothing here — we return nil error
@@ -173,10 +201,19 @@ func (e *CallExecutor) executeDial(ctx context.Context, args map[string]any, ses
 	}
 
 	// Authorized: run the real dial against the resolved (never the raw) target.
-	if _, err := dialHandler(ctx, resolved, sess); err != nil {
+	result, err := dialHandler(ctx, resolved, sess)
+	if err != nil {
+		// A failed dial is recoverable: the caller is still on the line and the
+		// model should offer an alternative, so this is Continue, not Terminal.
 		return fmt.Sprintf("dial to the requested destination failed: %v; offer voicemail or another extension", err), DispositionContinue, true
 	}
-	return fmt.Sprintf("dialed %s", resolved), DispositionContinue, false
+
+	// A SUCCESSFUL dial is Terminal. dialHandler blocks for the life of the
+	// bridge, so by the time it returns without error the two parties have
+	// already talked and hung up — the supervisor is out of the path and there
+	// is nobody left to re-prompt about. Re-prompting here would drive turns
+	// against a dead call.
+	return result, DispositionTerminal, false
 }
 
 // recordOutcome updates the just-failed signature: a failed call is remembered
@@ -232,11 +269,11 @@ func stringArg(args map[string]any, key string) (string, bool) {
 	}
 }
 
-// toToolDefs converts a per-call registry to the wire format advertised to the
-// model. Exposed so the runner's toolDefs() TODO can later source advertised
-// tools from the same registry that backs the executor, keeping advertised and
-// executable tools in lockstep. NOT wired into the runner in this group.
-func toToolDefs(tools []Tool) []llm.ToolDef {
+// ToolDefs converts a per-call registry to the wire format advertised to the
+// model. The runner advertises exactly what its executor can run, so advertised
+// and executable tools stay in lockstep and an "unknown tool" is always a real
+// model contract violation rather than a registry mismatch.
+func ToolDefs(tools []Tool) []llm.ToolDef {
 	defs := make([]llm.ToolDef, 0, len(tools))
 	for _, t := range tools {
 		params := t.Params

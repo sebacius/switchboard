@@ -1,18 +1,18 @@
 package filemanager
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/sebas/switchboard/internal/signaling/dialplan"
 )
 
-// SettingsReloader can refresh cached settings content at runtime.
+// SettingsReloader refreshes the cached prompts an edit through this API
+// affects. The agent's PromptStore implements it, so writing a tenant file or
+// settings.md takes effect on the NEXT call without a restart — calls already in
+// flight keep the prompt they were admitted with.
 type SettingsReloader interface {
 	ReloadSettings() error
 }
@@ -26,19 +26,15 @@ type TenantInfo struct {
 
 // Config holds paths and dependencies for the FileManager.
 type Config struct {
-	SettingsDir      string             // directory containing settings.md
-	TenantsDir       string             // directory containing tenant .md files
-	DialplanPath     string             // full path to dialplan.json
-	Dialplan         *dialplan.Dialplan // for Reload()
-	SettingsReloader SettingsReloader   // optional, for refreshing cached settings
+	SettingsDir      string           // directory containing settings.md
+	TenantsDir       string           // directory containing tenant .md files
+	SettingsReloader SettingsReloader // optional, for refreshing cached prompts
 }
 
-// FileManager provides safe file operations for settings, tenants, and dialplan.
+// FileManager provides safe file operations for settings and tenant prompts.
 type FileManager struct {
 	settingsDir      string
 	tenantsDir       string
-	dialplanPath     string
-	dialplan         *dialplan.Dialplan
 	settingsReloader SettingsReloader
 }
 
@@ -49,8 +45,6 @@ func New(cfg Config) *FileManager {
 	return &FileManager{
 		settingsDir:      cfg.SettingsDir,
 		tenantsDir:       cfg.TenantsDir,
-		dialplanPath:     cfg.DialplanPath,
-		dialplan:         cfg.Dialplan,
 		settingsReloader: cfg.SettingsReloader,
 	}
 }
@@ -156,41 +150,15 @@ func (fm *FileManager) DeleteTenant(name string) error {
 	return nil
 }
 
-// GetDialplan reads the dialplan.json file.
-func (fm *FileManager) GetDialplan() (string, error) {
-	data, err := os.ReadFile(fm.dialplanPath)
-	if err != nil {
-		return "", fmt.Errorf("read dialplan: %w", err)
-	}
-	return string(data), nil
-}
-
-// PutDialplan validates and writes the dialplan.json file.
-func (fm *FileManager) PutDialplan(content string) error {
-	// Validate JSON
-	var js json.RawMessage
-	if err := json.Unmarshal([]byte(content), &js); err != nil {
-		return fmt.Errorf("invalid JSON: %w", err)
-	}
-	if err := os.WriteFile(fm.dialplanPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write dialplan: %w", err)
-	}
-	return nil
-}
-
-// Reload reloads the dialplan and refreshes cached settings.
+// Reload refreshes the cached tenant prompts. There is no dialplan to reload:
+// routing decisions are made per call by the supervisor, so a prompt edit is
+// the only reloadable routing input.
 func (fm *FileManager) Reload() error {
 	var errors []string
 
-	if fm.dialplan != nil {
-		if err := fm.dialplan.Reload(); err != nil {
-			errors = append(errors, fmt.Sprintf("dialplan: %v", err))
-		}
-	}
-
 	if fm.settingsReloader != nil {
 		if err := fm.settingsReloader.ReloadSettings(); err != nil {
-			errors = append(errors, fmt.Sprintf("settings: %v", err))
+			errors = append(errors, fmt.Sprintf("prompts: %v", err))
 		}
 	}
 

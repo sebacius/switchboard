@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emiago/sipgo/sip"
 	"github.com/sebas/switchboard/internal/signaling/b2bua"
 	"github.com/sebas/switchboard/internal/signaling/dialog"
 	"github.com/sebas/switchboard/internal/signaling/location"
@@ -32,8 +33,31 @@ type CallSession interface {
 	StopAudio() error
 	Listen(ctx context.Context, maxDurationMs, silenceTimeoutMs int) (text string, err error)
 
-	// B2BUA operations (for dial action)
-	// Dial initiates an outbound call to the target.
+	// Answer model (design #7). The INVITE handler never answers; the supervisor
+	// decides. Answering means "the AI handles this leg's media itself".
+
+	// Answer sends the 200 OK with the supervisor's SDP, taking ownership of the
+	// media. It is idempotent: a second call is a no-op returning nil. Every
+	// media operation (PlayTTS/PlayAudio/Listen) requires an answered leg.
+	Answer(ctx context.Context) error
+
+	// HasAnswered reports whether this leg has been answered by the supervisor.
+	// It is the branch the dial tool takes between forwarding and bridging, and
+	// the branch teardown takes between a 487 and a BYE.
+	HasAnswered() bool
+
+	// B2BUA operations (for the dial tool)
+
+	// Forward performs the PRE-ANSWER routing path: it relays 180 Ringing to the
+	// caller, dials the target, and only on the target answering does it send the
+	// 200 OK upstream and bridge. The supervisor never answers on its own behalf,
+	// so the caller hears real ringing and a failed target relays its own status
+	// code. Returns an error if the target could not be reached.
+	Forward(ctx context.Context, target string, timeout time.Duration) error
+
+	// Dial initiates an outbound call to the target and bridges media. It is the
+	// POST-ANSWER path: the supervisor already owns the media, so the B-leg is
+	// bridged to the existing RTP session rather than relayed.
 	// target can be "user/extension" or "sip:user@host:port"
 	// Returns error if dial fails (timeout, rejected, user not found)
 	Dial(ctx context.Context, target string, timeout time.Duration) error
@@ -83,6 +107,19 @@ type sessionImpl struct {
 	// Session state
 	sessionID  string
 	terminated bool
+
+	// sdpBody is the answer SDP produced when the media session was created. The
+	// INVITE handler holds it back instead of sending it in a 200 OK; Answer()
+	// sends it when (and only when) the supervisor decides to own the media.
+	sdpBody []byte
+
+	// answered records whether the 200 OK has gone out. It drives forward-vs-
+	// bridge in the dial tool and 487-vs-BYE in teardown.
+	answered bool
+
+	// bLeg is the outbound leg created by Forward/Dial, retained so teardown can
+	// cancel an orphaned leg when the caller abandons mid-forward.
+	bLeg b2bua.Leg
 }
 
 // SessionConfig contains dependencies for creating a CallSession.
@@ -97,6 +134,7 @@ type SessionConfig struct {
 	CallerID    string // From header user part (phone number/extension)
 	CallerName  string // From header display name
 	Domain      string // To header host part (SIP domain)
+	SDPBody     []byte // answer SDP, held back until Answer() sends the 200 OK
 }
 
 // NewSession creates a CallSession from an established dialog.
@@ -123,6 +161,7 @@ func NewSession(cfg SessionConfig) CallSession {
 		callService: cfg.CallService,
 		logger:      cfg.Logger,
 		sessionID:   cfg.Dialog.GetSessionID(),
+		sdpBody:     cfg.SDPBody,
 	}
 }
 
@@ -305,11 +344,20 @@ func (s *sessionImpl) Listen(ctx context.Context, maxDurationMs, silenceTimeoutM
 // Dial initiates an outbound call and bridges on answer.
 // Uses the B2BUA CallService for full dial and bridge functionality.
 func (s *sessionImpl) Dial(ctx context.Context, target string, timeout time.Duration) error {
-	s.logger.Info("[Session] Dial action",
+	s.logger.Info("[Session] Dial action (post-answer bridge)",
 		"call_id", s.callID,
 		"target", target,
 		"timeout", timeout,
 	)
+
+	// Dial bridges into media we already own. Reaching it before answering means
+	// the caller picked the wrong path; Forward is the pre-answer equivalent.
+	if !s.HasAnswered() {
+		return &DialError{
+			Target: target,
+			Cause:  fmt.Errorf("dial before answer: use Forward for the pre-answer path"),
+		}
+	}
 
 	// Check if CallService is configured
 	if s.callService == nil {
@@ -474,7 +522,15 @@ func (s *sessionImpl) lookupUser(extension string) (string, error) {
 	return "", ErrUserNotFound
 }
 
-// Hangup terminates the call.
+// Hangup terminates the call. It is the session half of the runner's idempotent
+// teardown funnel (design #6) and branches on whether we ever answered:
+//
+//	pre-answer  → 487 Request Terminated on the still-open INVITE transaction,
+//	              plus a CANCEL/BYE on any outbound leg left ringing
+//	post-answer → BYE via the dialog manager, media torn down as usual
+//
+// The first call wins; subsequent calls are no-ops, so a caller BYE racing the
+// hangup tool cannot double-free or provoke a "dialog not found".
 func (s *sessionImpl) Hangup(reason string) error {
 	s.mu.Lock()
 	if s.terminated {
@@ -482,22 +538,38 @@ func (s *sessionImpl) Hangup(reason string) error {
 		return nil
 	}
 	s.terminated = true
+	answered := s.answered
 	s.mu.Unlock()
 
 	s.logger.Info("[Session] Hangup",
 		"call_id", s.callID,
 		"reason", reason,
+		"answered", answered,
 	)
 
 	// Cancel our context to stop any ongoing operations
 	s.cancel()
 
-	// Terminate the dialog
-	if s.dialogMgr != nil && !s.dialog.IsTerminated() {
-		return s.dialogMgr.Terminate(s.callID, dialog.ReasonLocalBYE)
+	// An outbound leg may still be ringing (the caller abandoned mid-forward).
+	// Cancel it first so we never leave a phone ringing for a call that is gone.
+	s.hangupBLeg(reason)
+
+	if s.dialogMgr == nil || s.dialog.IsTerminated() {
+		return nil
 	}
 
-	return nil
+	if !answered {
+		// Pre-answer abort: the INVITE transaction is still open, so the correct
+		// response is 487 — not a BYE, which would reference a dialog the caller
+		// never confirmed.
+		if err := s.dialogMgr.RespondStatus(s.dialog, sip.StatusRequestTerminated, "Request Terminated"); err != nil {
+			s.logger.Warn("[Session] Pre-answer 487 failed", "call_id", s.callID, "error", err)
+		}
+		return s.dialogMgr.Terminate(s.callID, dialog.ReasonCancel)
+	}
+
+	// Post-answer: normal BYE path.
+	return s.dialogMgr.Terminate(s.callID, dialog.ReasonLocalBYE)
 }
 
 // TerminateDialog terminates another dialog by its Call-ID.

@@ -64,6 +64,11 @@ func playAudioTool() Tool {
 				// executor wraps it into a Continue result the model can correct.
 				return "", fmt.Errorf("play_audio requires a 'file'; name a prompt to play")
 			}
+			// Playing a prompt means the supervisor handles this leg's media, so
+			// answering is implied by the decision to play (design #7).
+			if err := sess.Answer(ctx); err != nil {
+				return "", fmt.Errorf("answer before play_audio: %w", err)
+			}
 			if err := sess.PlayAudio(ctx, file); err != nil {
 				return "", err
 			}
@@ -97,7 +102,10 @@ func dialTool(externalEnabled bool) Tool {
 			},
 			"required": []any{"target"},
 		},
-		Disposition: DispositionContinue,
+		// A completed dial is Terminal: the handler blocks for the life of the
+		// bridge, so it returns only once the call is over. A FAILED dial is
+		// downgraded to Continue by the executor so the model can recover.
+		Disposition: DispositionTerminal,
 		External:    externalEnabled,
 		// Handler is unused: dial is dispatched through CallExecutor.executeDial,
 		// which authorizes via Policy before calling dialHandler with the resolved
@@ -107,22 +115,25 @@ func dialTool(externalEnabled bool) Tool {
 }
 
 // dialHandler performs the actual dial against the resolved (already-authorized)
-// target. It uses the existing adopt-and-bridge CallSession.Dial path.
+// target. It is the realization of the answer model (design #7): the SIP path it
+// takes depends entirely on whether the supervisor has answered.
 //
-// TODO(group7): the spec's "forward the INVITE without answering" path for
-// first-turn silent internal routing (relay 180/200, never send our own 200)
-// requires the answer-deferral + B2BUA INVITE forwarding that group 7 owns. For
-// now dial always uses the existing adopt-and-bridge session.Dial, which assumes
-// the supervisor has (or will) own media. When group 7 lands answer-deferral,
-// branch here on whether we have answered: forward pre-answer, bridge post-answer.
+//	not answered → Forward: relay 180 upstream, dial the target, and relay its
+//	               200 (or its failure code). The caller hears real ringback and
+//	               a direct extension call is a pure forward — no AI in the path.
+//	answered     → Dial: the supervisor already owns the media, so the outbound
+//	               leg is bridged into the existing RTP session (the classic
+//	               adopt-and-bridge B2BUA flow).
 func dialHandler(ctx context.Context, resolvedTarget string, sess CallSession) (string, error) {
+	if !sess.HasAnswered() {
+		if err := sess.Forward(ctx, resolvedTarget, defaultDialTimeout); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("forwarded the call to %s", resolvedTarget), nil
+	}
+
 	if err := sess.Dial(ctx, resolvedTarget, defaultDialTimeout); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("dialed %s", resolvedTarget), nil
 }
-
-// TODO(group7): park/unpark tools are deferred. park returns DispositionParked
-// (the loop holds the call) and unpark performs the BridgeMedia port. Both need
-// parking.Service wired in and are entangled with the answer model (a parked
-// call must already own media), so they are not implemented or registered here.

@@ -36,3 +36,35 @@ func (c CallContext) FormatForPrompt() string {
 	fmt.Fprintf(&b, "- Tenant: %s\n", c.Tenant)
 	return b.String()
 }
+
+// FirstTurnDirective is the direction-specific instruction appended AFTER the
+// tenant prompt, making it the last thing the model reads before it answers.
+//
+// Position is the whole point. The same rules live in settings.md, but a tenant
+// knowledge base can run to hundreds of lines, and in live testing a 633-line
+// tenant prompt was enough to make qwen3:8b greet an internal caller instead of
+// routing them — the operative instruction was simply too far from the
+// generation point to compete. Restating it last costs nothing and is what
+// design decision #11 means by "output shaping, not bypass": the model still
+// chooses the target, it is just reminded what shape the answer takes.
+func (c CallContext) FirstTurnDirective() string {
+	switch c.Direction {
+	case DirectionInternal:
+		return "# Right now\n" +
+			"This is an INTERNAL call: a colleague dialed extension " + c.Callee + " and expects it to ring.\n" +
+			"Respond with a single dial tool call for that extension and NO text whatsoever.\n" +
+			"Do not greet. Do not say you are connecting them. Any text you produce is played " +
+			"to the caller and takes away the ringing they expect.\n"
+	case DirectionInbound:
+		return "# Right now\n" +
+			"This is an INBOUND call from outside. Greet the caller briefly, find out what they " +
+			"need, then route them or answer their question.\n"
+	case DirectionOutbound:
+		return "# Right now\n" +
+			"This is an OUTBOUND call: a colleague is dialing " + c.Callee + ", which is not an " +
+			"internal extension. Route it with a dial tool call if it is a destination you have " +
+			"been given. If it is not, say so briefly. Do not explain the restriction.\n"
+	default:
+		return ""
+	}
+}

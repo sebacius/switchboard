@@ -25,12 +25,31 @@ type fakeSession struct {
 
 	hangupCalls   atomic.Int32
 	terminatedVal atomic.Bool
+
+	// Answer-model state (design #7). answered records the 200 OK; forwarded
+	// and dialled record which SIP path the dial tool took.
+	answeredVal atomic.Bool
+	answerCalls atomic.Int32
+	forwarded   []string
+	dialled     []string
+
+	// forwardErr / dialErr make the outbound leg fail, for the relay path.
+	forwardErr error
+	dialErr    error
+
+	// forwardBlocks makes Forward hang until the call context is cancelled,
+	// modelling a target that rings and rings while the caller may CANCEL.
+	forwardBlocks bool
+	// forwardStarted closes once Forward has been entered, so a test can
+	// deterministically CANCEL mid-forward.
+	forwardStarted chan struct{}
 }
 
 func newFakeSession() *fakeSession {
 	return &fakeSession{
-		callID:  "test-call",
-		listenQ: make(chan string, 8),
+		callID:         "test-call",
+		listenQ:        make(chan string, 8),
+		forwardStarted: make(chan struct{}),
 	}
 }
 
@@ -42,14 +61,71 @@ func (f *fakeSession) spoken() []string {
 	return append([]string(nil), f.ttsSpoken...)
 }
 
-func (f *fakeSession) CallID() string                          { return f.callID }
-func (f *fakeSession) Destination() string                     { return "1000" }
-func (f *fakeSession) CallerID() string                        { return "2000" }
-func (f *fakeSession) Domain() string                          { return "example.test" }
-func (f *fakeSession) Context() context.Context                { return context.Background() }
-func (f *fakeSession) PlayAudio(context.Context, string) error { return nil }
+func (f *fakeSession) CallID() string           { return f.callID }
+func (f *fakeSession) Destination() string      { return "1000" }
+func (f *fakeSession) CallerID() string         { return "2000" }
+func (f *fakeSession) Domain() string           { return "example.test" }
+func (f *fakeSession) Context() context.Context { return context.Background() }
+
+func (f *fakeSession) PlayAudio(ctx context.Context, file string) error {
+	return f.Answer(ctx)
+}
+
+// Answer records the 200 OK. It is idempotent, like the real session, so the
+// runner calling it before every utterance costs nothing after the first.
+func (f *fakeSession) Answer(context.Context) error {
+	f.answerCalls.Add(1)
+	f.answeredVal.Store(true)
+	return nil
+}
+
+func (f *fakeSession) HasAnswered() bool { return f.answeredVal.Load() }
+
+// Forward is the pre-answer routing path. It never answers: that is the whole
+// invariant under test for a silent internal route.
+func (f *fakeSession) Forward(ctx context.Context, target string, _ time.Duration) error {
+	f.mu.Lock()
+	f.forwarded = append(f.forwarded, target)
+	blocks := f.forwardBlocks
+	err := f.forwardErr
+	f.mu.Unlock()
+
+	if f.forwardStarted != nil {
+		select {
+		case <-f.forwardStarted:
+		default:
+			close(f.forwardStarted)
+		}
+	}
+
+	if err != nil {
+		return err
+	}
+	if blocks {
+		// The target is ringing. Real Forward blocks here until the B-leg
+		// answers or the call goes away.
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return nil
+}
+
+func (f *fakeSession) forwards() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.forwarded...)
+}
+
+func (f *fakeSession) dials() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.dialled...)
+}
 
 func (f *fakeSession) PlayTTS(ctx context.Context, text, _ string) error {
+	if err := f.Answer(ctx); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	f.ttsSpoken = append(f.ttsSpoken, text)
 	f.mu.Unlock()
@@ -72,7 +148,13 @@ func (f *fakeSession) Listen(ctx context.Context, _, _ int) (string, error) {
 	}
 }
 
-func (f *fakeSession) Dial(context.Context, string, time.Duration) error { return nil }
+func (f *fakeSession) Dial(_ context.Context, target string, _ time.Duration) error {
+	f.mu.Lock()
+	f.dialled = append(f.dialled, target)
+	err := f.dialErr
+	f.mu.Unlock()
+	return err
+}
 
 func (f *fakeSession) Hangup(string) error {
 	f.hangupCalls.Add(1)
@@ -134,6 +216,23 @@ func testCC() CallContext {
 	return CallContext{Caller: "2000", Callee: "1000", Direction: DirectionInternal, Tenant: "acme"}
 }
 
+// inboundCC is the context for tests that model a CONVERSATION. Direction
+// matters to the runner now: an internal first turn that returns prose is
+// re-prompted once for a silent route (design #11), because a colleague dialing
+// an extension must not be greeted. A test that wants a greeting is, by
+// definition, describing an inbound call.
+func inboundCC() CallContext {
+	return CallContext{Caller: "+15551234567", Callee: "5558001200", Direction: DirectionInbound, Tenant: "acme"}
+}
+
+// runInboundWithTimeout is runWithTimeout for conversational scenarios.
+func runInboundWithTimeout(t *testing.T, r *Runner, sess CallSession, d time.Duration) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	return r.HandleCall(ctx, sess, inboundCC())
+}
+
 // runWithTimeout runs HandleCall under a deadline so a hung test fails fast
 // instead of blocking the suite. Returns the HandleCall error.
 func runWithTimeout(t *testing.T, r *Runner, sess CallSession, d time.Duration) error {
@@ -180,7 +279,7 @@ func TestConversationalTurns(t *testing.T) {
 	sess.queueTranscript("I want billing") // drives the second turn
 
 	r := NewRunner(RunnerConfig{Chat: chat, BuildExecutor: buildExec(exec)})
-	if err := runWithTimeout(t, r, sess, 2*time.Second); err != nil {
+	if err := runInboundWithTimeout(t, r, sess, 2*time.Second); err != nil {
 		t.Fatalf("HandleCall: %v", err)
 	}
 
@@ -221,6 +320,10 @@ func TestTeardownIdempotent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// A teardown hook stands in for the admission channel slot: if the funnel
+	// ran twice it would be released twice and the tenant would over-count
+	// capacity for the rest of the process's life.
+	var hookRuns atomic.Int32
 	run := &callRun{
 		cfg:        r.cfg,
 		log:        r.log,
@@ -228,6 +331,7 @@ func TestTeardownIdempotent(t *testing.T) {
 		callCtx:    ctx,
 		callCancel: cancel,
 		events:     make(chan Event, 1),
+		hooks:      []TeardownHook{func(string) { hookRuns.Add(1) }},
 	}
 
 	var wg sync.WaitGroup
@@ -242,6 +346,9 @@ func TestTeardownIdempotent(t *testing.T) {
 
 	if n := sess.hangupCalls.Load(); n != 1 {
 		t.Fatalf("expected teardown body to run once, hangup called %d times", n)
+	}
+	if n := hookRuns.Load(); n != 1 {
+		t.Fatalf("expected the teardown hook to run once, ran %d times", n)
 	}
 	if ctx.Err() == nil {
 		t.Fatal("expected callCtx cancelled after teardown")
@@ -335,7 +442,7 @@ func TestCancellationStopsLoop(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- r.HandleCall(ctx, sess, testCC()) }()
+	go func() { done <- r.HandleCall(ctx, sess, inboundCC()) }()
 
 	// Let the first turn run and the loop settle.
 	time.Sleep(50 * time.Millisecond)
