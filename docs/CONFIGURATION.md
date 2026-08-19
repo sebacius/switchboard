@@ -39,13 +39,56 @@ Example with multiple RTP Managers:
 
 ### Call Supervisor
 
-Every INVITE is handled by the LLM supervisor; there is no dialplan.
+Calls that deterministic resolution cannot answer are handled by the LLM
+supervisor (see the tenant routing table above for what resolves without it).
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
 | `--llm-server` | `LLM_SERVER` | http://localhost:11434 | Ollama server URL |
 | `--llm-model` | `LLM_MODEL` | qwen3:8b | Model used by the call supervisor |
+| `--llm-keep-alive` | `LLM_KEEP_ALIVE` | 30m | How long Ollama holds the model resident after a request (`-1` for indefinitely) |
+| `--first-turn-timeout` | `FIRST_TURN_TIMEOUT` | 90s | Deadline for the **first** supervisor turn |
+| `--turn-timeout` | `TURN_TIMEOUT` | 30s | Deadline for a **mid-call** supervisor turn |
 | `--tts-voice` | `TTS_VOICE` | *(empty)* | Piper voice for the supervisor (empty uses the RTP manager default) |
+
+#### Startup probe and model warm-up
+
+At startup the signaling server checks that the LLM answers and that
+`--llm-model` is actually pulled on it, then sends one small request to load the
+model, logging how long that took:
+
+```
+LLM ready and warmed load_time=6.774s note=this is what the first caller would otherwise have waited inside their turn budget
+```
+
+That number is the deployment's cold cost. Nothing here fails startup — a
+missing model or an unreachable server is a warning, because calls that resolve
+deterministically do not need the model at all:
+
+```
+LLM server is up but does NOT have the configured model; every supervised call will fail.
+Pull it (ollama pull) or fix --llm-model  available=[gemma3:4b qwen3:8b llama3.2:3b]
+
+LLM server did not answer; supervised calls will fail until it does.
+Deterministic routing is unaffected — check --llm-server
+```
+
+#### Why two turn budgets
+
+They are bounded by different things. The **first** turn runs while the caller
+hears ringback and may include loading a multi-gigabyte model, so its limit is
+caller patience. A **mid-call** turn is a silence with an open mic after the
+caller has stopped speaking, where 30s is already a long time.
+
+A single 30s budget for both is what produced this symptom in the field: a cold
+model took longer than 30s to load and answer, the turn was cancelled, and the
+caller heard "the assistant is unavailable" from a perfectly healthy LLM. Warm-up
+plus `--llm-keep-alive` is the fix; the larger first-turn budget is the safety
+net for a genuine cold start.
+
+If a turn does exceed its budget the log says so specifically, with the elapsed
+time — distinct from the server being unreachable, which is a different problem
+with a different fix.
 | `--policy-config` | `POLICY_CONFIG` | resources/config/policy.json | Class-of-Service and channel-limit configuration |
 
 The signaling server **requires** a reachable LLM server: without a supervisor

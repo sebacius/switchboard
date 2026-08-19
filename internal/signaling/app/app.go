@@ -189,8 +189,18 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		_ = mediaTransport.Close()
 		return nil, fmt.Errorf("no LLM server configured: the call supervisor requires --llm-server")
 	}
-	chatClient := llm.NewClient(llm.Config{ServerURL: cfg.LLMServerURL})
-	slog.Info("LLM supervisor configured", "server", cfg.LLMServerURL, "model", cfg.LLMModel)
+	chatClient := llm.NewClient(llm.Config{
+		ServerURL: cfg.LLMServerURL,
+		KeepAlive: cfg.LLMKeepAlive,
+	})
+	slog.Info("LLM supervisor configured",
+		"server", cfg.LLMServerURL, "model", cfg.LLMModel, "keep_alive", cfg.LLMKeepAlive)
+
+	// Check the model is reachable and pulled, then load it — in the background,
+	// because a cold multi-gigabyte load takes minutes and the SIP stack must not
+	// wait on it. Nothing here can fail the boot: a deployment whose LLM is down
+	// still routes every call its tenant routing tables resolve.
+	go llm.ProbeAndWarm(context.Background(), chatClient, cfg.LLMModel, slog.Default())
 
 	// Create file manager for config API
 	fileMgr := filemanager.New(filemanager.Config{
@@ -281,11 +291,13 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// (tenant, direction) — an inbound caller is never offered external dial —
 	// and every consequential call is adjudicated by that tenant's policy.
 	runner := agent.NewRunner(agent.RunnerConfig{
-		Prompts: prompts,
-		Model:   cfg.LLMModel,
-		Voice:   cfg.TTSVoice,
-		Chat:    chatClient,
-		Logger:  slog.Default(),
+		Prompts:          prompts,
+		Model:            cfg.LLMModel,
+		Voice:            cfg.TTSVoice,
+		Chat:             chatClient,
+		Logger:           slog.Default(),
+		TurnTimeout:      cfg.TurnTimeout,
+		FirstTurnTimeout: cfg.FirstTurnTimeout,
 		BuildExecutor: func(cc agent.CallContext) agent.ToolExecutor {
 			policy := buildPolicy(cc)
 			registry := agent.BuildRegistry(cc, policy, agent.RegistryDeps{

@@ -20,6 +20,7 @@ const (
 	defaultListenMaxMs      = 30000
 	defaultListenSilenceMs  = 800
 	defaultTurnTimeout      = 30 * time.Second
+	defaultFirstTurnTimeout = 90 * time.Second
 	defaultRunawayHardSpeak = "I'm having trouble completing that. Goodbye."
 
 	// maxListenFailures bounds consecutive Listen errors before the runner gives
@@ -76,9 +77,23 @@ type RunnerConfig struct {
 	// EventBuffer sizes the events channel. Zero uses defaultEventBuffer.
 	EventBuffer int
 
-	// TurnTimeout bounds a single turn (the LLM call + tool dispatch). Zero uses
-	// defaultTurnTimeout. The turnCtx is the runaway breaker's lever too.
+	// TurnTimeout bounds a single MID-CALL turn (the LLM call + tool dispatch).
+	// Zero uses defaultTurnTimeout. The turnCtx is the runaway breaker's lever too.
 	TurnTimeout time.Duration
+
+	// FirstTurnTimeout bounds the first turn only. Zero uses
+	// defaultFirstTurnTimeout.
+	//
+	// It is larger than TurnTimeout because the two are bounded by different
+	// things. The first turn happens while the caller is listening to ringback,
+	// and it may have to load a multi-gigabyte model — the constraint there is
+	// caller patience. (It used to be SIP Timer B, when the first turn ran inside
+	// the INVITE transaction; the handler now sends 180 Ringing before the turn,
+	// which moves that transaction to Proceeding and removes the pressure.) A
+	// mid-call turn is bounded by something stricter: the caller has finished
+	// speaking and is waiting in silence with an open mic, where 30s is already
+	// a long time.
+	FirstTurnTimeout time.Duration
 
 	// ListenMaxMs / ListenSilenceMs parameterise the speech producer's Listen.
 	ListenMaxMs     int
@@ -118,6 +133,9 @@ func NewRunner(cfg RunnerConfig) *Runner {
 	}
 	if cfg.TurnTimeout == 0 {
 		cfg.TurnTimeout = defaultTurnTimeout
+	}
+	if cfg.FirstTurnTimeout == 0 {
+		cfg.FirstTurnTimeout = defaultFirstTurnTimeout
 	}
 	if cfg.ListenMaxMs == 0 {
 		cfg.ListenMaxMs = defaultListenMaxMs
@@ -244,7 +262,7 @@ func (c *callRun) run() error {
 	// First-turn single-shot decision (decisions #8/#11): system + empty user
 	// message. This turn is reactive (it is the caller's INVITE), so it does not
 	// count against the runaway breaker.
-	if err := c.runTurn(c.callCtx, ""); err != nil {
+	if err := c.runTurn(c.callCtx, "", c.cfg.FirstTurnTimeout); err != nil {
 		if c.callCtx.Err() != nil {
 			// Cancellation (teardown) raced the first turn; not an error.
 			return nil
@@ -295,7 +313,7 @@ func (c *callRun) dispatchLoop() {
 		case ev := <-c.events:
 			// A caller event is reactive: reset the runaway counter (decision #12).
 			c.autonomousTurns = 0
-			if err := c.runTurn(c.callCtx, ev.Payload); err != nil {
+			if err := c.runTurn(c.callCtx, ev.Payload, c.cfg.TurnTimeout); err != nil {
 				if c.callCtx.Err() != nil {
 					return
 				}
@@ -313,13 +331,15 @@ func (c *callRun) dispatchLoop() {
 // which control the empty-vs-caller user text and whether the turn counts
 // against the runaway breaker.
 //
-// There is no longer a first-turn special case. The one that existed — a
-// corrective re-prompt when an internal first turn answered with prose instead
-// of a dial — patched a decision the model should never have been making; that
-// call is now resolved deterministically before the runner is started at all.
-func (c *callRun) runTurn(parent context.Context, userText string) error {
-	turnCtx, turnCancel := context.WithTimeout(parent, c.cfg.TurnTimeout)
+// The only thing the first turn does differently is get a larger budget, passed
+// in by the caller. It no longer has a behavioural special case: the corrective
+// re-prompt that used to live here patched a decision the model should never
+// have been making, and that call is now resolved deterministically before the
+// runner is started at all.
+func (c *callRun) runTurn(parent context.Context, userText string, budget time.Duration) error {
+	turnCtx, turnCancel := context.WithTimeout(parent, budget)
 	defer turnCancel()
+	started := time.Now()
 
 	// Append the user message (empty on the first turn) before prompting.
 	c.conversation = append(c.conversation, llm.NativeMessage{Role: "user", Content: userText})
@@ -336,7 +356,7 @@ func (c *callRun) runTurn(parent context.Context, userText string) error {
 		// kill the call silently, which meant an Ollama outage stopped internal
 		// extension dialing for the whole system — deterministic resolution now
 		// keeps that working, and this keeps a supervised call explainable.
-		c.llmUnavailable(err)
+		c.llmUnavailable(err, budget, time.Since(started))
 		return nil
 	}
 
@@ -444,7 +464,7 @@ func (c *callRun) autonomousReprompt(parent context.Context) error {
 	}
 
 	// Re-prompt with no new user text; the tool results are already in history.
-	return c.runTurn(parent, "")
+	return c.runTurn(parent, "", c.cfg.TurnTimeout)
 }
 
 // llmUnavailableMessage is what a caller hears when the supervisor cannot reach
@@ -462,9 +482,26 @@ const llmUnavailableSpeakTimeout = 10 * time.Second
 //
 // Deterministically resolved calls never reach this: they made no LLM request,
 // so an outage is invisible to them and the PBX keeps routing.
-func (c *callRun) llmUnavailable(cause error) {
-	c.log.Error("supervisor LLM unavailable; ending the call deliberately",
-		"call_id", c.session.CallID(), "error", cause)
+func (c *callRun) llmUnavailable(cause error, budget, elapsed time.Duration) {
+	// Say WHICH failure it was. A deadline and an unreachable server produce the
+	// same apology for the caller but need opposite responses from an operator,
+	// and logging both as "unavailable" is what turns a slow model into an
+	// afternoon of wondering why a working LLM looks broken.
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		c.log.Error("supervisor LLM did not answer within the turn budget; ending the call deliberately. "+
+			"The server is reachable — it is too slow, or the model was cold. Warm it, keep it resident, "+
+			"or raise the budget",
+			"call_id", c.session.CallID(),
+			"budget", budget,
+			"elapsed", elapsed.Round(time.Millisecond),
+			"error", cause)
+	default:
+		c.log.Error("supervisor LLM unreachable; ending the call deliberately",
+			"call_id", c.session.CallID(),
+			"elapsed", elapsed.Round(time.Millisecond),
+			"error", cause)
+	}
 
 	speakCtx, cancel := context.WithTimeout(c.callCtx, llmUnavailableSpeakTimeout)
 	defer cancel()

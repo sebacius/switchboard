@@ -677,7 +677,6 @@ func TestRingOnceRingsWhenNotAlreadyRung(t *testing.T) {
 	}
 }
 
-
 // --- Scenario: the model is unreachable. ---
 //
 // An LLM failure used to return an error from the runner, which killed the call.

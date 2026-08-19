@@ -65,6 +65,12 @@ type nativeChatRequest struct {
 	Tools    []ToolDef       `json:"tools,omitempty"`
 	Stream   bool            `json:"stream"`
 	Think    bool            `json:"think"`
+	// KeepAlive tells Ollama how long to hold the model in memory after this
+	// request. Omitted, Ollama unloads after 5 idle minutes — and a PBX is idle
+	// most of the night, so the first call every morning pays the full multi-GB
+	// load inside the caller's turn budget. Sending it is what makes a warmed
+	// model stay warm. Format is Ollama's: "30m", or "-1" for indefinitely.
+	KeepAlive string `json:"keep_alive,omitempty"`
 }
 
 // nativeChatResponse is the /api/chat response body (non-streaming).
@@ -84,11 +90,12 @@ func (c *Client) ChatNative(ctx context.Context, messages []NativeMessage, tools
 	}
 
 	reqBody := nativeChatRequest{
-		Model:    model,
-		Messages: messages,
-		Tools:    tools,
-		Stream:   false,
-		Think:    false,
+		Model:     model,
+		Messages:  messages,
+		Tools:     tools,
+		Stream:    false,
+		Think:     false,
+		KeepAlive: c.keepAlive,
 	}
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {

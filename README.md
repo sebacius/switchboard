@@ -193,6 +193,23 @@ logging — the routing table is data, never authority. And because a resolved c
 makes no LLM request, an Ollama outage degrades to "the AI receptionist is
 unavailable" while extension dialing, pickup, and queues keep working.
 
+### The model is checked and warmed at startup
+
+The signaling server verifies the LLM answers and that the configured model is
+pulled, then loads it before any caller arrives, logging what that cost:
+
+```
+LLM ready and warmed load_time=6.774s
+```
+
+Neither check can fail startup. A missing model or a dead LLM is a warning,
+because a call the tenant's routing table resolves needs no model at all — that
+is the point of putting resolution first. Every chat request carries
+`keep_alive` (default 30m) so the model stays resident between calls; Ollama's
+own 5-minute default is shorter than the gap between calls on a quiet PBX, which
+means the first call of the day would otherwise pay the load inside the caller's
+turn budget.
+
 ### The supervisor answers only when it means to
 
 The INVITE handler **never** sends a 200 OK. The first turn decides:
