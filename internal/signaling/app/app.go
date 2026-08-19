@@ -8,11 +8,11 @@ import (
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
+	"github.com/sebas/switchboard/internal/signaling/agent"
 	"github.com/sebas/switchboard/internal/signaling/api"
 	"github.com/sebas/switchboard/internal/signaling/b2bua"
 	"github.com/sebas/switchboard/internal/signaling/config"
 	"github.com/sebas/switchboard/internal/signaling/dialog"
-	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/drain"
 	"github.com/sebas/switchboard/internal/signaling/filemanager"
 	"github.com/sebas/switchboard/internal/signaling/llm"
@@ -20,6 +20,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 	"github.com/sebas/switchboard/internal/signaling/parking"
 	"github.com/sebas/switchboard/internal/signaling/routing"
+	"github.com/sebas/switchboard/internal/signaling/trunk"
 )
 
 type SwitchBoard struct {
@@ -139,49 +140,50 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	parkAdapter := parking.NewAPIAdapter(parkService)
 	apiServer.SetParkProvider(parkAdapter)
 
-	// Load dialplan configuration
-	dialplanPath := cfg.DialplanPath
-	if dialplanPath == "" {
-		dialplanPath = "dialplan.json"
+	// Load tenant prompts (settings.md + tenants/*.md). They are the supervisor's
+	// system instruction AND admission's preflight input: a tenant with no prompt
+	// is not admissible, so a load failure here means no calls, not silent
+	// unsupervised ones.
+	prompts, err := agent.NewPromptStore(cfg.SettingsPath, cfg.TenantsPath)
+	if err != nil {
+		slog.Warn("Tenant prompts loaded with errors; unloaded tenants will be rejected",
+			"settings", cfg.SettingsPath, "tenants", cfg.TenantsPath, "error", err)
 	}
-	dp, err := dialplan.New(dialplanPath, slog.Default())
+	slog.Info("Tenant prompts loaded", "tenants", prompts.Tenants())
+
+	// Load Class-of-Service + capacity policy. A missing file is the safe
+	// default: no external dialing anywhere, default channel limit per tenant.
+	policyCfg, err := agent.LoadPolicyConfig(cfg.PolicyPath)
 	if err != nil {
 		_ = ua.Close()
 		locStore.Close()
 		_ = mediaTransport.Close()
-		return nil, fmt.Errorf("failed to load dialplan: %w", err)
+		return nil, fmt.Errorf("failed to load policy config: %w", err)
 	}
-	slog.Info("Dialplan loaded", "path", dialplanPath, "routes", dp.RouteCount())
+	slog.Info("Policy loaded",
+		"path", cfg.PolicyPath,
+		"default_channel_limit", policyCfg.DefaultChannelLimit,
+		"tenants", len(policyCfg.Tenants),
+	)
 
-	// Create LLM client for AI agent (optional - may not be configured)
-	var llmClient *llm.Client
-	if cfg.LLMServerURL != "" {
-		llmClient = llm.NewClient(llm.Config{
-			ServerURL: cfg.LLMServerURL,
-		})
-		slog.Info("LLM client configured", "server", cfg.LLMServerURL)
+	// Create the native tool-calling LLM client. The supervisor cannot run
+	// without it, so an unset server URL is a hard failure rather than a
+	// silently unsupervised switch.
+	if cfg.LLMServerURL == "" {
+		_ = ua.Close()
+		locStore.Close()
+		_ = mediaTransport.Close()
+		return nil, fmt.Errorf("no LLM server configured: the call supervisor requires --llm-server")
 	}
-
-	// Create dialplan executor with default actions + parking + ai_agent actions
-	actionRegistry := dialplan.DefaultRegistry()
-	dialplan.RegisterParkingActions(actionRegistry, parkService)
-	var aiFactory *dialplan.AIAgentFactory
-	if llmClient != nil {
-		aiFactory = dialplan.RegisterAIAgentAction(actionRegistry, llmClient, parkService, cfg.SettingsPath)
-	}
-	executor := dialplan.NewExecutor(dp, actionRegistry, slog.Default())
+	chatClient := llm.NewClient(llm.Config{ServerURL: cfg.LLMServerURL})
+	slog.Info("LLM supervisor configured", "server", cfg.LLMServerURL, "model", cfg.LLMModel)
 
 	// Create file manager for config API
-	fmCfg := filemanager.Config{
-		SettingsDir:  cfg.SettingsPath,
-		TenantsDir:   cfg.TenantsPath,
-		DialplanPath: cfg.DialplanPath,
-		Dialplan:     dp,
-	}
-	if aiFactory != nil {
-		fmCfg.SettingsReloader = aiFactory
-	}
-	fileMgr := filemanager.New(fmCfg)
+	fileMgr := filemanager.New(filemanager.Config{
+		SettingsDir:      cfg.SettingsPath,
+		TenantsDir:       cfg.TenantsPath,
+		SettingsReloader: prompts,
+	})
 	apiServer.SetFileProvider(fileMgr)
 
 	// Create resolver registry for dial targets
@@ -205,6 +207,49 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Wire BridgeMapper to migrator for bridged call migration during drain
 	migrator.SetBridgeMapper(callService.GetBridgeMapper())
 
+	// Load SIP trunk peers and DID->tenant routes
+	trunkPeers, err := trunk.LoadPeers(cfg.TrunkConfigPath)
+	if err != nil {
+		_ = ua.Close()
+		locStore.Close()
+		_ = mediaTransport.Close()
+		return nil, fmt.Errorf("failed to load trunk peers: %w", err)
+	}
+	didRoutes, err := trunk.LoadRoutes(cfg.RoutesPath)
+	if err != nil {
+		_ = ua.Close()
+		locStore.Close()
+		_ = mediaTransport.Close()
+		return nil, fmt.Errorf("failed to load routes: %w", err)
+	}
+	sipTrunk := trunk.NewStaticTrunk(trunkPeers, "")
+	slog.Info("Trunk loaded", "peers", trunkPeers.Count(), "dids", didRoutes.Count())
+
+	// Deterministic pre-LLM layers: the router classifies direction and resolves
+	// the tenant (no default), and admission enforces preflight + per-tenant
+	// channel limits before the INVITE is answered.
+	callRouter := agent.NewRouter(agent.DirectoryFromLocation(locStore), sipTrunk, didRoutes)
+	admission := agent.NewAdmission(prompts, policyCfg.DefaultChannelLimit, policyCfg.ChannelLimits())
+
+	// The supervisor runner. The tool registry is built PER CALL from
+	// (tenant, direction) — an inbound caller is never offered external dial —
+	// and every consequential call is adjudicated by that tenant's policy.
+	runner := agent.NewRunner(agent.RunnerConfig{
+		Prompts: prompts,
+		Model:   cfg.LLMModel,
+		Voice:   cfg.TTSVoice,
+		Chat:    chatClient,
+		Logger:  slog.Default(),
+		BuildExecutor: func(cc agent.CallContext) agent.ToolExecutor {
+			policy := agent.NewPolicy(cc.Tenant, policyCfg.TenantPolicyFor(cc.Tenant), slog.Default())
+			registry := agent.BuildRegistry(cc, policy, agent.RegistryDeps{
+				Parking: parkService,
+				Logger:  slog.Default(),
+			})
+			return agent.NewCallExecutor(registry, policy)
+		},
+	})
+
 	// Create SIP method handlers
 	inviteHandler := routing.NewInviteHandler(
 		mediaTransport,
@@ -212,9 +257,13 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		cfg.Port,
 		dialogMgr,
 		apiServer,
-		executor,
+		callRouter,
+		admission,
+		runner,
 		locStore,
 		callService,
+		sipTrunk,
+		didRoutes,
 	)
 	byeHandler := routing.NewBYEHandler(dialogMgr, callService)
 	ackHandler := routing.NewACKHandler(dialogMgr)

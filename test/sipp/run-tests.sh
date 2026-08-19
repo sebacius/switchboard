@@ -26,13 +26,15 @@ RESULTS_DIR="$SCRIPT_DIR/results"
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <signaling_ip> [test]"
     echo ""
-    echo "Tests: register, calls, parking, all (default)"
+    echo "Tests: register, calls, parking, trunk, trunk-reject, trunk-did, all (default)"
     echo ""
     echo "Examples:"
-    echo "  $0 192.168.50.181           # Run all"
-    echo "  $0 192.168.50.181 register  # Only registration"
-    echo "  $0 192.168.50.181 calls     # Only calls"
-    echo "  $0 192.168.50.181 parking   # Only parking tests"
+    echo "  $0 192.168.50.181              # Run all"
+    echo "  $0 192.168.50.181 register     # Only registration"
+    echo "  $0 192.168.50.181 calls        # Only calls"
+    echo "  $0 192.168.50.181 parking      # Only parking tests"
+    echo "  $0 192.168.50.181 trunk-reject # Ingress gate: unknown source -> 403"
+    echo "  $0 192.168.50.181 trunk-did    # Ingress gate: trunk DID routing (needs peer config)"
     exit 1
 fi
 
@@ -390,6 +392,96 @@ test_unregister() {
 }
 
 # ============================================================================
+# TEST: Ingress gate - unknown source rejected (403)
+# ============================================================================
+# Assumes default trunk config (this host is NOT a configured trunk peer), so an
+# unregistered, non-peer source is rejected with 403. If you have configured this
+# host as a trunk peer for the DID tests, this case will see 603 instead.
+test_trunk_reject() {
+    echo -e "\n${BOLD}[TEST] Ingress Gate: Unknown Source -> 403${NC}"
+
+    local LOCAL_IP
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [[ -z "$LOCAL_IP" ]]; then
+        LOCAL_IP=$(ifconfig | grep 'inet ' | grep -v '127.0.0.1' | head -1 | awk '{print $2}')
+    fi
+
+    echo -n "  Unregistered 'nobody' INVITE (expect 403)... "
+    if sipp "${TARGET}:${SIP_PORT}" \
+        -sf "$SCENARIOS_DIR/uac_expect_403.xml" \
+        -i "$LOCAL_IP" \
+        -s "nobody" \
+        -key callee "1001" \
+        -p 7101 \
+        -m 1 \
+        -nd \
+        -timeout 10s \
+        > "$RUN_DIR/trunk_reject.log" 2>&1; then
+        echo -e "${GREEN}OK${NC}"
+        ((PASS++))
+    else
+        echo -e "${RED}FAIL${NC} (check $RUN_DIR/trunk_reject.log)"
+        ((FAIL++))
+    fi
+}
+
+# ============================================================================
+# TEST: Ingress gate - trunk DID routing (603 unmapped, accept mapped)
+# ============================================================================
+# Requires this host's IP to be listed as a trunk peer in trunk_peers.json AND
+# signaling restarted (config loads at startup). Without that, both sub-tests
+# get 403 (unknown source) and fail.
+test_trunk_did() {
+    echo -e "\n${BOLD}[TEST] Ingress Gate: Trunk DID Routing${NC}"
+
+    local LOCAL_IP
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [[ -z "$LOCAL_IP" ]]; then
+        LOCAL_IP=$(ifconfig | grep 'inet ' | grep -v '127.0.0.1' | head -1 | awk '{print $2}')
+    fi
+
+    echo -e "  ${YELLOW}Prereq:${NC} trunk_peers.json must include host '${LOCAL_IP}' and signaling restarted."
+
+    echo -n "  Trunk INVITE to unmapped DID 9999 (expect 603)... "
+    if sipp "${TARGET}:${SIP_PORT}" \
+        -sf "$SCENARIOS_DIR/uac_trunk_unmapped.xml" \
+        -i "$LOCAL_IP" \
+        -s "15550000000" \
+        -key callee "9999" \
+        -p 7102 \
+        -m 1 \
+        -nd \
+        -timeout 10s \
+        > "$RUN_DIR/trunk_unmapped.log" 2>&1; then
+        echo -e "${GREEN}OK${NC}"
+        ((PASS++))
+    else
+        echo -e "${RED}FAIL${NC} (check $RUN_DIR/trunk_unmapped.log)"
+        ((FAIL++))
+    fi
+
+    echo -n "  Trunk INVITE to mapped DID +15551234567 (expect accept)... "
+    if sipp "${TARGET}:${SIP_PORT}" \
+        -sf "$SCENARIOS_DIR/uac_trunk_mapped.xml" \
+        -i "$LOCAL_IP" \
+        -s "15550000000" \
+        -key callee "+15551234567" \
+        -p 7103 \
+        -m 1 \
+        -nd \
+        -timeout 30s \
+        -trace_msg \
+        -message_file "$RUN_DIR/trunk_mapped_msgs.log" \
+        > "$RUN_DIR/trunk_mapped.log" 2>&1; then
+        echo -e "${GREEN}OK${NC}"
+        ((PASS++))
+    else
+        echo -e "${RED}FAIL${NC} (check $RUN_DIR/trunk_mapped.log)"
+        ((FAIL++))
+    fi
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 case "$TEST" in
@@ -403,11 +495,22 @@ case "$TEST" in
         test_park_retriever_bye
         test_park_parker_bye
         ;;
+    trunk-reject)
+        test_trunk_reject
+        ;;
+    trunk-did)
+        test_trunk_did
+        ;;
+    trunk)
+        test_trunk_reject
+        test_trunk_did
+        ;;
     all)
         test_register
         test_calls
         test_park_retriever_bye
         test_park_parker_bye
+        test_trunk_reject
         ;;
     *)
         echo -e "${RED}Unknown test: $TEST${NC}"

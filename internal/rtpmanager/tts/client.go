@@ -37,6 +37,12 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
+// DefaultVoice is used when a caller does not name one. Piper rejects an empty
+// voice with `Error loading voice: , KeyError: ”` (HTTP 400), so "unset" is
+// never a usable value to forward — there is nothing sensible for the server to
+// fall back to on our behalf.
+const DefaultVoice = "alloy"
+
 // SpeechRequest is the request body for the TTS API
 type SpeechRequest struct {
 	Model          string `json:"model"`
@@ -50,6 +56,10 @@ type SpeechRequest struct {
 func (c *Client) Synthesize(ctx context.Context, text, voice string) ([]byte, error) {
 	if c.serverURL == "" {
 		return nil, fmt.Errorf("TTS server not configured")
+	}
+
+	if voice == "" {
+		voice = DefaultVoice
 	}
 
 	reqBody := SpeechRequest{

@@ -1,0 +1,276 @@
+package agent
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/emiago/sipgo/sip"
+	"github.com/sebas/switchboard/internal/signaling/b2bua"
+	"github.com/sebas/switchboard/internal/signaling/dialog"
+)
+
+// This file implements the answer model (design #7): the INVITE handler never
+// answers, and the supervisor's first-turn decision picks between two paths.
+//
+//	dial before answer  → Forward: 180 upstream, dial the target, relay its
+//	                      200 (or its failure code); we never answer for it
+//	speak / play / listen → Answer: 200 OK with our SDP, we own the media
+//
+// The invariant is "answering means the AI handles this leg's media itself".
+// A direct extension call is therefore a pure forward — the caller hears real
+// ringing from the endpoint, not an AI greeting, and if nobody picks up the
+// caller gets the endpoint's own 486/480 rather than a synthesized apology.
+
+// forwardRingTimeout bounds how long Forward waits for the target to answer
+// before giving up and relaying a failure. It is deliberately shorter than SIP
+// Timer B so the caller gets a real final response rather than a transaction
+// timeout.
+const forwardRingTimeout = 45 * time.Second
+
+// MarkRinging records that a 180 has already been sent for this leg, so a later
+// Forward does not send a duplicate. The INVITE handler calls this after ringing
+// the caller up front to hold the transaction open across a slow first turn.
+func (s *sessionImpl) MarkRinging() {
+	s.mu.Lock()
+	s.ringingSent = true
+	s.mu.Unlock()
+}
+
+// ringOnce sends 180 Ringing unless one has already gone out. It returns
+// silently when there is nothing to do, so callers need no bookkeeping.
+func (s *sessionImpl) ringOnce() {
+	s.mu.Lock()
+	already := s.ringingSent
+	s.ringingSent = true
+	s.mu.Unlock()
+
+	if already || s.dialogMgr == nil {
+		return
+	}
+	if err := s.dialogMgr.SendRinging(s.dialog); err != nil {
+		s.logger.Warn("[Session] Failed to send 180 Ringing", "call_id", s.callID, "error", err)
+	}
+}
+
+// HasAnswered reports whether the 200 OK has been sent for this leg.
+func (s *sessionImpl) HasAnswered() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.answered
+}
+
+// Answer sends the 200 OK with the supervisor's SDP, taking media ownership.
+// It is idempotent — the runner calls it before every media operation, and the
+// forward path calls it once the outbound leg answers — so a second call is a
+// no-op. Answering a terminated call is an error, not a silent success: the
+// caller is gone and the media would have nowhere to go.
+func (s *sessionImpl) Answer(_ context.Context) error {
+	s.mu.Lock()
+	if s.answered {
+		s.mu.Unlock()
+		return nil
+	}
+	if s.terminated {
+		s.mu.Unlock()
+		return fmt.Errorf("answer: call already terminated")
+	}
+	sdp := s.sdpBody
+	// Mark answered BEFORE releasing the lock so a concurrent Answer cannot also
+	// send a 200 OK. If SendOK then fails we roll the flag back below.
+	s.answered = true
+	s.mu.Unlock()
+
+	if s.dialogMgr == nil {
+		s.setAnswered(false)
+		return fmt.Errorf("answer: no dialog manager")
+	}
+	if err := s.dialogMgr.SendOK(s.dialog, sdp); err != nil {
+		s.setAnswered(false)
+		return fmt.Errorf("answer: %w", err)
+	}
+
+	s.logger.Info("[Session] Answered (supervisor owns media)", "call_id", s.callID)
+	return nil
+}
+
+// setAnswered rolls the answered flag back when SendOK failed.
+func (s *sessionImpl) setAnswered(v bool) {
+	s.mu.Lock()
+	s.answered = v
+	s.mu.Unlock()
+}
+
+// Forward is the pre-answer routing path. It relays 180 Ringing upstream so the
+// caller's phone generates ringback, dials the target, and only on answer does
+// it send our 200 OK and bridge the two legs. A target that rejects or times out
+// has its status relayed to the caller instead of being masked by an AI apology.
+//
+// The B-leg handle is retained for the duration so that a caller CANCEL during
+// ringing tears down the orphaned outbound leg (the forward-then-CANCEL race).
+func (s *sessionImpl) Forward(ctx context.Context, target string, timeout time.Duration) error {
+	if s.callService == nil {
+		return &DialError{Target: target, Cause: fmt.Errorf("B2BUA CallService not configured"), SIPCode: 501}
+	}
+	if s.HasAnswered() {
+		// Programming error: the caller should have chosen Dial. Fail loudly
+		// rather than sending a second 200 OK.
+		return &DialError{Target: target, Cause: fmt.Errorf("forward after answer")}
+	}
+	if timeout <= 0 {
+		timeout = forwardRingTimeout
+	}
+
+	s.logger.Info("[Session] Forwarding (pre-answer)", "call_id", s.callID, "target", target, "timeout", timeout)
+
+	// Relay 180 upstream so the caller hears ringback while we dial — unless the
+	// INVITE handler already rang to hold the transaction open across the first
+	// turn, in which case a second 180 would be redundant. A failure here is not
+	// fatal; the forward can still complete.
+	s.ringOnce()
+
+	callerName := s.callerName
+	if callerName == "" {
+		callerName = s.callerID
+	}
+
+	// Dial blocks until the target answers, rejects, or the timeout expires.
+	// Pass the A-leg session/Call-ID so the B-leg lands on the same RTP manager
+	// and the drain BridgeMapper can find it.
+	bLeg, err := s.callService.Dial(ctx, target, timeout,
+		b2bua.WithALegSessionID(s.sessionID),
+		b2bua.WithALegCallID(s.callID),
+		b2bua.WithCallerID(s.callerID),
+		b2bua.WithCallerName(callerName),
+	)
+	if err != nil {
+		return s.relayForwardFailure(target, err)
+	}
+
+	// Retain the leg so teardown can cancel it if the caller vanishes between
+	// here and the bridge being established.
+	s.setBLeg(bLeg)
+
+	// The target answered: now — and only now — do we answer upstream. This is
+	// the "relay its 200" step; the supervisor still never answers on its own.
+	if err := s.Answer(ctx); err != nil {
+		_ = bLeg.Hangup(context.Background(), b2bua.TerminationCauseError)
+		s.setBLeg(nil)
+		return &DialError{Target: target, Cause: fmt.Errorf("relay 200 OK: %w", err)}
+	}
+
+	// Both legs are up: adopt the A-leg and bridge media.
+	aLeg, err := s.adoptALeg()
+	if err != nil {
+		_ = bLeg.Hangup(context.Background(), b2bua.TerminationCauseError)
+		s.setBLeg(nil)
+		return &DialError{Target: target, Cause: fmt.Errorf("adopt inbound leg: %w", err)}
+	}
+
+	bridge, err := s.callService.CreateBridge(aLeg, bLeg, b2bua.WithAutoHangup(true))
+	if err != nil {
+		_ = bLeg.Hangup(context.Background(), b2bua.TerminationCauseError)
+		s.setBLeg(nil)
+		return &DialError{Target: target, Cause: fmt.Errorf("create bridge: %w", err)}
+	}
+	if err := bridge.Start(ctx); err != nil {
+		_ = bLeg.Hangup(context.Background(), b2bua.TerminationCauseError)
+		s.setBLeg(nil)
+		return &DialError{Target: target, Cause: fmt.Errorf("start bridge: %w", err)}
+	}
+
+	s.logger.Info("[Session] Forward bridged", "call_id", s.callID, "bridge_id", bridge.ID(), "target", target)
+
+	// Wait on the A-leg's own scope, not the dial timeout: once bridged the call
+	// lives until a leg hangs up.
+	bridgeCtx := aLeg.Context()
+	if _, err := bridge.WaitForTermination(bridgeCtx); err != nil && bridgeCtx.Err() != nil {
+		_ = bridge.Stop(true)
+	}
+	s.setBLeg(nil)
+
+	s.logger.Info("[Session] Forward bridge terminated", "call_id", s.callID, "bridge_id", bridge.ID())
+	return nil
+}
+
+// relayForwardFailure maps an outbound dial failure onto the caller's INVITE
+// transaction. Because we never answered, the caller can still receive a real
+// final status — a busy endpoint yields 486, an unreachable one 480 — which is
+// the whole point of forwarding rather than answering first.
+func (s *sessionImpl) relayForwardFailure(target string, cause error) error {
+	code, reason := forwardFailureStatus(cause)
+
+	if s.dialogMgr != nil && !s.HasAnswered() && !s.dialog.IsTerminated() {
+		if err := s.dialogMgr.RespondStatus(s.dialog, code, reason); err != nil {
+			s.logger.Warn("[Session] Failed to relay forward failure", "call_id", s.callID, "error", err)
+		}
+	}
+
+	s.logger.Info("[Session] Forward failed", "call_id", s.callID, "target", target, "code", int(code), "reason", reason)
+
+	if dialErr, ok := cause.(*b2bua.DialError); ok {
+		return &DialError{Target: target, SIPCode: dialErr.SIPCode, SIPReason: dialErr.SIPReason, Cause: dialErr.Cause}
+	}
+	return &DialError{Target: target, SIPCode: int(code), SIPReason: reason, Cause: cause}
+}
+
+// forwardFailureStatus picks the status code relayed upstream. A B2BUA DialError
+// carries the target's own final response, which is the most honest thing to
+// relay; anything else (no contacts, timeout) becomes 480 Temporarily
+// Unavailable.
+func forwardFailureStatus(cause error) (sip.StatusCode, string) {
+	if dialErr, ok := cause.(*b2bua.DialError); ok && dialErr.SIPCode >= 400 && dialErr.SIPCode <= 699 {
+		reason := dialErr.SIPReason
+		if reason == "" {
+			reason = "Forward Failed"
+		}
+		return sip.StatusCode(dialErr.SIPCode), reason
+	}
+	return sip.StatusTemporarilyUnavailable, "Temporarily Unavailable"
+}
+
+// adoptALeg wraps the inbound dialog as a B2BUA A-leg with the same teardown
+// semantics the post-answer bridge path uses: when the bridge tears the A-leg
+// down (because B hung up), send BYE upstream — unless the caller is the one who
+// sent the BYE, in which case the dialog layer already handled it.
+func (s *sessionImpl) adoptALeg() (b2bua.Leg, error) {
+	return s.callService.AdoptInboundLeg(s.dialog, s.sessionID,
+		b2bua.WithTeardownHandler(func(leg b2bua.Leg) {
+			if leg.GetTerminationCause() == b2bua.TerminationCauseRemoteBYE {
+				return
+			}
+			if s.dialogMgr != nil && !s.dialog.IsTerminated() {
+				if err := s.dialogMgr.Terminate(s.callID, dialog.ReasonLocalBYE); err != nil {
+					s.logger.Warn("[Session] A-leg teardown BYE failed", "call_id", s.callID, "error", err)
+				}
+			}
+		}),
+	)
+}
+
+// setBLeg stores (or clears) the outbound leg handle under the lock.
+func (s *sessionImpl) setBLeg(leg b2bua.Leg) {
+	s.mu.Lock()
+	s.bLeg = leg
+	s.mu.Unlock()
+}
+
+// hangupBLeg tears down an outbound leg still in flight. It is called from the
+// teardown funnel so that a caller who abandons while the target is ringing does
+// not leave an orphaned B-leg ringing a phone nobody will answer.
+func (s *sessionImpl) hangupBLeg(reason string) {
+	s.mu.Lock()
+	leg := s.bLeg
+	s.bLeg = nil
+	s.mu.Unlock()
+
+	if leg == nil {
+		return
+	}
+	s.logger.Info("[Session] Cancelling orphaned B-leg", "call_id", s.callID, "leg_id", leg.ID(), "reason", reason)
+	// Use a background context: the call context is already cancelled by the
+	// time teardown runs, and the CANCEL/BYE still has to go out on the wire.
+	if err := leg.Hangup(context.Background(), b2bua.TerminationCauseNormal); err != nil {
+		s.logger.Warn("[Session] B-leg hangup failed", "call_id", s.callID, "error", err)
+	}
+}

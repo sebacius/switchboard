@@ -20,15 +20,24 @@ type Config struct {
 	// API settings
 	APIPort int // HTTP API port (default 8080)
 
-	// Dialplan settings
-	DialplanPath string // Path to dialplan.json config file
-
-	// LLM settings (for ai_agent action)
+	// Supervisor settings. Every call is supervised by the LLM agent; there is
+	// no dialplan.
 	LLMServerURL string // Ollama server URL (e.g., "http://localhost:11434")
+	LLMModel     string // Supervisor model served by Ollama (default "qwen3:8b")
+	TTSVoice     string // Piper voice used for the supervisor's speech
+
+	// PolicyPath points at the Class-of-Service / capacity JSON: per-tenant
+	// channel limits, external-dial allowlists, symbolic targets, and the spend
+	// circuit breaker. A missing file means the safe default posture.
+	PolicyPath string
 
 	// File management paths
 	SettingsPath string // Directory containing settings.md (default "resources/config")
 	TenantsPath  string // Directory containing tenant .md files (default "resources/tenants")
+
+	// Trunk settings
+	TrunkConfigPath string // Path to trunk peers JSON (list of {name,host,port,role})
+	RoutesPath      string // Path to DID->tenant mapping (routes.json)
 
 	// RTP Manager pool settings - two formats supported:
 	//
@@ -58,10 +67,14 @@ func Load() *Config {
 	flag.StringVar(&cfg.BindAddr, "bind", "0.0.0.0", "Bind address for SIP and API")
 	flag.StringVar(&cfg.AdvertiseAddr, "advertise", "", "Address to advertise in SIP headers (auto-detected if not set)")
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error)")
-	flag.StringVar(&cfg.DialplanPath, "dialplan", "resources/config/dialplan.json", "Path to dialplan configuration file")
 	flag.StringVar(&cfg.LLMServerURL, "llm-server", "http://localhost:11434", "Ollama LLM server URL")
+	flag.StringVar(&cfg.LLMModel, "llm-model", "qwen3:8b", "Ollama model used by the call supervisor")
+	flag.StringVar(&cfg.TTSVoice, "tts-voice", "alloy", "Piper TTS voice for the supervisor")
+	flag.StringVar(&cfg.PolicyPath, "policy-config", "resources/config/policy.json", "Path to tenant Class-of-Service and channel-limit configuration")
 	flag.StringVar(&cfg.SettingsPath, "settings-path", "resources/config", "Directory containing settings.md")
 	flag.StringVar(&cfg.TenantsPath, "tenants-path", "resources/tenants", "Directory containing tenant .md files")
+	flag.StringVar(&cfg.TrunkConfigPath, "trunk-config", "resources/config/trunk_peers.json", "Path to trunk peers configuration")
+	flag.StringVar(&cfg.RoutesPath, "routes-path", "resources/config/routes.json", "Path to DID->tenant routes (routes.json)")
 
 	var rtpManagerAddrs string
 	flag.StringVar(&rtpManagerAddrs, "rtpmanager", "localhost:9090", "RTP Manager gRPC addresses (comma-separated for multiple)")
@@ -104,17 +117,29 @@ func Load() *Config {
 			cfg.RTPManagerAddrs = parseAddressList(rtpmanager)
 		}
 	}
-	if dialplanPath := os.Getenv("DIALPLAN_PATH"); dialplanPath != "" {
-		cfg.DialplanPath = dialplanPath
-	}
 	if llmServer := os.Getenv("LLM_SERVER"); llmServer != "" {
 		cfg.LLMServerURL = llmServer
+	}
+	if llmModel := os.Getenv("LLM_MODEL"); llmModel != "" {
+		cfg.LLMModel = llmModel
+	}
+	if voice := os.Getenv("TTS_VOICE"); voice != "" {
+		cfg.TTSVoice = voice
+	}
+	if policyPath := os.Getenv("POLICY_CONFIG"); policyPath != "" {
+		cfg.PolicyPath = policyPath
 	}
 	if settingsPath := os.Getenv("SETTINGS_PATH"); settingsPath != "" {
 		cfg.SettingsPath = settingsPath
 	}
 	if tenantsPath := os.Getenv("TENANTS_PATH"); tenantsPath != "" {
 		cfg.TenantsPath = tenantsPath
+	}
+	if trunkConfig := os.Getenv("TRUNK_CONFIG"); trunkConfig != "" {
+		cfg.TrunkConfigPath = trunkConfig
+	}
+	if routesPath := os.Getenv("ROUTES_PATH"); routesPath != "" {
+		cfg.RoutesPath = routesPath
 	}
 
 	return cfg

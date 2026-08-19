@@ -1,0 +1,35 @@
+{
+  "_comment": "Class of Service and capacity policy. This file is the deterministic authorization boundary: the LLM supervisor cannot change it, and anything not granted here is denied. A missing file yields the same posture as an empty one - no external dialing anywhere.",
+
+  "default_channel_limit": 10,
+
+  "tenants": {
+    "default": {
+      "_comment": "channel_limit caps concurrent supervised calls. It is both cost control and SLA protection: it keeps the first-turn LLM call from queueing past SIP Timer B under load, so calls reject fast (486) rather than dying in a transaction timeout.",
+      "channel_limit": 10,
+
+      "_comment_symbolic": "symbolic_targets is capability narrowing. The model dials these NAMES; it can never express a raw number through the dial tool. An internal 'user/NNN' target can never reach a trunk. An external value here is still subject to every check below.",
+      "symbolic_targets": {
+        "front-desk": "user/150",
+        "sales": "user/160",
+        "claims": "user/130",
+        "billing": "user/140",
+        "commercial-lines": "user/110",
+        "personal-lines": "user/120",
+        "operator": "user/100"
+      },
+
+      "_comment_external": "allow_external_dial is default-deny. With it false, every non-'user/' destination is refused no matter what the caller says or the model emits.",
+      "allow_external_dial": false,
+
+      "_comment_allowlist": "Consulted only when allow_external_dial is true. An EMPTY list with external enabled denies everything - deny by omission, never allow-all. Entries match as prefixes against the normalized digits.",
+      "external_allowlist": [],
+
+      "_comment_spend": "Spend circuit breaker: external units permitted per tenant. Zero permits no external spend at all, which is the safe default even if allow_external_dial were turned on by mistake.",
+      "max_external_units_per_day": 0,
+
+      "_comment_caller_number": "The separate hard-gated tool that dials a raw caller-supplied number, bypassing symbolic narrowing. Leave false unless a tenant genuinely needs callback-to-any-number.",
+      "allow_caller_provided_number": false
+    }
+  }
+}

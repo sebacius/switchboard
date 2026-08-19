@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<!--
+  UAC: send an INVITE from an UNREGISTERED, non-trunk source and expect the
+  ingress gate to reject it with 403 Forbidden (before any 100 Trying).
+  Pass an unregistered caller via -s (e.g. -s nobody), callee via -key callee.
+  Example: sipp ... -s nobody -key callee 1001
+-->
+<scenario name="UAC - Expect 403 (unknown source)">
+  <!-- Send INVITE -->
+  <send retrans="500">
+    <![CDATA[
+INVITE sip:[callee]@[remote_ip]:[remote_port] SIP/2.0
+Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+From: <sip:[service]@[remote_ip]:[remote_port]>;tag=[pid]uac[call_number]
+To: <sip:[callee]@[remote_ip]:[remote_port]>
+Call-ID: [call_id]
+CSeq: 1 INVITE
+Contact: <sip:[service]@[local_ip]:[local_port];transport=[transport]>
+Max-Forwards: 70
+Content-Type: application/sdp
+User-Agent: SIPp/TotallyNotARobot/1.0
+Content-Length: [len]
+
+v=0
+o=sipp 0 0 IN IP4 [local_ip]
+s=-
+c=IN IP4 [local_ip]
+t=0 0
+m=audio [media_port] RTP/AVP 0
+a=rtpmap:0 PCMU/8000
+    ]]>
+  </send>
+
+  <!-- The gate rejects unknown sources before sending 100 Trying.
+       sipp auto-ACKs the non-2xx final response. -->
+  <recv response="403" rtd="true"/>
+</scenario>

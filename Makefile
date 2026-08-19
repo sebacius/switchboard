@@ -52,6 +52,8 @@ help:
 	@echo "TESTING:"
 	@echo "  make test-sip TARGET=<ip>       - Run SIPp test suite"
 	@echo "  make test-sip TARGET=<ip> SCENARIO=register - Run specific test"
+	@echo "  make test-sip TARGET=<ip> SCENARIO=trunk-reject - Ingress gate: unknown source -> 403"
+	@echo "  make test-sip TARGET=<ip> SCENARIO=trunk-did - Ingress gate: trunk DID routing (needs peer config)"
 	@echo "  make test-register              - Register single user (sipexer)"
 	@echo "  make test-multi                 - Register multiple users"
 	@echo "  make test-api                   - Check registrations via API"

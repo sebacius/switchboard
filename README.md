@@ -123,48 +123,145 @@ make run
 
 ## How It Works
 
-Switchboard is built around two core ideas: a **dialplan** for system-level routing and data gathering, and an **AI engine** that makes per-tenant decisions using natural language configuration.
+Every INVITE — internal, inbound, and outbound — is handed to a single **LLM
+supervisor**. There is no dialplan and no fast-path matcher: the model decides
+what happens to each call, inside a deterministic boundary that decides what it
+is *allowed* to do.
 
-### The Two Layers
+The defining constraint is that **the model is untrusted**. Caller speech becomes
+prompt text, and a `dial` can reach a trunk and cost money, so every security,
+cost, and correctness decision lives in deterministic Go around a zero-authority
+model — never in the prompt.
 
-**1. Dialplan — System-level orchestration**
-
-The dialplan is a single execution pipeline that runs for every inbound call. It handles multi-tenant concerns: identifying the caller, determining which tenant they belong to, and gathering any data needed before the AI engine takes over. The dialplan is powerful enough to make routing decisions on its own (pattern matching, time-based rules, header inspection), but its primary role in an AI-driven setup is **preparation** — it identifies the tenant, pulls context from external systems (via HTTP requests, database lookups, etc.), and then hands off to the AI engine with the right configuration.
-
-**2. AI Engine — Tenant-level decision making**
-
-Once the dialplan has identified the tenant and gathered the necessary context, it engages the AI engine with a **tenant-specific markdown file** (`resources/tenants/<name>.md`). This file is the tenant's complete configuration: business identity, routing rules, staff directory, hours of operation, escalation paths, call queues — everything the AI needs to make intelligent decisions for that specific business. The AI engine reads this configuration and makes routing decisions accordingly.
-
-This is how Switchboard does **multi-tenancy**: the dialplan is shared infrastructure that identifies and prepares; the tenant markdown file is the per-tenant brain that drives decisions.
+### The call path
 
 ```mermaid
 flowchart TB
-    Call["Inbound Call"] --> Dialplan["Dialplan<br/>(shared, system-level)"]
-    Dialplan -->|"identify tenant<br/>gather data<br/>(curl, DB, headers)"| Prep["Tenant Identified<br/>+ Context Gathered"]
-    Prep --> AI["AI Engine<br/>+ tenant config.md"]
-    AI -->|"routing decision"| Action["Transfer / Park /<br/>Hangup / Announce"]
+    Call["INVITE"] --> Ingress["Ingress gate<br/>registered user or trunk peer?"]
+    Ingress --> Router["Router<br/>direction + tenant<br/>(no default tenant)"]
+    Router --> Admission["Admission<br/>tenant loaded? channel free?"]
+    Admission --> Registry["Per-call tool registry<br/>built from (tenant, direction)"]
+    Registry --> Supervisor["Supervisor runner<br/>native tool calling"]
+    Supervisor -->|"dial (not answered)"| Forward["Forward the INVITE<br/>caller hears real ringback"]
+    Supervisor -->|"speak / gather"| Answer["200 OK<br/>supervisor owns the media"]
 
     style Call fill:#0b3d91,stroke:#0b3d91,color:#fff
-    style Dialplan fill:#6a00ff,stroke:#6a00ff,color:#fff
-    style Prep fill:#ff7a00,stroke:#ff7a00,color:#fff
-    style AI fill:#e11d48,stroke:#e11d48,color:#fff
-    style Action fill:#00a86b,stroke:#00a86b,color:#fff
+    style Ingress fill:#6a00ff,stroke:#6a00ff,color:#fff
+    style Router fill:#6a00ff,stroke:#6a00ff,color:#fff
+    style Admission fill:#ff7a00,stroke:#ff7a00,color:#fff
+    style Registry fill:#ff7a00,stroke:#ff7a00,color:#fff
+    style Supervisor fill:#e11d48,stroke:#e11d48,color:#fff
+    style Forward fill:#00a86b,stroke:#00a86b,color:#fff
+    style Answer fill:#00a86b,stroke:#00a86b,color:#fff
 ```
 
-### Operating Modes
+Everything before the supervisor is deterministic and runs **before** any model
+call and **before** the call is answered:
 
-The AI engine operates in two modes, configured per-route in the dialplan:
+1. **Ingress gate** — an INVITE must come from a registered directory user or a
+   configured trunk peer. Anything else is 403. (Requires the SIP trunk: see
+   `resources/config/trunk_peers.json` and `routes.json`.)
+2. **Router** — classifies direction and resolves the tenant. Internal and
+   outbound take the tenant from the From-host's leftmost label; inbound takes it
+   from the DID table. **There is no default tenant** — an unattributable call is
+   404, not a guess.
+3. **Admission** — the tenant must have a loaded, non-empty prompt, and must have
+   a free channel. At the limit the call gets 486 Busy. The channel limit is both
+   cost control and SLA protection: it keeps the first-turn LLM call from queueing
+   past SIP Timer B, so calls reject fast instead of dying in a timeout.
 
-- **Conversational** (default) — Multi-turn dialogue. The agent greets the caller, listens for speech, sends it to the LLM, speaks the response, and repeats. The LLM can trigger actions (transfer, park, hangup) at any point. Crucially, the agent retains context and stays engaged — if a transfer fails, it returns to the caller and offers alternatives rather than abandoning them. Use this for full receptionist replacement, intake, and complex routing.
-- **Routing** — Single-shot decision. The agent plays a greeting, asks the LLM for a routing decision based on tenant instructions (no caller input), speaks the response, executes the action, and ends the call. Use this for after-hours messages, announcements, or simple call routing.
+### The supervisor answers only when it means to
 
-Both modes use the same tenant markdown file and the same small LLM. The difference is whether the caller participates in the conversation or the AI decides on its own.
+The INVITE handler **never** sends a 200 OK. The first turn decides:
+
+| First turn returns | What happens |
+| --- | --- |
+| `dial` (call not answered) | The INVITE is **forwarded**. 180 goes upstream, the target's own 200 — or its 486/480 — is relayed back. The caller hears the real phone ring. |
+| Spoken text | 200 OK. The supervisor owns the media, speaks via TTS, and enters the listen/speak loop. |
+| `dial` (already answered) | The outbound leg is bridged into the media the supervisor already owns. |
+
+Answering means "the AI handles this leg's media itself". A staff member dialing
+an extension is therefore a **pure forward** with no AI in the audio path — which
+is why the tenant prompt tells the model to route an internal call silently, with
+a tool call and no text.
+
+### Authorization: the model asks, the policy decides
+
+Two independent layers, neither of which the model can talk its way past:
+
+**Affordance removal (per-call registry).** The tool set is built per call from
+`(tenant, direction)`. An **inbound** caller's registry contains **no
+external-dial tool at all** — there is nothing to authorize because there is
+nothing to call. `unpark` is likewise internal-only, so an outside caller cannot
+guess a slot number and pick up a colleague's held call.
+
+**Class of Service (`resources/config/policy.json`).** Every consequential call
+is adjudicated before it executes:
+
+- **Capability narrowing** — the model emits *symbolic* targets (`sales`,
+  `front-desk`) that a deterministic resolver maps to real destinations. It cannot
+  express a raw `+1900…` through the normal `dial` tool at all.
+- **Default-deny external** with a prefix allowlist, plus barred classes
+  (premium-rate, satellite, IRSF-heavy country codes) that are denied
+  unconditionally.
+- **Spend circuit breaker** per tenant.
+- **Decision logging** for every verdict — a denied external dial is a fraud
+  signal.
+
+A missing `policy.json` is the safest posture, not an error: no external dialing
+anywhere.
+
+### Tools
+
+`dial`, `hangup`, `play_audio`, `park`, `unpark`. Speech is implicit — ordinary
+text is spoken, listening is the runner's job. Each handler returns a
+disposition the dispatch loop acts on: `Continue`, `Terminal`, or `Parked` (the
+loop holds the call without driving further turns; the handler never blocks).
+
+### Native tool calling
+
+The supervisor uses Ollama's native **`/api/chat`** endpoint — not the
+OpenAI-compatible `/v1/chat/completions` — with `think: false`. The native
+endpoint returns `thinking`, `content`, and `tool_calls` as *separate fields*, so
+reasoning can never leak into text-to-speech. (`/v1` folds reasoning into
+`<think>` tags inside content, which is version-dependent and one bad parse away
+from speaking the model's scratchpad to a caller.) Only `content` is ever spoken.
+
+`think: false` is effectively forced by the latency budget: a thinking pass costs
+seconds, and the first turn runs *inside the INVITE transaction*.
+
+No third-party LLM library is used — the client is `net/http` against Ollama.
+
+### The runner: one loop, three nested scopes
+
+```
+callCtx          ← BYE / CANCEL / timeout → idempotent teardown funnel
+  └─ turnCtx     ← runaway breaker / per-turn deadline → abort one turn
+       └─ playbackCtx ← barge-in → cancel TTS only, the turn survives
+```
+
+One dispatch loop drains one events channel; producers write with a select that
+also observes cancellation, and **the channel is never closed**. Everything that
+blocks inside a turn — the LLM call, each tool handler, `Listen` — honors its own
+scope, because the loop's top-level select only sees cancellation *between* turns.
+
+Two safety mechanisms fall out of this shape:
+
+- **Idempotent teardown.** Caller BYE, the `hangup` tool, and a context timeout
+  all converge on one `teardown(reason)` guarded by `sync.Once`. It releases the
+  admission slot, cancels an orphaned outbound leg, and branches on whether we
+  ever answered — pre-answer aborts send **487** and CANCEL the B-leg, post-answer
+  aborts send BYE.
+- **Runaway-turn breaker.** Turns are *reactive* (caller input, human-rate-limited)
+  or *autonomous* (a tool result re-prompting the model, rate-limited by nothing).
+  Consecutive autonomous turns are bounded: a soft cap stops re-prompting, a hard
+  cap speaks a deterministic message and hangs up. Any caller input resets it.
 
 ### AI Services
 
-The AI engine connects three external services:
+The supervisor connects three external services:
 
-- **LLM** (Ollama) — Makes routing and conversational decisions
+- **LLM** (Ollama) — the supervisor, default model `qwen3:8b`
 - **ASR** (Whisper) — Speech-to-text for caller input
 - **TTS** (Piper) — Text-to-speech for agent responses
 
@@ -178,38 +275,53 @@ sequenceDiagram
     participant LLM as Ollama (LLM)
 
     Caller->>Signaling: SIP INVITE
+    Note over Signaling: ingress → router → admission (no 200 OK yet)
     Signaling->>RTP: CreateSession (gRPC)
-    Signaling->>Caller: 200 OK + SDP
+    Signaling->>LLM: /api/chat (system + tools, think:false)
 
-    Note over Signaling: Dialplan identifies tenant, loads config
-
-    Signaling->>TTS: Synthesize greeting
-    TTS-->>RTP: Audio
-    RTP-->>Caller: RTP (greeting)
-
-    loop Conversational mode
-        Caller-->>RTP: RTP (speech)
-        RTP->>ASR: Transcribe audio
-        ASR-->>Signaling: Text
-        Signaling->>LLM: Chat completion (tenant config + history)
-        LLM-->>Signaling: Response + optional ACTION
-        Signaling->>TTS: Synthesize response
+    alt First turn returns dial
+        LLM-->>Signaling: tool_calls: dial
+        Signaling->>Caller: 180 Ringing
+        Signaling->>Caller: relay target's 200 (or 486/480)
+        Note over Signaling: pure forward — no AI in the audio path
+    else First turn returns text
+        LLM-->>Signaling: content
+        Signaling->>Caller: 200 OK + SDP
+        Signaling->>TTS: Synthesize greeting
         TTS-->>RTP: Audio
-        RTP-->>Caller: RTP (response)
-    end
+        RTP-->>Caller: RTP (greeting)
 
-    Note over Signaling: LLM returns ACTION: hangup/transfer/park
-    Signaling->>Caller: BYE
+        loop Conversation
+            Caller-->>RTP: RTP (speech)
+            RTP->>ASR: Transcribe audio
+            ASR-->>Signaling: Text
+            Signaling->>LLM: /api/chat (history + tools)
+            LLM-->>Signaling: content and/or tool_calls
+            Signaling->>TTS: Synthesize content only
+            TTS-->>RTP: Audio
+            RTP-->>Caller: RTP (response)
+        end
+
+        Note over Signaling: hangup tool → teardown
+        Signaling->>Caller: BYE
+    end
 ```
 
 ### Tenant Configuration
 
-The AI engine uses a two-layer prompt system:
+The supervisor uses a two-layer prompt system, both layers live-reloadable
+through the config API:
 
-1. **Settings** (`resources/config/settings.md`) — Loaded once at startup. Defines the action contract (available actions, response format, rules). Shared across all tenants.
-2. **Tenant config** (`resources/tenants/<name>.md`) — Loaded per-call. Contains the complete business knowledge base: identity, departments, staff directory, routing rules, hours, escalation paths, scripted responses. Selected via the `config` param in the dialplan route.
+1. **Settings** (`resources/config/settings.md`) — Shared across all tenants. Defines the tool contract, the per-direction rules ("route, don't greet" for internal calls), and prompt hardening.
+2. **Tenant config** (`resources/tenants/<name>.md`) — Loaded per call. Contains the complete business knowledge base: identity, departments, staff directory, routing rules, hours, escalation paths, scripted responses. Selected by the **resolved tenant**, not by a route parameter.
 
 A tenant config file is a self-contained document — it tells the AI everything it needs to know to act as a virtual receptionist for that specific business. See [`resources/tenants/default.md`](resources/tenants/default.md) for a full example.
+
+A tenant with no file is **not admissible** — it cannot inherit `settings.md` and
+quietly become a generic receptionist. That is the "no default tenant" rule.
+
+Treat `tenant.md` as **semi-public**: a caller may be able to coax it out of the
+model, so it must never contain secrets.
 
 ### Running with AI Services
 
@@ -235,7 +347,7 @@ If you'd rather run the services manually (e.g. on a different host, with GPUs, 
 ```bash
 # 1. Ollama (LLM) — install from https://ollama.com
 ollama serve &
-ollama pull llama3.1:8b
+ollama pull qwen3:8b
 
 # 2. Whisper (ASR) — https://github.com/fedirz/faster-whisper-server
 docker run -d --name whisper-asr -p 8001:8000 \
@@ -252,35 +364,45 @@ go run cmd/rtpmanager/main.go \
   --tts-server http://localhost:8000 &
 
 go run cmd/signaling/main.go \
-  --llm-server http://localhost:11434 &
+  --llm-server http://localhost:11434 \
+  --llm-model qwen3:8b &
 
 go run cmd/ui/main.go
+
+# 5. Register a softphone and dial another registered extension
 ```
 
 The AI services can run on any reachable host — replace `localhost` with the IP of wherever you started them.
 
-### Dialplan Example
+The signaling server **requires** an LLM server: without a supervisor there is
+nothing to route calls, so it refuses to start rather than running unsupervised.
 
-```json
-{
-  "id": "5a1c18fd-f20c-4ddd-ae76-3430fb1fca55",
-  "customer_id": "720fd275-a196-444c-949a-b90b2531c4a7",
-  "pattern": "5558889999",
-  "actions": [
-    {
-      "type": "ai_agent",
-      "params": {
-        "config": "default",
-        "voice": "alloy",
-        "model": "llama3.1:8b",
-        "mode": "routing"
-      }
-    }
-  ]
-}
+### Trying the supervisor without SIP
+
+`cmd/agent-smoke` drives the real runner against real Ollama with a fake call
+session, so you can watch routing decisions without softphones, RTP, ASR, or TTS.
+Stdin becomes caller speech; tool dispatches and TTS print with a `>>>` prefix.
+
+```bash
+# Internal call: expect an immediate ">>> forward user/105" and no spoken text
+go run ./cmd/agent-smoke --direction internal --caller 102 --callee 105
+
+# Inbound call: expect a greeting, then intent routing as you type
+go run ./cmd/agent-smoke --direction inbound --caller +15551234567 --callee 5558001200
 ```
 
-See the [Dialplan Reference](docs/DIALPLAN.md) for all `ai_agent` parameters.
+Use `--verbose` to surface the model's `thinking` field on stderr — it must never
+appear in a `>>> tts:` line.
+
+### Configuration Files
+
+| File | Purpose |
+| --- | --- |
+| `resources/config/settings.md` | Shared supervisor instructions: tool contract, per-direction rules, prompt hardening |
+| `resources/tenants/<name>.md` | Per-tenant business knowledge base; a tenant with no file is not admissible |
+| `resources/config/policy.json` | Class of Service and capacity: channel limits, symbolic dial targets, external allowlist, barred prefixes, spend breaker |
+| `resources/config/trunk_peers.json` | SIP trunk peers — the ingress gate matches inbound INVITEs against these |
+| `resources/config/routes.json` | DID → tenant mapping for inbound calls |
 
 ## Vision & Roadmap
 
@@ -289,18 +411,20 @@ Switchboard aims to replace static IVR trees and rigid call routing with an AI e
 ### What Works Today
 
 - SIP REGISTER with in-memory location service
-- Inbound INVITE -> 183 Session Progress -> 200 OK flow
+- SIP trunk peers with DID → tenant routing, and an ingress gate that rejects unknown sources
 - B2BUA call bridging (A-leg to B-leg)
 - RTP media bridging between sessions
-- Dialplan with pattern matching and Dial action
 - Basic admin dashboard with live updates
 - Multiple RTP Manager load balancing with session affinity
 - **Live media re-anchoring** — sessions can be migrated between RTP Managers mid-call (both IVR and bridged calls), enabling graceful drain and zero-downtime updates
 - RTP Manager drain API (graceful and aggressive modes) with per-session migration
-- AI voice agent as a dialplan action (`ai_agent`) with two modes:
-  - **Conversational**: multi-turn listen/LLM/speak loop with ASR and TTS
-  - **Routing**: single-shot LLM decision (transfer, park, or hangup)
-- LLM integration via Ollama (OpenAI-compatible API) with multi-turn conversation history
+- **LLM supervisor on every call** — no dialplan, no fast-path matcher
+  - Deferred answer: `dial` forwards the INVITE (real ringback), speech answers and takes the media
+  - Native Ollama `/api/chat` tool calling with `think: false`, so reasoning never reaches TTS
+  - Per-call tool registry scoped by `(tenant, direction)` — inbound gets no external dial
+  - Deterministic tool authorization: Class of Service, symbolic-target narrowing, barred prefixes, spend breaker
+  - Per-tenant admission with channel limits (486 at the limit) and no default tenant
+  - Idempotent teardown funnel, nested call/turn/playback scopes, runaway-turn breaker
 - Speech recognition via Whisper ASR server (batch transcription)
 - Text-to-speech playback through TTS server
 - Per-tenant LLM personalities loaded from markdown files
@@ -312,7 +436,8 @@ Switchboard aims to replace static IVR trees and rigid call routing with an AI e
 - SRTP/TLS (plaintext only)
 - Most SIP edge cases (re-INVITE, UPDATE, REFER, etc.)
 - Proper error handling in many places
-- Tests (there are almost none)
+- Barge-in — the caller cannot interrupt the AI mid-sentence; the `playbackCtx` scope exists for it, but it needs speech-onset detection from the media layer
+- Mid-call tools (transfer, recording control, conference, mute)
 
 ### What Might Be Wrong
 
@@ -323,9 +448,9 @@ Switchboard aims to replace static IVR trees and rigid call routing with an AI e
 
 ### Where We're Headed
 
-**Dialplan as a data-gathering powerhouse.** The dialplan should be able to make HTTP requests, query databases, inspect SIP headers, and pull data from external systems — all before the AI engine is engaged. This makes it the right place to handle tenant identification, caller lookup, and context enrichment. The dialplan is deterministic and fast; the AI engine is flexible and intelligent. Each does what it's best at.
+**Context enrichment before the supervisor.** The deterministic pre-LLM layer (ingress → router → admission) is the right place to make HTTP requests, query databases, and inspect SIP headers, so the supervisor starts its first turn already knowing who the caller is. That layer is deterministic and fast; the supervisor is flexible and intelligent. Each does what it's best at.
 
-**Tenant config caching.** Today, tenant markdown files are loaded from disk on every call. As configurations grow and external data sources are added, we'll want to cache processed tenant configs to avoid redundant work. This is a natural optimization once the system proves itself.
+**Barge-in.** The runner already isolates TTS playback in its own `playbackCtx`, so cancelling a prompt mid-utterance without disturbing the turn or the call is a solved problem structurally. What is missing is the trigger: the media layer needs to expose speech-onset/VAD so a contentless interrupt event can fire the cancel.
 
 **Small, focused models.** We deliberately use small LLMs (8B parameters) for routing decisions. The AI engine is not meant to be a general-purpose chatbot — it's a decision-making engine that operates within the boundaries of a tenant's configuration. Small models are faster, cheaper, and more predictable. We accept that they may occasionally make odd decisions, but the bounded context (tenant config + settings) keeps them on track.
 
@@ -345,7 +470,6 @@ Switchboard aims to replace static IVR trees and rigid call routing with an AI e
 
 | Document | Description |
 |----------|-------------|
-| [Dialplan Reference](docs/DIALPLAN.md) | Route patterns, actions, AI agent parameters, variable substitution |
 | [Configuration](docs/CONFIGURATION.md) | All flags and environment variables per service |
 
 ## Technology Stack

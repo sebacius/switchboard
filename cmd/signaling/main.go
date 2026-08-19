@@ -27,7 +27,9 @@ func main() {
 		{Label: "Advertise", Value: cfg.AdvertiseAddr},
 		{Label: "RTP Manager", Value: strings.Join(cfg.RTPManagerAddrs, ", ")},
 		{Label: "LLM Server", Value: cfg.LLMServerURL},
-		{Label: "Dialplan", Value: cfg.DialplanPath},
+		{Label: "Supervisor Model", Value: cfg.LLMModel},
+		{Label: "Policy", Value: cfg.PolicyPath},
+		{Label: "Tenants", Value: cfg.TenantsPath},
 		{Label: "Log Level", Value: cfg.LogLevel},
 	})
 
