@@ -1,0 +1,35 @@
+{
+  "_comment": "Routing data for the small local-testing tenant. Deliberately minimal, like devtenant.md itself.",
+
+  "operator": "user/100",
+  "retrieval_prefix": "*",
+
+  "_comment_extensions": "600 is the assistant: callers routed there want to talk to the AI, so it hands off to the supervisor instead of dialing.",
+  "extensions": {
+    "100": "user/100",
+    "101": "user/101",
+    "102": "user/102",
+    "105": "user/105",
+    "110": "user/110",
+    "600": "assistant"
+  },
+
+  "symbolic_targets": {
+    "operator": "user/100",
+    "reception": "user/100",
+    "support": "user/105",
+    "sales": "user/110",
+    "engineering": "group/engineering"
+  },
+
+  "dids": {},
+
+  "groups": {
+    "engineering": {
+      "strategy": "round-robin",
+      "members": ["user/101", "user/102"],
+      "member_timeout_ms": 12000,
+      "no_answer": "operator"
+    }
+  }
+}

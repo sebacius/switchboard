@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
@@ -147,6 +148,14 @@ func (s *sessionImpl) Forward(ctx context.Context, target string, timeout time.D
 		return s.relayForwardFailure(target, err)
 	}
 
+	return s.completeForward(ctx, bLeg, target)
+}
+
+// completeForward is everything that happens once some outbound leg has
+// answered: relay the 200 upstream, adopt the A-leg, bridge, and block until a
+// leg hangs up. Forward and ForwardGroup share it because the difference between
+// them is entirely in HOW a leg is won, not in what happens afterwards.
+func (s *sessionImpl) completeForward(ctx context.Context, bLeg b2bua.Leg, target string) error {
 	// Retain the leg so teardown can cancel it if the caller vanishes between
 	// here and the bridge being established.
 	s.setBLeg(bLeg)
@@ -191,6 +200,79 @@ func (s *sessionImpl) Forward(ctx context.Context, target string, timeout time.D
 
 	s.logger.Info("[Session] Forward bridge terminated", "call_id", s.callID, "bridge_id", bridge.ID())
 	return nil
+}
+
+// ForwardGroup rings a ring group pre-answer. Each round is dialed at once
+// (first answer wins, the rest are cancelled) and rounds are tried in order,
+// each bounded by memberTimeout.
+//
+// The critical difference from Forward: a group that nobody answers returns
+// ErrGroupNoAnswer WITHOUT relaying a failure status to the caller. The call is
+// left pre-answer and unanswered, so the group's no-answer outcome — hand the
+// call to the supervisor, try the operator, or hang up deliberately — is still
+// available. Relaying a 480 here would end the call before the tenant's
+// configured fallback ever ran.
+func (s *sessionImpl) ForwardGroup(ctx context.Context, rounds [][]string, memberTimeout time.Duration) error {
+	if s.callService == nil {
+		return &DialError{Cause: fmt.Errorf("B2BUA CallService not configured"), SIPCode: 501}
+	}
+	if s.HasAnswered() {
+		return &DialError{Cause: fmt.Errorf("forward group after answer")}
+	}
+	if memberTimeout <= 0 {
+		memberTimeout = forwardRingTimeout
+	}
+
+	// Ring the caller before the first round so they hear ringback for the whole
+	// group, not just the member that eventually answers.
+	s.ringOnce()
+
+	callerName := s.callerName
+	if callerName == "" {
+		callerName = s.callerID
+	}
+
+	for i, round := range rounds {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		var candidates []*b2bua.LookupResult
+		for _, target := range round {
+			result, err := s.callService.Lookup(ctx, target)
+			if err != nil || !result.HasContacts() {
+				// A member with no live registration is skipped, not fatal: a
+				// group exists precisely so one absent person does not black-hole
+				// the caller.
+				s.logger.Debug("[Session] Ring group member unreachable",
+					"call_id", s.callID, "target", target, "error", err)
+				continue
+			}
+			candidates = append(candidates, result)
+		}
+		if len(candidates) == 0 {
+			continue
+		}
+
+		s.logger.Info("[Session] Ringing group round",
+			"call_id", s.callID, "round", i+1, "of", len(rounds), "members", len(candidates))
+
+		bLeg, err := s.callService.DialParallel(ctx, candidates, memberTimeout,
+			b2bua.WithALegSessionID(s.sessionID),
+			b2bua.WithALegCallID(s.callID),
+			b2bua.WithCallerID(s.callerID),
+			b2bua.WithCallerName(callerName),
+		)
+		if err != nil {
+			s.logger.Debug("[Session] Ring group round unanswered",
+				"call_id", s.callID, "round", i+1, "error", err)
+			continue
+		}
+
+		return s.completeForward(ctx, bLeg, strings.Join(round, ","))
+	}
+
+	return ErrGroupNoAnswer
 }
 
 // relayForwardFailure maps an outbound dial failure onto the caller's INVITE

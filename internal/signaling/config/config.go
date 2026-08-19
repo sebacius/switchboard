@@ -34,6 +34,12 @@ type Config struct {
 	// File management paths
 	SettingsPath string // Directory containing settings.md (default "resources/config")
 	TenantsPath  string // Directory containing tenant .md files (default "resources/tenants")
+	// RoutingPath is the directory holding per-tenant <tenant>.routing.json
+	// files. Empty means "the same directory as the tenant prompts", which is
+	// where they belong: default.md is a tenant's judgement, default.routing.json
+	// is the same tenant's routing data. The flag exists for deployments that
+	// mount the two separately.
+	RoutingPath string
 
 	// Trunk settings
 	TrunkConfigPath string // Path to trunk peers JSON (list of {name,host,port,role})
@@ -73,6 +79,7 @@ func Load() *Config {
 	flag.StringVar(&cfg.PolicyPath, "policy-config", "resources/config/policy.json", "Path to tenant Class-of-Service and channel-limit configuration")
 	flag.StringVar(&cfg.SettingsPath, "settings-path", "resources/config", "Directory containing settings.md")
 	flag.StringVar(&cfg.TenantsPath, "tenants-path", "resources/tenants", "Directory containing tenant .md files")
+	flag.StringVar(&cfg.RoutingPath, "routing-path", "", "Directory containing per-tenant <tenant>.routing.json files (defaults to --tenants-path)")
 	flag.StringVar(&cfg.TrunkConfigPath, "trunk-config", "resources/config/trunk_peers.json", "Path to trunk peers configuration")
 	flag.StringVar(&cfg.RoutesPath, "routes-path", "resources/config/routes.json", "Path to DID->tenant routes (routes.json)")
 
@@ -135,11 +142,19 @@ func Load() *Config {
 	if tenantsPath := os.Getenv("TENANTS_PATH"); tenantsPath != "" {
 		cfg.TenantsPath = tenantsPath
 	}
+	if routingPath := os.Getenv("ROUTING_PATH"); routingPath != "" {
+		cfg.RoutingPath = routingPath
+	}
 	if trunkConfig := os.Getenv("TRUNK_CONFIG"); trunkConfig != "" {
 		cfg.TrunkConfigPath = trunkConfig
 	}
 	if routesPath := os.Getenv("ROUTES_PATH"); routesPath != "" {
 		cfg.RoutesPath = routesPath
+	}
+
+	// Routing tables live beside the tenant prompts unless pointed elsewhere.
+	if cfg.RoutingPath == "" {
+		cfg.RoutingPath = cfg.TenantsPath
 	}
 
 	return cfg

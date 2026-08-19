@@ -60,10 +60,57 @@ reasoning is never spoken.
 |------|---------|---------|-------------|
 | `--settings-path` | `SETTINGS_PATH` | resources/config | Directory containing settings.md |
 | `--tenants-path` | `TENANTS_PATH` | resources/tenants | Directory containing tenant .md files |
+| `--routing-path` | `ROUTING_PATH` | (same as `--tenants-path`) | Directory containing `<tenant>.routing.json` files |
 
-A tenant's prompt is `settings.md` followed by `tenants/<name>.md`. A tenant with
-no file of its own is **not admissible** — there is no default tenant, and an
-unattributable call is rejected rather than supervised by a guess.
+A tenant's prompt is `settings.md` followed by `tenants/<name>.md`. There is no
+default tenant: an unattributable call is rejected rather than supervised by a
+guess.
+
+A tenant is described by **two** files. The `.md` is judgement — identity, tone,
+business facts, escalation language. The `.routing.json` is data — extensions,
+DIDs, ring groups, and the names the model may dial. A tenant with only a routing
+table can be **routed** but not supervised; a tenant with only a prompt can be
+supervised but resolves nothing deterministically.
+
+### Tenant Routing Table
+
+`<tenant>.routing.json` is what deterministic resolution routes by, and the
+source of the symbolic targets `dial` narrows to. Both read the same file, so a
+name cannot resolve one way for the resolver and another way for the model.
+
+```json
+{
+  "operator": "user/150",
+  "retrieval_prefix": "*",
+  "extensions": { "105": "user/105", "100": "assistant", "130": "group/claims" },
+  "symbolic_targets": { "sales": "group/sales", "front-desk": "user/150" },
+  "dids": { "+15558001200": "assistant", "+15558001250": "group/claims" },
+  "groups": {
+    "claims": {
+      "strategy": "sequential",
+      "members": ["user/130", "user/120"],
+      "member_timeout_ms": 15000,
+      "no_answer": "supervisor"
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `operator` | Fallback human: where an unknown tool name sends the caller, and the `no_answer: operator` outcome. Empty means those paths keep the call alive instead of transferring — never a hangup |
+| `retrieval_prefix` | Dial prefix for picking up a parked call; the digits after it are the slot ID (`*701` → slot 701). Internal callers only |
+| `extensions` | Dialed extension → destination. `user/NNN` is an endpoint, `group/NAME` a ring group, `assistant` hands off to the supervisor |
+| `symbolic_targets` | Capability narrowing: the only names the model may dial. It can never express a raw number through `dial` |
+| `dids` | Inbound DID → destination **within** the tenant. The DID → *tenant* step happens earlier, in `routes.json`. Matched on digits, so the leading `+` is optional |
+| `groups` | Ring groups. `strategy` is `sequential` or `round-robin`; `member_timeout_ms` bounds one member's ring; `no_answer` is `supervisor`, `operator`, or `hangup` |
+
+A missing routing file means nothing resolves deterministically for that tenant
+and every call goes to the supervisor. A **malformed** one is a hard startup
+error — an unparseable table would silently send every call that should have been
+routed in milliseconds to a language model instead.
+
+Both files reload through `POST /api/v1/config/reload`.
 
 ### Trunk and DID Routing
 
@@ -79,13 +126,17 @@ change it, and anything it does not grant is denied. A **missing file is not an
 error**: it yields the safest posture (no external dialing anywhere, default
 channel limit).
 
+It says only what is *permitted*, never what a name *means*: `symbolic_targets`
+moved to the tenant routing table, and a leftover `symbolic_targets` key here is
+a hard startup error naming the file the entries belong in. Two sources for one
+name is exactly the drift the move was meant to end.
+
 ```json
 {
   "default_channel_limit": 10,
   "tenants": {
     "acme": {
       "channel_limit": 20,
-      "symbolic_targets": { "sales": "user/160", "support": "user/105" },
       "allow_external_dial": false,
       "external_allowlist": [],
       "max_external_units_per_day": 0,
@@ -97,9 +148,8 @@ channel limit).
 
 | Field | Meaning |
 |-------|---------|
-| `default_channel_limit` | Per-tenant concurrent-call cap when the tenant sets none. Rejects with 486 at the limit; keeps the first-turn LLM call from queueing past SIP Timer B |
+| `default_channel_limit` | Per-tenant cap on concurrent **supervised** calls when the tenant sets none. Rejects with 486 at the limit; keeps the first-turn LLM call from queueing past SIP Timer B. Deterministically resolved calls do not consume a channel |
 | `channel_limit` | Per-tenant override |
-| `symbolic_targets` | Capability narrowing: the names the model may dial, mapped to real targets. The model cannot express a raw number through `dial` |
 | `allow_external_dial` | Default-deny gate for any non-`user/` destination |
 | `external_allowlist` | Prefix allowlist, consulted only when external dial is enabled. Empty with external enabled denies everything |
 | `barred_prefixes` | Overrides the built-in barred classes (premium-rate, satellite, IRSF-heavy codes). Omit to inherit the defaults |
@@ -138,6 +188,7 @@ export LOGLEVEL=debug
   --llm-model qwen3:8b \
   --policy-config /etc/switchboard/policy.json \
   --tenants-path /etc/switchboard/tenants \
+  --routing-path /etc/switchboard/tenants \
   --loglevel debug
 ```
 

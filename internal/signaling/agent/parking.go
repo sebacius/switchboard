@@ -114,44 +114,60 @@ func unparkTool(svc ParkingService, logger *slog.Logger) Tool {
 			if !ok || slot == "" {
 				return "", fmt.Errorf("unpark requires a 'slot' number; ask the caller which slot to retrieve")
 			}
-
-			// The retriever must own media before it can be bridged to the
-			// parked party.
-			if err := sess.Answer(ctx); err != nil {
-				return "", fmt.Errorf("answer before unpark: %w", err)
-			}
-
-			result, err := svc.Unpark(ctx, parking.UnparkRequest{SlotID: slot})
-			if err != nil {
-				return "", fmt.Errorf("no call is parked in slot %s: %w", slot, err)
-			}
-			parked := result.Slot
-
-			transport := sess.GetTransport()
-			if transport == nil {
-				return "", fmt.Errorf("media transport unavailable")
-			}
-
-			bridgeID, err := transport.BridgeMedia(ctx, parked.SessionID, sess.GetSessionID())
-			if err != nil {
-				return "", fmt.Errorf("bridge parked call: %w", err)
-			}
-
-			logger.Info("[Agent] Unparked and bridged",
-				"slot", slot,
-				"bridge_id", bridgeID,
-				"parked_call_id", parked.CallID,
-				"retriever_call_id", sess.CallID(),
-			)
-
-			// The bridge outlives this turn, so the teardown watch runs in the
-			// background: the handler must not block the dispatch loop. The
-			// Parked disposition keeps the runner holding the call meanwhile.
-			go watchUnparkedBridge(sess, parked, bridgeID, transport, logger)
-
-			return fmt.Sprintf("connected the caller to the call parked in slot %s", slot), nil
+			return RetrieveParked(ctx, svc, slot, sess, logger)
 		},
 	}
+}
+
+// RetrieveParked answers the retriever, takes the parked call out of its slot,
+// and bridges the two. It is shared by the unpark tool and by the deterministic
+// resolver's *7XX path: a colleague dialing *701 and a colleague asking the
+// assistant to pick up slot 701 must do exactly the same thing, and having one
+// implementation is what guarantees it.
+//
+// It does not block: the bridge outlives the call into this function, so the
+// teardown watch runs in its own goroutine. Callers that need to stay alive for
+// the bridge's lifetime wait on the session's context.
+func RetrieveParked(ctx context.Context, svc ParkingService, slot string, sess CallSession, logger *slog.Logger) (string, error) {
+	if svc == nil {
+		return "", fmt.Errorf("parking is not available on this system")
+	}
+	slot = normalizeSlotID(slot)
+	if slot == "" {
+		return "", fmt.Errorf("no parking slot given")
+	}
+
+	// The retriever must own media before it can be bridged to the parked party.
+	if err := sess.Answer(ctx); err != nil {
+		return "", fmt.Errorf("answer before unpark: %w", err)
+	}
+
+	result, err := svc.Unpark(ctx, parking.UnparkRequest{SlotID: slot})
+	if err != nil {
+		return "", fmt.Errorf("no call is parked in slot %s: %w", slot, err)
+	}
+	parked := result.Slot
+
+	transport := sess.GetTransport()
+	if transport == nil {
+		return "", fmt.Errorf("media transport unavailable")
+	}
+
+	bridgeID, err := transport.BridgeMedia(ctx, parked.SessionID, sess.GetSessionID())
+	if err != nil {
+		return "", fmt.Errorf("bridge parked call: %w", err)
+	}
+
+	logger.Info("[Agent] Unparked and bridged",
+		"slot", slot,
+		"bridge_id", bridgeID,
+		"parked_call_id", parked.CallID,
+		"retriever_call_id", sess.CallID(),
+	)
+
+	go watchUnparkedBridge(sess, parked, bridgeID, transport, logger)
+
+	return fmt.Sprintf("connected the caller to the call parked in slot %s", slot), nil
 }
 
 // watchUnparkedBridge waits for either party to hang up, unbridges the media,

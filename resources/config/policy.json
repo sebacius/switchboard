@@ -1,5 +1,5 @@
 {
-  "_comment": "Class of Service and capacity policy. This file is the deterministic authorization boundary: the LLM supervisor cannot change it, and anything not granted here is denied. A missing file yields the same posture as an empty one - no external dialing anywhere.",
+  "_comment": "Class of Service and capacity policy. This file is the deterministic authorization boundary: the LLM supervisor cannot change it, and anything not granted here is denied. A missing file yields the same posture as an empty one - no external dialing anywhere. Routing DATA (extensions, DIDs, ring groups, symbolic targets) lives in each tenant's routing file, not here - this file only says what is PERMITTED, never what a name means. A leftover \"symbolic_targets\" key here is a hard startup error.",
 
   "default_channel_limit": 10,
 
@@ -7,17 +7,6 @@
     "default": {
       "_comment": "channel_limit caps concurrent supervised calls. It is both cost control and SLA protection: it keeps the first-turn LLM call from queueing past SIP Timer B under load, so calls reject fast (486) rather than dying in a transaction timeout.",
       "channel_limit": 10,
-
-      "_comment_symbolic": "symbolic_targets is capability narrowing. The model dials these NAMES; it can never express a raw number through the dial tool. An internal 'user/NNN' target can never reach a trunk. An external value here is still subject to every check below.",
-      "symbolic_targets": {
-        "front-desk": "user/150",
-        "sales": "user/160",
-        "claims": "user/130",
-        "billing": "user/140",
-        "commercial-lines": "user/110",
-        "personal-lines": "user/120",
-        "operator": "user/100"
-      },
 
       "_comment_external": "allow_external_dial is default-deny. With it false, every non-'user/' destination is refused no matter what the caller says or the model emits.",
       "allow_external_dial": false,

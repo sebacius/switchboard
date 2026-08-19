@@ -187,7 +187,7 @@ func TestLoadPolicyConfigMissingFileIsSafeDefault(t *testing.T) {
 		t.Fatalf("expected the fallback channel limit, got %d", cfg.DefaultChannelLimit)
 	}
 
-	policy := cfg.TenantPolicyFor("anyone")
+	policy := cfg.TenantPolicyFor("anyone", nil)
 	if policy.AllowExternalDial {
 		t.Fatal("an unconfigured tenant must not be able to dial externally")
 	}
@@ -217,8 +217,7 @@ func TestLoadPolicyConfigParsesTenants(t *testing.T) {
 	      "channel_limit": 9,
 	      "allow_external_dial": true,
 	      "external_allowlist": ["+1800"],
-	      "max_external_units_per_day": 25,
-	      "symbolic_targets": {"sales": "user/160"}
+	      "max_external_units_per_day": 25
 	    },
 	    "beta": {}
 	  }
@@ -243,14 +242,46 @@ func TestLoadPolicyConfigParsesTenants(t *testing.T) {
 		t.Fatal("a tenant with no positive override must inherit the default, not appear in overrides")
 	}
 
-	acme := cfg.TenantPolicyFor("acme")
+	acme := cfg.TenantPolicyFor("acme", map[string]string{"sales": "user/160"})
 	if !acme.AllowExternalDial || acme.MaxExternalUnitsPerDay != 25 {
 		t.Fatalf("acme policy not parsed: %+v", acme)
 	}
+	// Symbolic targets come from the tenant's ROUTING table now, not this file.
 	if acme.SymbolicTargets["sales"] != "user/160" {
-		t.Fatalf("expected the symbolic target to survive parsing, got %v", acme.SymbolicTargets)
+		t.Fatalf("expected the caller-supplied symbolic targets, got %v", acme.SymbolicTargets)
 	}
-	if cfg.TenantPolicyFor("beta").AllowExternalDial {
+	if cfg.TenantPolicyFor("beta", nil).AllowExternalDial {
 		t.Fatal("a tenant with an empty config must stay default-deny")
+	}
+}
+
+// A policy.json that still carries symbolic_targets must not start. Two sources
+// for one name is the drift moving them was meant to end, and a silent merge
+// would let a stale entry here quietly outrank the routing file forever.
+func TestLoadPolicyConfigRejectsLeftoverSymbolicTargets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.json")
+	body := `{"tenants": {"acme": {"symbolic_targets": {"sales": "user/160"}}}}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadPolicyConfig(path)
+	if err == nil {
+		t.Fatal("a leftover symbolic_targets key must be a hard startup error")
+	}
+	if !strings.Contains(err.Error(), "routing file") {
+		t.Fatalf("the error must tell the operator where the entries belong, got: %v", err)
+	}
+}
+
+// An EMPTY symbolic_targets object is just as stale as a populated one: the
+// pointer field exists precisely so "present but empty" is still detected.
+func TestLoadPolicyConfigRejectsEmptySymbolicTargets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.json")
+	if err := os.WriteFile(path, []byte(`{"tenants": {"acme": {"symbolic_targets": {}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPolicyConfig(path); err == nil {
+		t.Fatal("an empty symbolic_targets key must still be a hard startup error")
 	}
 }

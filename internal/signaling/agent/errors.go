@@ -8,6 +8,13 @@ import (
 // ErrUserNotFound is returned when a dial target is not a registered user.
 var ErrUserNotFound = errors.New("user not registered")
 
+// ErrGroupNoAnswer is returned by ForwardGroup when every round was exhausted
+// without an answer. It is deliberately distinct from a dial failure: the call
+// is still pre-answer and intact, so the group's configured no-answer outcome
+// can run. Treating it as a plain failure would drop a caller the tenant meant
+// to hand to a person.
+var ErrGroupNoAnswer = errors.New("no ring group member answered")
+
 // DialError provides details when a dial fails.
 type DialError struct {
 	Target    string

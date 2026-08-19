@@ -41,20 +41,24 @@ func (c CallContext) FormatForPrompt() string {
 // tenant prompt, making it the last thing the model reads before it answers.
 //
 // Position is the whole point. The same rules live in settings.md, but a tenant
-// knowledge base can run to hundreds of lines, and in live testing a 633-line
-// tenant prompt was enough to make qwen3:8b greet an internal caller instead of
-// routing them — the operative instruction was simply too far from the
-// generation point to compete. Restating it last costs nothing and is what
-// design decision #11 means by "output shaping, not bypass": the model still
-// chooses the target, it is just reminded what shape the answer takes.
+// knowledge base runs to hundreds of lines and the operative instruction is
+// simply too far from the generation point to compete. Restating it last costs
+// nothing.
+//
+// The internal case reads the way it does because a colleague's call only
+// reaches the supervisor when deterministic resolution could NOT connect it —
+// the extension is unregistered, the parking slot was empty, the target is
+// unknown. Telling the model to "just dial it" there would be telling it to
+// retry the thing that already failed.
 func (c CallContext) FirstTurnDirective() string {
 	switch c.Direction {
 	case DirectionInternal:
 		return "# Right now\n" +
-			"This is an INTERNAL call: a colleague dialed extension " + c.Callee + " and expects it to ring.\n" +
-			"Respond with a single dial tool call for that extension and NO text whatsoever.\n" +
-			"Do not greet. Do not say you are connecting them. Any text you produce is played " +
-			"to the caller and takes away the ringing they expect.\n"
+			"This is an INTERNAL call: a colleague dialed " + c.Callee + " and the system could not " +
+			"connect it — that is why you are on this call.\n" +
+			"Do not greet them and do not introduce yourself; they are staff and they expected a phone " +
+			"to ring. Say in one short sentence that it did not go through, then offer the next useful " +
+			"thing: another person in the same area, or to take a message.\n"
 	case DirectionInbound:
 		return "# Right now\n" +
 			"This is an INBOUND call from outside: someone reached " + c.Callee + " from the " +

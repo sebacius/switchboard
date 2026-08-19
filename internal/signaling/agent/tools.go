@@ -105,18 +105,23 @@ type CallExecutor struct {
 	tools  map[string]Tool
 	order  []Tool // registry in build order, for ToolDefs advertisement
 	policy *Policy
+	// operator is the tenant's fallback destination, used when the model emits a
+	// tool name that does not exist. Empty means the tenant has no operator, and
+	// the fallback degrades to an actionable error instead of a transfer.
+	operator string
 
 	mu       sync.Mutex
 	lastFail string // signature of the most recent failed (name,args), "" if none
 }
 
-// NewCallExecutor builds the executor over a per-call registry and policy.
-func NewCallExecutor(tools []Tool, policy *Policy) *CallExecutor {
+// NewCallExecutor builds the executor over a per-call registry, policy, and the
+// tenant's operator destination (empty if it has none).
+func NewCallExecutor(tools []Tool, policy *Policy, operator string) *CallExecutor {
 	m := make(map[string]Tool, len(tools))
 	for _, t := range tools {
 		m[t.Name] = t
 	}
-	return &CallExecutor{tools: m, order: tools, policy: policy}
+	return &CallExecutor{tools: m, order: tools, policy: policy, operator: operator}
 }
 
 // ToolDefs returns the wire-format definitions for this call's registry, so the
@@ -128,8 +133,8 @@ func (e *CallExecutor) ToolDefs() []llm.ToolDef { return ToolDefs(e.order) }
 // and an actionable result string in every model-recoverable case, and only use
 // the disposition to drive the loop.
 //
-//   - unknown tool        → Terminal (hang up; the model emitted a tool we never
-//     offered, which is a contract violation, design #10).
+//   - unknown tool        → transfer to the tenant's operator (never a hangup;
+//     one hallucinated token must not drop a customer's call).
 //   - missing/invalid arg → actionable result + Continue (self-correction).
 //   - identical just-failed call repeated → refusal result + Continue.
 //   - dial → run through Policy (capability narrowing + COS + spend); a deny
@@ -142,9 +147,10 @@ func (e *CallExecutor) Execute(ctx context.Context, call llm.ToolCall, sess Call
 
 	tool, ok := e.tools[name]
 	if !ok {
-		// The model emitted a tool outside its registry. Per design #10 this is a
-		// terminal contract violation, not a recoverable arg error.
-		return fmt.Sprintf("tool %q is not available; ending the call", name), DispositionTerminal, nil
+		// The model emitted a tool outside its registry. This used to hang up,
+		// which meant a single hallucinated token dropped a customer's call. It is
+		// now a deterministic transfer to a human.
+		return e.unknownTool(ctx, name, sess)
 	}
 
 	// Refuse a verbatim repeat of the call that just failed, so the model is
@@ -174,6 +180,42 @@ func (e *CallExecutor) Execute(ctx context.Context, call llm.ToolCall, sess Call
 	}
 	e.recordOutcome(sig, false)
 	return result, tool.Disposition, nil
+}
+
+// unknownTool handles a tool name the model invented. The caller is handed to
+// the tenant's operator: a person can salvage the call, and the model has just
+// demonstrated it does not know what it is holding.
+//
+// The floor is "never hang up on the caller". A tenant with no operator, or an
+// operator the policy will not permit, falls back to naming the real tools and
+// letting the model try again — the runaway-turn breaker bounds a model that
+// keeps getting it wrong.
+func (e *CallExecutor) unknownTool(ctx context.Context, name string, sess CallSession) (string, Disposition, error) {
+	recover := fmt.Sprintf("tool %q is not available; use one of: %s", name, strings.Join(e.toolNames(), ", "))
+
+	if e.operator == "" {
+		return recover, DispositionContinue, nil
+	}
+	if e.policy != nil {
+		if d := e.policy.AuthorizeTarget("unknown_tool_operator", e.operator); !d.Allowed {
+			return recover, DispositionContinue, nil
+		}
+	}
+
+	result, err := dialHandler(ctx, e.operator, sess)
+	if err != nil {
+		return recover + fmt.Sprintf(" (the operator could not be reached: %v)", err), DispositionContinue, nil
+	}
+	return result, DispositionTerminal, nil
+}
+
+// toolNames lists the registry in build order, for the self-correction hint.
+func (e *CallExecutor) toolNames() []string {
+	names := make([]string, 0, len(e.order))
+	for _, t := range e.order {
+		names = append(names, t.Name)
+	}
+	return names
 }
 
 // executeDial validates the dial argument, authorizes the symbolic target via

@@ -139,15 +139,24 @@ model — never in the prompt.
 flowchart TB
     Call["INVITE"] --> Ingress["Ingress gate<br/>registered user or trunk peer?"]
     Ingress --> Router["Router<br/>direction + tenant<br/>(no default tenant)"]
-    Router --> Admission["Admission<br/>tenant loaded? channel free?"]
+    Router --> Preflight["Preflight<br/>do we know this tenant?"]
+    Preflight --> Resolve["Deterministic resolution<br/>one correct destination?"]
+    Resolve -->|"registered extension"| Forward["Forward the INVITE<br/>caller hears real ringback"]
+    Resolve -->|"ring group"| Group["Sequential / round-robin<br/>first answer wins"]
+    Resolve -->|"*NNN occupied slot"| Pickup["Unpark and bridge"]
+    Resolve -->|"nothing resolved"| Admission["Admission<br/>prompt? channel free?"]
     Admission --> Registry["Per-call tool registry<br/>built from (tenant, direction)"]
     Registry --> Supervisor["Supervisor runner<br/>native tool calling"]
-    Supervisor -->|"dial (not answered)"| Forward["Forward the INVITE<br/>caller hears real ringback"]
+    Supervisor -->|"dial (not answered)"| Forward
     Supervisor -->|"speak / gather"| Answer["200 OK<br/>supervisor owns the media"]
 
     style Call fill:#0b3d91,stroke:#0b3d91,color:#fff
     style Ingress fill:#6a00ff,stroke:#6a00ff,color:#fff
     style Router fill:#6a00ff,stroke:#6a00ff,color:#fff
+    style Preflight fill:#6a00ff,stroke:#6a00ff,color:#fff
+    style Resolve fill:#00a86b,stroke:#00a86b,color:#fff
+    style Group fill:#00a86b,stroke:#00a86b,color:#fff
+    style Pickup fill:#00a86b,stroke:#00a86b,color:#fff
     style Admission fill:#ff7a00,stroke:#ff7a00,color:#fff
     style Registry fill:#ff7a00,stroke:#ff7a00,color:#fff
     style Supervisor fill:#e11d48,stroke:#e11d48,color:#fff
@@ -165,10 +174,24 @@ call and **before** the call is answered:
    outbound take the tenant from the From-host's leftmost label; inbound takes it
    from the DID table. **There is no default tenant** — an unattributable call is
    404, not a guess.
-3. **Admission** — the tenant must have a loaded, non-empty prompt, and must have
-   a free channel. At the limit the call gets 486 Busy. The channel limit is both
-   cost control and SLA protection: it keeps the first-turn LLM call from queueing
-   past SIP Timer B, so calls reject fast instead of dying in a timeout.
+3. **Preflight** — do we know this tenant at all? A tenant is known by its prompt,
+   its routing table, or both.
+4. **Resolution** — if the dialed target has exactly one correct destination, it
+   is executed here and the model is never called. Four shapes qualify and no
+   others: a registered directory extension, a `*NNN` pickup of an occupied
+   parking slot from an internal caller, an inbound DID with a mapping, and a
+   named ring group. Everything else — anything needing judgement about intent,
+   wording, or business context — goes to the supervisor.
+5. **Admission** — reached only when nothing resolved. The tenant must have a
+   non-empty prompt and a free channel; at the limit the call gets 486 Busy. The
+   channel limit bounds concurrent **supervised** calls, so a resolved extension
+   dial never consumes one.
+
+Resolution is not a dialplan and not a bypass. Its destinations go through the
+same `Policy.AuthorizeDial` a model-issued dial does, with the same decision
+logging — the routing table is data, never authority. And because a resolved call
+makes no LLM request, an Ollama outage degrades to "the AI receptionist is
+unavailable" while extension dialing, pickup, and queues keep working.
 
 ### The supervisor answers only when it means to
 
@@ -399,8 +422,9 @@ appear in a `>>> tts:` line.
 | File | Purpose |
 | --- | --- |
 | `resources/config/settings.md` | Shared supervisor instructions: tool contract, per-direction rules, prompt hardening |
-| `resources/tenants/<name>.md` | Per-tenant business knowledge base; a tenant with no file is not admissible |
-| `resources/config/policy.json` | Class of Service and capacity: channel limits, symbolic dial targets, external allowlist, barred prefixes, spend breaker |
+| `resources/tenants/<name>.md` | Per-tenant **judgement**: identity, tone, business facts, escalation language. No routing data |
+| `resources/tenants/<name>.routing.json` | Per-tenant **routing data**: extensions, DIDs, ring groups, and the symbolic names the model may dial. Read by both the resolver and capability narrowing, so a name cannot mean two things |
+| `resources/config/policy.json` | Class of Service and capacity only: channel limits, external allowlist, barred prefixes, spend breaker. A leftover `symbolic_targets` key here is a hard startup error — it moved to the routing file |
 | `resources/config/trunk_peers.json` | SIP trunk peers — the ingress gate matches inbound INVITEs against these |
 | `resources/config/routes.json` | DID → tenant mapping for inbound calls |
 

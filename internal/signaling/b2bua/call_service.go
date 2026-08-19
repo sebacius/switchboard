@@ -3,6 +3,7 @@ package b2bua
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
@@ -236,10 +237,132 @@ func (s *callService) DialAndBridge(ctx context.Context, legA Leg, target string
 	return bridge.Info(), nil
 }
 
-// --- Ring Group Support (Future) ---
+// --- Ring Group Support ---
 
+// DialParallel originates to every target at once and returns the first leg to
+// answer, cancelling the rest. It is the ring-group primitive: one round of a
+// group is one DialParallel call, so a single-member round is just the
+// degenerate case of the same code path.
+//
+// Losing legs are torn down two ways on purpose. Cancelling the shared dial
+// context aborts anything still ringing, and any leg that answers inside the
+// race window — after a winner was picked but before its context died — is hung
+// up explicitly. Without the second path a caller could be left connected to a
+// phone nobody is on.
 func (s *callService) DialParallel(ctx context.Context, targets []*LookupResult, timeout time.Duration, opts ...LegOption) (Leg, error) {
-	return nil, ErrNotImplemented
+	if len(targets) == 0 {
+		return nil, &DialError{Cause: ErrNoContacts}
+	}
+	if timeout == 0 {
+		timeout = s.cfg.DefaultDialTimeout
+	}
+
+	var legOpts legOptions
+	for _, opt := range opts {
+		opt(&legOpts)
+	}
+
+	// One shared deadline for the whole round: the group's per-member timeout is
+	// what bounds how long a caller waits before the next round starts.
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	type outcome struct {
+		leg    Leg
+		err    error
+		target string
+	}
+	results := make(chan outcome, len(targets))
+
+	var wg sync.WaitGroup
+	for _, target := range targets {
+		if target == nil || !target.HasContacts() {
+			name := ""
+			if target != nil {
+				name = target.Original
+			}
+			results <- outcome{err: &DialError{Target: name, Cause: ErrNoContacts}, target: name}
+			continue
+		}
+
+		wg.Add(1)
+		go func(target *LookupResult) {
+			defer wg.Done()
+
+			origResult, err := s.originator.Originate(dialCtx, OriginateRequest{
+				Target:        target,
+				Timeout:       timeout,
+				Codecs:        []string{"0"},
+				CallerID:      legOpts.callerID,
+				CallerName:    legOpts.callerName,
+				ALegSessionID: legOpts.aLegSessionID,
+				ALegCallID:    legOpts.aLegCallID,
+			})
+			if err != nil {
+				results <- outcome{err: err, target: target.Original}
+				return
+			}
+			if !origResult.Success {
+				results <- outcome{
+					err: &DialError{
+						Target:      target.Original,
+						ResolvedURI: target.PrimaryContact().URI,
+						SIPCode:     origResult.SIPCode,
+						SIPReason:   origResult.SIPReason,
+						Cause:       origResult.Error,
+					},
+					target: target.Original,
+				}
+				return
+			}
+
+			leg := origResult.Leg
+			if err := leg.WaitForState(dialCtx, LegStateAnswered); err != nil {
+				_ = leg.Hangup(context.Background(), TerminationCauseCancel)
+				results <- outcome{err: err, target: target.Original}
+				return
+			}
+			results <- outcome{leg: leg, target: target.Original}
+		}(target)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var winner Leg
+	var winnerTarget string
+	var firstErr error
+	for r := range results {
+		if r.leg == nil {
+			if firstErr == nil {
+				firstErr = r.err
+			}
+			continue
+		}
+		if winner == nil {
+			winner = r.leg
+			winnerTarget = r.target
+			// Stop every other leg ringing. The winner survives this: like Dial,
+			// the leg's lifetime is its own dialog context, not the dial context.
+			cancel()
+			continue
+		}
+		// Answered in the race window after a winner was already chosen.
+		slog.Info("[CallService] DialParallel cancelling late answer", "target", r.target, "winner", winnerTarget)
+		_ = r.leg.Hangup(context.Background(), TerminationCauseNormal)
+	}
+
+	if winner == nil {
+		if firstErr == nil {
+			firstErr = ErrDialTimeout
+		}
+		return nil, firstErr
+	}
+
+	slog.Info("[CallService] DialParallel answered", "winner", winnerTarget, "candidates", len(targets))
+	return winner, nil
 }
 
 // --- B-leg BYE Handling ---

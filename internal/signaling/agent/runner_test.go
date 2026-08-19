@@ -44,6 +44,13 @@ type fakeSession struct {
 	// forwardStarted closes once Forward has been entered, so a test can
 	// deterministically CANCEL mid-forward.
 	forwardStarted chan struct{}
+
+	// Ring-group state. groupRounds records what ForwardGroup was asked to ring,
+	// in order, which is how the strategy tests assert ring order. groupErr is
+	// what it returns — set it to ErrGroupNoAnswer to exercise a group nobody
+	// picks up.
+	groupRounds [][]string
+	groupErr    error
 }
 
 func newFakeSession() *fakeSession {
@@ -113,6 +120,35 @@ func (f *fakeSession) Forward(ctx context.Context, target string, _ time.Duratio
 		return ctx.Err()
 	}
 	return nil
+}
+
+// ForwardGroup is the pre-answer ring-group path. It records the rounds it was
+// given and answers (or not) according to groupErr, so a test can drive both the
+// "someone picked up" and "nobody picked up" branches without a media stack.
+func (f *fakeSession) ForwardGroup(_ context.Context, rounds [][]string, _ time.Duration) error {
+	f.mu.Lock()
+	f.groupRounds = append(f.groupRounds, rounds...)
+	err := f.groupErr
+	f.mu.Unlock()
+
+	if err != nil {
+		return err
+	}
+	// A member answered: a real ForwardGroup relays the 200 upstream.
+	f.answeredVal.Store(true)
+	f.answerCalls.Add(1)
+	return nil
+}
+
+// rungRounds returns the rounds ForwardGroup was asked to ring, in order.
+func (f *fakeSession) rungRounds() [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][]string, 0, len(f.groupRounds))
+	for _, r := range f.groupRounds {
+		out = append(out, append([]string(nil), r...))
+	}
+	return out
 }
 
 func (f *fakeSession) forwards() []string {

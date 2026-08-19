@@ -34,7 +34,7 @@ func scenarioRunner(t *testing.T, chat llm.ChatClient, policy TenantPolicy, deps
 		Prompts: StaticPrompts{"acme": "You are the Acme receptionist."},
 		BuildExecutor: func(cc CallContext) ToolExecutor {
 			p := NewPolicy(cc.Tenant, policy, quietLogger())
-			return NewCallExecutor(BuildRegistry(cc, p, deps), p)
+			return NewCallExecutor(BuildRegistry(cc, p, deps), p, "")
 		},
 	})
 }
@@ -258,7 +258,7 @@ func TestParkedDispositionHoldsCallUntilCancel(t *testing.T) {
 // cannot double-release.
 
 func TestAdmissionSlotReleasedOnceByTeardown(t *testing.T) {
-	admission := NewAdmission(StaticPrompts{"acme": "prompt"}, 1, nil)
+	admission := NewAdmission(StaticPrompts{"acme": "prompt"}, nil, 1, nil)
 	cc := testCC()
 
 	decision := admission.Admit(cc)
@@ -377,16 +377,24 @@ func TestInboundRegistryOmitsDialAndUnpark(t *testing.T) {
 
 func TestUnloadedTenantRejectedWithoutLLM(t *testing.T) {
 	prompts := StaticPrompts{"acme": "prompt"}
-	admission := NewAdmission(prompts, 5, nil)
+	admission := NewAdmission(prompts, nil, 5, nil)
 
-	if d := admission.Admit(CallContext{Tenant: "ghost"}); d.Admitted {
+	if d := admission.Preflight(CallContext{Tenant: "ghost"}); d.Admitted {
 		t.Fatal("an unknown tenant must be rejected: there is no default tenant")
 	} else if !strings.Contains(d.Reason, "not loaded") {
 		t.Fatalf("expected a tenant-not-loaded reason, got %q", d.Reason)
 	}
 
+	// The supervision gate rejects it too, for its own reason: there is no
+	// prompt to supervise with.
+	if d := admission.Admit(CallContext{Tenant: "ghost"}); d.Admitted {
+		t.Fatal("an unknown tenant must never be admitted to supervision")
+	} else if !strings.Contains(d.Reason, "no prompt") {
+		t.Fatalf("expected a no-prompt reason, got %q", d.Reason)
+	}
+
 	// A tenant whose prompt is present but empty is equally not loaded.
-	empty := NewAdmission(StaticPrompts{"blank": "   "}, 5, nil)
+	empty := NewAdmission(StaticPrompts{"blank": "   "}, nil, 5, nil)
 	if d := empty.Admit(CallContext{Tenant: "blank"}); d.Admitted {
 		t.Fatal("an empty prompt must not count as a loaded tenant")
 	}
@@ -457,6 +465,7 @@ func TestRunnerAdvertisesExecutorRegistry(t *testing.T) {
 	exec := NewCallExecutor(
 		BuildRegistry(CallContext{Direction: DirectionInternal, Tenant: "acme"}, policy, RegistryDeps{Logger: quietLogger()}),
 		policy,
+		"",
 	)
 
 	run := &callRun{executor: exec}
@@ -484,7 +493,7 @@ func TestRunnerAdvertisesExecutorRegistry(t *testing.T) {
 // a bad config fails every call, so a leaked admission slot would drain a
 // tenant's capacity within seconds of a bad deploy.
 func TestMisconfiguredRunnerStillReleasesResources(t *testing.T) {
-	admission := NewAdmission(StaticPrompts{"acme": "prompt"}, 1, nil)
+	admission := NewAdmission(StaticPrompts{"acme": "prompt"}, nil, 1, nil)
 	cc := testCC()
 
 	decision := admission.Admit(cc)
@@ -520,75 +529,15 @@ func TestMisconfiguredRunnerStillReleasesResources(t *testing.T) {
 	}
 }
 
-// --- Scenario: design #11 self-correction on an internal first turn. ---
+// --- Scenario: one turn is one model round-trip. ---
 //
-// The instruction to route silently lives in settings.md and in
-// FirstTurnDirective, but instructions are not guarantees: live testing showed a
-// large tenant prompt is enough to make qwen3:8b greet an internal caller
-// instead of routing. These cover the one-shot correction that catches it.
+// The runner used to re-prompt an internal first turn that answered with prose
+// instead of a dial. That correction is gone: the calls it patched are resolved
+// deterministically before the runner starts, and a second round-trip inside the
+// INVITE transaction was never affordable. These pin the cost at one call.
 
-// The retry fires, the call routes, and — the part that actually matters — the
-// rejected greeting is NEVER spoken. Speaking it would both greet a colleague
-// who dialed an extension and send the 200 OK, permanently destroying the
-// pre-answer forward path.
-func TestInternalFirstTurnProseIsCorrectedToSilentRoute(t *testing.T) {
-	chat := llm.NewScriptedClient(
-		&llm.ChatResult{Content: "Hi there! How can I help you today?"},  // wrong: prose
-		&llm.ChatResult{ToolCalls: []llm.ToolCall{dialCall("user/105")}}, // corrected
-	)
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
-	sess := newFakeSession()
-
-	if err := runWithTimeout(t, runner, sess, 2*time.Second); err != nil {
-		t.Fatalf("HandleCall: %v", err)
-	}
-
-	if got := sess.spoken(); len(got) != 0 {
-		t.Fatalf("the rejected greeting must never reach the caller, spoke %v", got)
-	}
-	if sess.HasAnswered() {
-		t.Fatal("correction must not answer the call: answering destroys the forward path")
-	}
-	if got := sess.forwards(); len(got) != 1 || got[0] != "user/105" {
-		t.Fatalf("expected the corrected turn to forward to user/105, got %v", got)
-	}
-	if n := chat.Calls(); n != 2 {
-		t.Fatalf("expected exactly one corrective re-prompt (2 calls), got %d", n)
-	}
-}
-
-// One retry is the entire budget. If the model still refuses to route, the
-// runner converses rather than leaving the caller in silence — a mediocre
-// greeting beats dead air.
-func TestInternalFirstTurnGivesUpAfterOneRetry(t *testing.T) {
-	chat := llm.NewScriptedClient(
-		&llm.ChatResult{Content: "Hi there!"},
-		&llm.ChatResult{Content: "Sorry, how can I help?"},
-		&llm.ChatResult{ToolCalls: []llm.ToolCall{{Function: llm.ToolCallFunction{Name: "hangup"}}}},
-	)
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
-	sess := newFakeSession()
-	sess.queueTranscript("never mind")
-
-	if err := runWithTimeout(t, runner, sess, 2*time.Second); err != nil {
-		t.Fatalf("HandleCall: %v", err)
-	}
-
-	spoken := sess.spoken()
-	if len(spoken) == 0 || spoken[0] != "Sorry, how can I help?" {
-		t.Fatalf("expected the retry's reply to be spoken (not the discarded first), got %v", spoken)
-	}
-	if !sess.HasAnswered() {
-		t.Fatal("falling back to conversation must answer the call")
-	}
-	if n := chat.Calls(); n != 3 {
-		t.Fatalf("expected 2 first-turn calls + 1 reactive turn, got %d", n)
-	}
-}
-
-// A first turn that already routed costs nothing extra — no wasted round-trip
-// inside the INVITE transaction.
-func TestInternalFirstTurnWithToolCallIsNotRetried(t *testing.T) {
+// A first turn that routed costs exactly one round-trip.
+func TestInternalFirstTurnWithToolCallIsOneRoundTrip(t *testing.T) {
 	chat := llm.NewScriptedClient(&llm.ChatResult{
 		ToolCalls: []llm.ToolCall{dialCall("user/105")},
 	})
@@ -599,13 +548,13 @@ func TestInternalFirstTurnWithToolCallIsNotRetried(t *testing.T) {
 		t.Fatalf("HandleCall: %v", err)
 	}
 	if n := chat.Calls(); n != 1 {
-		t.Fatalf("a first turn that routed must not be re-prompted, got %d calls", n)
+		t.Fatalf("a first turn that routed must cost exactly one call, got %d", n)
 	}
 }
 
-// Inbound is exempt: a greeting is the CORRECT answer there, so correcting it
-// would both waste a round-trip and produce worse behaviour.
-func TestInboundFirstTurnProseIsNotRetried(t *testing.T) {
+// A greeting is the correct first move on an inbound call, and it is spoken as
+// the model produced it — nothing rewrites or re-prompts it.
+func TestInboundFirstTurnProseIsSpokenAsIs(t *testing.T) {
 	chat := llm.NewScriptedClient(
 		&llm.ChatResult{Content: "Thanks for calling Acme."},
 		&llm.ChatResult{ToolCalls: []llm.ToolCall{{Function: llm.ToolCallFunction{Name: "hangup"}}}},
@@ -623,7 +572,7 @@ func TestInboundFirstTurnProseIsNotRetried(t *testing.T) {
 		t.Fatalf("expected the inbound greeting spoken as-is, got %v", spoken)
 	}
 	if n := chat.Calls(); n != 2 {
-		t.Fatalf("expected 1 greeting + 1 reactive turn (no correction), got %d", n)
+		t.Fatalf("expected 1 greeting + 1 reactive turn, got %d", n)
 	}
 }
 
@@ -633,18 +582,27 @@ func TestFirstTurnDirectiveIsDirectionSpecificAndLast(t *testing.T) {
 	internal := CallContext{Caller: "102", Callee: "105", Direction: DirectionInternal, Tenant: "acme"}
 	inbound := CallContext{Caller: "+1555", Callee: "5558001200", Direction: DirectionInbound, Tenant: "acme"}
 
-	if d := internal.FirstTurnDirective(); !strings.Contains(d, "105") || !strings.Contains(d, "NO text") {
-		t.Fatalf("internal directive should name the extension and forbid text, got %q", d)
+	// The internal directive names what was dialed and explains why the model is
+	// on the call at all: deterministic resolution could not connect it. Telling
+	// the model to just dial it would be telling it to retry what already failed.
+	d := internal.FirstTurnDirective()
+	if !strings.Contains(d, "105") {
+		t.Fatalf("internal directive should name what was dialed, got %q", d)
+	}
+	if !strings.Contains(strings.ToLower(d), "could not connect") {
+		t.Fatalf("internal directive should say the call did not route, got %q", d)
+	}
+	if !strings.Contains(strings.ToLower(d), "do not greet") {
+		t.Fatalf("internal directive should still suppress a receptionist greeting for staff, got %q", d)
 	}
 	if d := inbound.FirstTurnDirective(); !strings.Contains(strings.ToLower(d), "greet") {
 		t.Fatalf("inbound directive should ask for a greeting, got %q", d)
 	}
 
-	// The directive is the LAST thing in the system message, so anything
-	// absolute in it overrides the tenant's own configuration. Only the internal
-	// case earns that, because silent routing is a hard requirement there. The
-	// other two must defer to the tenant file, or a tenant cannot declare what
-	// its own extensions mean (e.g. "600 is the assistant, talk to them").
+	// The directive is the LAST thing in the system message, so anything absolute
+	// in it overrides the tenant's own configuration. The inbound and outbound
+	// cases must therefore defer to the tenant file, or a tenant cannot declare
+	// what its own numbers mean (e.g. "600 is the assistant, talk to them").
 	outbound := CallContext{Caller: "100", Callee: "600", Direction: DirectionOutbound, Tenant: "devtenant"}
 	od := outbound.FirstTurnDirective()
 	if !strings.Contains(od, "600") {
@@ -716,5 +674,69 @@ func TestRingOnceRingsWhenNotAlreadyRung(t *testing.T) {
 	sess.ringOnce()
 	if !sess.ringingSent {
 		t.Fatal("the first ringOnce on an un-rung session must mark it rung")
+	}
+}
+
+
+// --- Scenario: the model is unreachable. ---
+//
+// An LLM failure used to return an error from the runner, which killed the call.
+// Because every INVITE went through the runner, that meant an Ollama outage
+// stopped internal extension dialing for the entire system. Deterministic
+// resolution now keeps that working; this covers the other half — a call that
+// genuinely needed the supervisor is explained to the caller, not dropped in
+// silence.
+
+func TestChatFailureTellsTheCallerAndEndsDeliberately(t *testing.T) {
+	// A scripted client with no results errors on its very first call, which is
+	// what an unreachable Ollama looks like from here.
+	chat := llm.NewScriptedClient()
+	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	sess := newFakeSession()
+
+	if err := runWithTimeout(t, runner, sess, 2*time.Second); err != nil {
+		t.Fatalf("an unreachable model must not surface as a runner error: %v", err)
+	}
+
+	spoken := sess.spoken()
+	if len(spoken) != 1 {
+		t.Fatalf("expected exactly one deterministic message, got %v", spoken)
+	}
+	if !strings.Contains(strings.ToLower(spoken[0]), "unavailable") {
+		t.Fatalf("the caller must be told the assistant is unavailable, got %q", spoken[0])
+	}
+	if !sess.HasAnswered() {
+		t.Fatal("speaking the apology means owning the media, so the call must be answered")
+	}
+	if sess.hangupCalls.Load() != 1 {
+		t.Fatalf("the call must be ended deliberately exactly once, got %d hangups",
+			sess.hangupCalls.Load())
+	}
+	if got := sess.forwards(); len(got) != 0 {
+		t.Fatalf("nothing may be dialed when the model never answered, got %v", got)
+	}
+}
+
+// A failure on a LATER turn is the same story: the conversation ends with an
+// explanation rather than the caller being left on an open, silent line.
+func TestChatFailureMidConversationEndsTheCall(t *testing.T) {
+	chat := llm.NewScriptedClient(
+		&llm.ChatResult{Content: "Thanks for calling Acme."},
+		// The script is exhausted from here, so the reactive turn errors.
+	)
+	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	sess := newFakeSession()
+	sess.queueTranscript("I need to speak to someone about a claim")
+
+	if err := runInboundWithTimeout(t, runner, sess, 2*time.Second); err != nil {
+		t.Fatalf("a mid-call model failure must not surface as a runner error: %v", err)
+	}
+
+	spoken := sess.spoken()
+	if len(spoken) < 2 {
+		t.Fatalf("expected the greeting plus the unavailable message, got %v", spoken)
+	}
+	if !strings.Contains(strings.ToLower(spoken[len(spoken)-1]), "unavailable") {
+		t.Fatalf("the last thing the caller hears must explain the end, got %q", spoken[len(spoken)-1])
 	}
 }

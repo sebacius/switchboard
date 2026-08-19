@@ -244,7 +244,7 @@ func (c *callRun) run() error {
 	// First-turn single-shot decision (decisions #8/#11): system + empty user
 	// message. This turn is reactive (it is the caller's INVITE), so it does not
 	// count against the runaway breaker.
-	if err := c.runTurn(c.callCtx, "", true); err != nil {
+	if err := c.runTurn(c.callCtx, ""); err != nil {
 		if c.callCtx.Err() != nil {
 			// Cancellation (teardown) raced the first turn; not an error.
 			return nil
@@ -295,7 +295,7 @@ func (c *callRun) dispatchLoop() {
 		case ev := <-c.events:
 			// A caller event is reactive: reset the runaway counter (decision #12).
 			c.autonomousTurns = 0
-			if err := c.runTurn(c.callCtx, ev.Payload, false); err != nil {
+			if err := c.runTurn(c.callCtx, ev.Payload); err != nil {
 				if c.callCtx.Err() != nil {
 					return
 				}
@@ -306,13 +306,18 @@ func (c *callRun) dispatchLoop() {
 }
 
 // runTurn runs one model turn under a fresh turnCtx (child of callCtx), then any
-// tool calls it emitted. Every turn is processed identically (decision #8): speak
-// any content, then execute any tool calls — so tool-only routes silently,
-// content-only speaks, and both speak-then-route. The first-turn vs reactive vs
-// autonomous distinction lives in the callers (run / dispatchLoop /
-// autonomousReprompt), which control the empty-vs-caller user text and whether
-// the turn counts against the runaway breaker.
-func (c *callRun) runTurn(parent context.Context, userText string, firstTurn bool) error {
+// tool calls it emitted. Every turn is processed identically: speak any content,
+// then execute any tool calls — so tool-only routes silently, content-only
+// speaks, and both speak-then-route. The first-turn vs reactive vs autonomous
+// distinction lives in the callers (run / dispatchLoop / autonomousReprompt),
+// which control the empty-vs-caller user text and whether the turn counts
+// against the runaway breaker.
+//
+// There is no longer a first-turn special case. The one that existed — a
+// corrective re-prompt when an internal first turn answered with prose instead
+// of a dial — patched a decision the model should never have been making; that
+// call is now resolved deterministically before the runner is started at all.
+func (c *callRun) runTurn(parent context.Context, userText string) error {
 	turnCtx, turnCancel := context.WithTimeout(parent, c.cfg.TurnTimeout)
 	defer turnCancel()
 
@@ -321,7 +326,18 @@ func (c *callRun) runTurn(parent context.Context, userText string, firstTurn boo
 
 	result, err := c.cfg.Chat.ChatNative(turnCtx, c.conversation, c.toolDefs(), c.cfg.Model)
 	if err != nil {
-		return fmt.Errorf("chat: %w", err)
+		if c.callCtx.Err() != nil {
+			// The call went away mid-request; teardown is already running and
+			// the failure is a symptom, not a cause.
+			return nil
+		}
+		// An LLM failure is not this caller's problem to be dropped over. Tell
+		// them, then end the call deliberately. Returning an error here used to
+		// kill the call silently, which meant an Ollama outage stopped internal
+		// extension dialing for the whole system — deterministic resolution now
+		// keeps that working, and this keeps a supervised call explainable.
+		c.llmUnavailable(err)
+		return nil
 	}
 
 	// Record the assistant message verbatim (content + thinking + tool_calls) so
@@ -332,19 +348,6 @@ func (c *callRun) runTurn(parent context.Context, userText string, firstTurn boo
 		Thinking:  result.Thinking,
 		ToolCalls: result.ToolCalls,
 	})
-
-	// Design #11: an internal first turn that came back as prose gets ONE
-	// corrective re-prompt. This must happen BEFORE the speak() below, because
-	// speaking is irreversible in two ways at once — the caller hears a greeting
-	// they should never have got, and speak() answers the call, which destroys
-	// the pre-answer forward path for good.
-	if firstTurn {
-		corrected, err := c.correctSilentRoute(turnCtx, result)
-		if err != nil {
-			return err
-		}
-		result = corrected
-	}
 
 	// Decision #8/#11 ordering: speak first (if any content), then execute tools.
 	// Both → speak then route; content-only → speak; tool-only → route silently.
@@ -363,67 +366,6 @@ func (c *callRun) runTurn(parent context.Context, userText string, firstTurn boo
 		return nil
 	}
 	return c.executeTools(turnCtx, result.ToolCalls)
-}
-
-// silentRouteCorrection is the corrective nudge sent when an internal first turn
-// answers with prose instead of routing. It is phrased as a caller-side message
-// because that is the role the model is already attending to.
-const silentRouteCorrection = "Do not speak. This is an internal call that must be routed silently. " +
-	"Respond with a single dial tool call for the dialed extension and no text."
-
-// correctSilentRoute implements design #11's one-shot self-correction. On an
-// INTERNAL first turn that returned prose and no tool calls, it discards the
-// prose and re-prompts once, asking for a bare dial.
-//
-// Why this exists: the "route, don't greet" instruction lives in settings.md and
-// in FirstTurnDirective, but instructions are not guarantees. Live testing showed
-// a large tenant prompt is enough to make the model greet anyway, and a greeting
-// on a colleague-to-colleague extension dial is precisely the outcome the whole
-// forward path exists to avoid.
-//
-// It returns the result the caller should act on: the retry's result when the
-// retry produced tool calls, otherwise the original. Anything other than the
-// prose-only internal first-turn case is returned untouched.
-func (c *callRun) correctSilentRoute(turnCtx context.Context, result *llm.ChatResult) (*llm.ChatResult, error) {
-	if c.cc.Direction != DirectionInternal {
-		return result, nil
-	}
-	if len(result.ToolCalls) > 0 || result.Content == "" {
-		// Already routed, or said nothing at all — neither needs correcting.
-		return result, nil
-	}
-
-	c.log.Info("internal first turn returned prose; re-prompting once for a silent route",
-		"discarded_content_len", len(result.Content))
-
-	// Drop the rejected assistant message so the model does not treat its own
-	// prose as an example to follow on the retry.
-	if n := len(c.conversation); n > 0 && c.conversation[n-1].Role == "assistant" {
-		c.conversation = c.conversation[:n-1]
-	}
-
-	c.conversation = append(c.conversation, llm.NativeMessage{Role: "user", Content: silentRouteCorrection})
-
-	retry, err := c.cfg.Chat.ChatNative(turnCtx, c.conversation, c.toolDefs(), c.cfg.Model)
-	if err != nil {
-		return nil, fmt.Errorf("silent-route retry: %w", err)
-	}
-
-	c.conversation = append(c.conversation, llm.NativeMessage{
-		Role:      "assistant",
-		Content:   retry.Content,
-		Thinking:  retry.Thinking,
-		ToolCalls: retry.ToolCalls,
-	})
-
-	if len(retry.ToolCalls) == 0 {
-		// The model still will not route. Converse rather than leaving the caller
-		// in silence — one retry is the whole budget (design #11), and a second
-		// LLM round-trip already spent part of the INVITE transaction.
-		c.log.Warn("silent-route retry still returned prose; falling back to conversing")
-		return retry, nil
-	}
-	return retry, nil
 }
 
 // executeTools dispatches each tool call through the ToolExecutor, recording its
@@ -502,7 +444,35 @@ func (c *callRun) autonomousReprompt(parent context.Context) error {
 	}
 
 	// Re-prompt with no new user text; the tool results are already in history.
-	return c.runTurn(parent, "", false)
+	return c.runTurn(parent, "")
+}
+
+// llmUnavailableMessage is what a caller hears when the supervisor cannot reach
+// its model. It is deliberately plain and deterministic: it must be sayable
+// without asking the thing that is broken what to say.
+const llmUnavailableMessage = "Sorry, the assistant is unavailable right now. Please try again shortly."
+
+// llmUnavailableSpeakTimeout bounds the apology. A caller waiting on a broken
+// system should not also wait on a slow TTS.
+const llmUnavailableSpeakTimeout = 10 * time.Second
+
+// llmUnavailable ends a supervised call that cannot reach its model, after
+// telling the caller why. It answers to speak — correct, because a call that
+// needed the supervisor is not going to be forwarded anywhere now.
+//
+// Deterministically resolved calls never reach this: they made no LLM request,
+// so an outage is invisible to them and the PBX keeps routing.
+func (c *callRun) llmUnavailable(cause error) {
+	c.log.Error("supervisor LLM unavailable; ending the call deliberately",
+		"call_id", c.session.CallID(), "error", cause)
+
+	speakCtx, cancel := context.WithTimeout(c.callCtx, llmUnavailableSpeakTimeout)
+	defer cancel()
+	if err := c.speak(speakCtx, llmUnavailableMessage); err != nil {
+		c.log.Warn("could not play the assistant-unavailable message", "error", err)
+	}
+
+	c.teardown("llm-unavailable")
 }
 
 // speak plays text via TTS under a playbackCtx (child of the supplied scope) so
