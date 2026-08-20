@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+// ptr makes an addressable CallContext for Handle, which takes a pointer so it
+// can report an assistant hand-off back to the caller.
+func ptr(cc CallContext) *CallContext { return &cc }
+
 // These drive the REAL CallResolution over the REAL Policy, so what they prove
 // is that resolution stays inside the authorization boundary and that a ring
 // group's no-answer outcome actually runs.
@@ -71,7 +75,7 @@ func TestResolvedExternalDestinationIsNeverDialedDeterministically(t *testing.T)
 	res := newResolution(t, TenantPolicy{}) // default-deny external
 	sess := newFakeSession()
 
-	handled := res.Handle(context.Background(), sess, internalCall("400"))
+	handled := res.Handle(context.Background(), sess, ptr(internalCall("400")))
 
 	if handled {
 		t.Fatal("an external table entry must hand off to the supervisor, not be dialed")
@@ -86,7 +90,7 @@ func TestResolvedInternalDestinationIsForwarded(t *testing.T) {
 	res := newResolution(t, TenantPolicy{})
 	sess := newFakeSession()
 
-	if !res.Handle(context.Background(), sess, internalCall("300")) {
+	if !res.Handle(context.Background(), sess, ptr(internalCall("300"))) {
 		t.Fatal("a registered internal destination must be handled deterministically")
 	}
 	if got := sess.forwards(); len(got) != 1 || got[0] != "user/105" {
@@ -104,7 +108,7 @@ func TestSequentialGroupRingsInConfiguredOrder(t *testing.T) {
 	res := newResolution(t, TenantPolicy{})
 	sess := newFakeSession()
 
-	if !res.Handle(context.Background(), sess, internalCall("200")) {
+	if !res.Handle(context.Background(), sess, ptr(internalCall("200"))) {
 		t.Fatal("a ring group must be handled deterministically")
 	}
 
@@ -128,7 +132,7 @@ func TestRoundRobinAdvancesAcrossCalls(t *testing.T) {
 	var firsts []string
 	for range 4 {
 		sess := newFakeSession()
-		if !res.Handle(context.Background(), sess, internalCall("201")) {
+		if !res.Handle(context.Background(), sess, ptr(internalCall("201"))) {
 			t.Fatal("a ring group must be handled deterministically")
 		}
 		rounds := sess.rungRounds()
@@ -165,7 +169,7 @@ func TestRingGroupMembersAreAuthorizedIndividually(t *testing.T) {
 	})
 	sess := newFakeSession()
 
-	if !res.Handle(context.Background(), sess, internalCall("210")) {
+	if !res.Handle(context.Background(), sess, ptr(internalCall("210"))) {
 		t.Fatal("the group still has one authorized member, so it must be handled")
 	}
 	for _, round := range sess.rungRounds() {
@@ -186,7 +190,7 @@ func TestGroupNoAnswerHandsToSupervisor(t *testing.T) {
 	sess := newFakeSession()
 	sess.groupErr = ErrGroupNoAnswer
 
-	if res.Handle(context.Background(), sess, internalCall("200")) {
+	if res.Handle(context.Background(), sess, ptr(internalCall("200"))) {
 		t.Fatal("an unanswered group with no_answer=supervisor must hand off")
 	}
 	if sess.HasAnswered() {
@@ -199,7 +203,7 @@ func TestGroupNoAnswerForwardsToOperator(t *testing.T) {
 	sess := newFakeSession()
 	sess.groupErr = ErrGroupNoAnswer
 
-	if !res.Handle(context.Background(), sess, internalCall("203")) {
+	if !res.Handle(context.Background(), sess, ptr(internalCall("203"))) {
 		t.Fatal("no_answer=operator is handled by resolution, not the supervisor")
 	}
 	if got := sess.forwards(); len(got) != 1 || got[0] != "user/150" {
@@ -212,7 +216,7 @@ func TestGroupNoAnswerHangsUp(t *testing.T) {
 	sess := newFakeSession()
 	sess.groupErr = ErrGroupNoAnswer
 
-	if !res.Handle(context.Background(), sess, internalCall("202")) {
+	if !res.Handle(context.Background(), sess, ptr(internalCall("202"))) {
 		t.Fatal("no_answer=hangup ends the call deterministically")
 	}
 	if sess.hangupCalls.Load() != 1 {
@@ -239,7 +243,7 @@ func TestGroupNoAnswerWithoutOperatorHandsOff(t *testing.T) {
 	sess := newFakeSession()
 	sess.groupErr = ErrGroupNoAnswer
 
-	if res.Handle(context.Background(), sess, internalCall("220")) {
+	if res.Handle(context.Background(), sess, ptr(internalCall("220"))) {
 		t.Fatal("with no operator configured the call must reach the supervisor")
 	}
 	if sess.hangupCalls.Load() != 0 {
@@ -257,7 +261,7 @@ func TestResolutionNeedsNoLLM(t *testing.T) {
 
 	// There is no chat client anywhere in this test — if resolution needed one,
 	// this could not compile, let alone pass.
-	if !res.Handle(context.Background(), sess, internalCall("300")) {
+	if !res.Handle(context.Background(), sess, ptr(internalCall("300"))) {
 		t.Fatal("a resolvable call must complete with no model involved")
 	}
 	if got := sess.forwards(); len(got) != 1 {
@@ -274,7 +278,7 @@ func TestResolutionWithoutPolicyHandsOff(t *testing.T) {
 	})
 	sess := newFakeSession()
 
-	if res.Handle(context.Background(), sess, internalCall("300")) {
+	if res.Handle(context.Background(), sess, ptr(internalCall("300"))) {
 		t.Fatal("an unadjudicated forward must never happen")
 	}
 	if len(sess.forwards()) != 0 {

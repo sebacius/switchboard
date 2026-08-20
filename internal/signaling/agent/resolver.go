@@ -75,6 +75,16 @@ type Destination struct {
 
 	// Reason explains the outcome, resolved or not. It is always set.
 	Reason string
+
+	// Assistant marks the one hand-off that is a positive answer rather than an
+	// absence of one: the routing table says this target IS the supervisor. The
+	// caller asked for the assistant and should be talked to, not routed.
+	//
+	// The runner needs this because the model cannot infer it. The tenant's
+	// routing table is not in the prompt — that is the point of having one — so
+	// without being told, the model sees a callee it has no mapping for and tries
+	// to dial it, which the policy then denies.
+	Assistant bool
 }
 
 // handOff builds a declining result with its reason.
@@ -183,7 +193,9 @@ func (r *Resolver) resolveDestination(table *RoutingTable, dest string) (Destina
 	if dest == RoutingTargetAssistant {
 		// The mapping IS the assistant. This is a resolved answer — it just
 		// happens to be "the supervisor takes this call".
-		return handOff("routing table maps this target to the assistant"), false
+		d := handOff("routing table maps this target to the assistant")
+		d.Assistant = true
+		return d, false
 	}
 
 	if name, isGroup := IsGroupTarget(dest); isGroup {

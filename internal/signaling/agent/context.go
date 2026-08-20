@@ -24,6 +24,18 @@ type CallContext struct {
 	Callee    string // dialed destination (To user part)
 	Direction Direction
 	Tenant    string
+
+	// ForAssistant marks a call the tenant's routing table sent here ON PURPOSE:
+	// the dialed target maps to the assistant. It is set by deterministic
+	// resolution, not by the router.
+	//
+	// The distinction is invisible to the model and it cannot recover it. The
+	// routing table is deliberately NOT in the prompt, so a supervisor handed a
+	// call to "600" sees a number it has no mapping for and tries to dial it —
+	// which the policy denies, because the caller's own extension is not a
+	// dialable target. Told instead that the caller asked for it, the same model
+	// simply answers.
+	ForAssistant bool
 }
 
 // FormatForPrompt renders the Call Context block prepended to the tenant prompt.
@@ -51,6 +63,17 @@ func (c CallContext) FormatForPrompt() string {
 // unknown. Telling the model to "just dial it" there would be telling it to
 // retry the thing that already failed.
 func (c CallContext) FirstTurnDirective() string {
+	// Asked for by name. This outranks direction: whoever is calling and however
+	// they got here, the routing table says this call is FOR the assistant, so
+	// the first move is to talk, never to route.
+	if c.ForAssistant {
+		return "# Right now\n" +
+			"The caller dialed " + c.Callee + ", and that is YOU — the routing table sends this " +
+			"number to the assistant deliberately. They rang to talk to you.\n" +
+			"Greet them and help. Do NOT try to dial or transfer " + c.Callee + "; it is not a " +
+			"destination, it is where the caller already is.\n"
+	}
+
 	switch c.Direction {
 	case DirectionInternal:
 		return "# Right now\n" +

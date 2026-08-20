@@ -65,14 +65,18 @@ func NewCallResolution(cfg CallResolutionConfig) *CallResolution {
 // A true return means the call is finished by the time Handle returns: Forward
 // and ForwardGroup block for the life of the bridge, and the retrieval path
 // waits on the session's context.
-func (c *CallResolution) Handle(ctx context.Context, sess CallSession, cc CallContext) bool {
+func (c *CallResolution) Handle(ctx context.Context, sess CallSession, cc *CallContext) bool {
 	if c == nil || c.cfg.Resolver == nil {
 		return false
 	}
 
-	dest, ok := c.cfg.Resolver.Resolve(cc)
-	c.cfg.Resolver.LogDecision(cc, dest, ok)
+	dest, ok := c.cfg.Resolver.Resolve(*cc)
+	c.cfg.Resolver.LogDecision(*cc, dest, ok)
 	if !ok {
+		// Carry the one fact the model cannot work out for itself: whether this
+		// caller asked for the assistant, or merely ended up with it because
+		// nothing else matched. The two need opposite first moves.
+		cc.ForAssistant = dest.Assistant
 		return false
 	}
 
@@ -82,15 +86,15 @@ func (c *CallResolution) Handle(ctx context.Context, sess CallSession, cc CallCo
 		c.log.Warn("resolution declined: no policy builder configured", "tenant", cc.Tenant)
 		return false
 	}
-	policy := c.cfg.BuildPolicy(cc)
+	policy := c.cfg.BuildPolicy(*cc)
 
 	switch dest.Kind {
 	case DestinationEndpoint:
-		return c.forwardEndpoint(ctx, sess, cc, dest, policy)
+		return c.forwardEndpoint(ctx, sess, *cc, dest, policy)
 	case DestinationGroup:
-		return c.ringGroup(ctx, sess, cc, dest, policy)
+		return c.ringGroup(ctx, sess, *cc, dest, policy)
 	case DestinationRetrieve:
-		return c.retrieve(ctx, sess, cc, dest)
+		return c.retrieve(ctx, sess, *cc, dest)
 	default:
 		return false
 	}

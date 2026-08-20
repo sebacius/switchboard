@@ -233,7 +233,7 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 // supervisor only if resolution declines it. It runs off the SIP transaction
 // goroutine because both paths block for the life of the call.
 func (h *InviteHandler) routeCall(dlg *dialog.Dialog, session agent.CallSession, cc agent.CallContext) {
-	if h.resolution != nil && h.resolution.Handle(dlg.Context(), session, cc) {
+	if h.resolution != nil && h.resolution.Handle(dlg.Context(), session, &cc) {
 		// Resolution took the call and it is over. No LLM request was made.
 		if !dlg.IsTerminated() {
 			slog.Info("[Routing] Resolved call complete, terminating dialog", "call_id", dlg.CallID)
