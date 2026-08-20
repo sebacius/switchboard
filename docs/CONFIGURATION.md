@@ -73,6 +73,25 @@ LLM server did not answer; supervised calls will fail until it does.
 Deterministic routing is unaffected — check --llm-server
 ```
 
+#### Why not a smaller model
+
+The obvious lever for first-turn latency is a smaller model. Measured on this
+hardware with `think: false` and the real prompts, it is the wrong one:
+
+| Model | Greeting | "I need to file a claim" | Reasoning in `content` |
+| --- | --- | --- | --- |
+| **qwen3:8b** | 19 tok, no tool | empty content + `dial(claims)` | 0 / 4 trials |
+| qwen3:4b | 1552–4027 tok | `dial(claims)` after 3236–6390 chars of monologue | **4 / 4 trials** |
+| qwen3:0.6b | 10 tok, no tool | **no tool call at all** | 0 / 4 trials |
+
+`qwen3:4b` evaluates the prompt faster (23.8s vs 44.0s cold) but generates so
+much more that the turn takes **148s against the 8b's 56s** — and with
+`think: false` it puts its chain of thought in `content`, which is the field the
+supervisor speaks. `qwen3:0.6b` is fast and quiet but will not dial.
+
+Use `--llm-keep-alive` and the startup warm-up for latency. Change `--llm-model`
+only with the same kind of measurement behind it.
+
 #### Why two turn budgets
 
 They are bounded by different things. The **first** turn runs while the caller

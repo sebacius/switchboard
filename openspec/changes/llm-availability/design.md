@@ -34,7 +34,12 @@ running it the whole time. The server was fine; the deadline was not.
 - Streaming the model's response to cut perceived latency. Worth doing; a bigger
   change to the runner's speak path.
 - Prompt caching or summarisation to shrink the per-turn prompt.
-- Choosing a model. The default stays `qwen3:8b`; the operator picks.
+- Choosing a model *in general*. The operator picks with `--llm-model`. The
+  default was re-examined here, though, because a smaller model looked like the
+  obvious answer to first-turn latency: `qwen3:4b` writes its chain of thought
+  into `content` under `think: false`, which the runner speaks aloud, and
+  `qwen3:0.6b` will not emit a tool call. `qwen3:8b` stays the default on
+  measured evidence — see the comparison in tasks.md.
 - Retrying a failed turn. The runaway breaker's reasoning applies — a retry
   inside the caller's patience budget is another chance to be slow.
 
