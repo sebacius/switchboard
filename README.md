@@ -355,7 +355,15 @@ through the config API:
 1. **Settings** (`resources/config/settings.md`) — Shared across all tenants. Defines the tool contract, the per-direction rules ("route, don't greet" for internal calls), and prompt hardening.
 2. **Tenant config** (`resources/tenants/<name>.md`) — Loaded per call. Contains the complete business knowledge base: identity, departments, staff directory, routing rules, hours, escalation paths, scripted responses. Selected by the **resolved tenant**, not by a route parameter.
 
-A tenant config file is a self-contained document — it tells the AI everything it needs to know to act as a virtual receptionist for that specific business. See [`resources/tenants/default.md`](resources/tenants/default.md) for a full example.
+A tenant is described by three files: a Markdown prompt (judgement — identity, tone, business
+facts, escalation), a `<tenant>.routing.json` table (data — extensions, DIDs, ring groups, and the
+names the model may dial), and a block in `policy.json` (authorization — what is permitted).
+Routing data is deliberately kept out of the prompt so a call to a known extension is connected
+without waiting on a model.
+
+See [`docs/TENANT-EXAMPLE.md`](docs/TENANT-EXAMPLE.md) for a fully worked example of all three.
+`resources/tenants/` ships only `devtenant`, a minimal fixture for local testing — there is no
+default tenant, and a call matching none is rejected.
 
 A tenant with no file is **not admissible** — it cannot inherit `settings.md` and
 quietly become a generic receptionist. That is the "no default tenant" rule.

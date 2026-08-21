@@ -404,7 +404,13 @@ The Go services accept `--llm-server`, `--asr-server`, and `--tts-server` flags 
 
 ### Tenant Configuration
 
-Tenant configuration files are stored in `resources/tenants/` as Markdown files. Each file defines the configuration for a single tenant (e.g., `resources/tenants/default.md`).
+Tenant configuration files are stored in `resources/tenants/`. Each tenant has a Markdown prompt
+and a `<tenant>.routing.json` routing table (e.g. `devtenant.md` + `devtenant.routing.json`).
+
+The repository ships only `devtenant`, a minimal fixture for local testing. **There is no default
+tenant** — a call whose domain matches none is rejected with 404, pre-answer and without any LLM
+request. For a fully worked example of a realistic tenant, see
+[TENANT-EXAMPLE.md](TENANT-EXAMPLE.md).
 
 ### Settings
 

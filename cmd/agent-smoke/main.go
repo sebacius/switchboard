@@ -44,7 +44,7 @@ func main() {
 	var (
 		llmServer    = flag.String("llm-server", "http://localhost:11434", "Ollama server URL")
 		model        = flag.String("model", "qwen3:8b", "Ollama model")
-		tenant       = flag.String("tenant", "default", "Tenant whose prompt to load")
+		tenant       = flag.String("tenant", "devtenant", "Tenant whose prompt to load")
 		caller       = flag.String("caller", "102", "Caller (From user part)")
 		callee       = flag.String("callee", "105", "Callee (To user part / DID)")
 		direction    = flag.String("direction", "internal", "Call direction: internal | inbound | outbound")
