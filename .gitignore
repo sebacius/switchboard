@@ -34,9 +34,11 @@ go.work.sum
 .idea/
 .vscode/
 
-# Claude
+# Agent tooling — personal to each developer, not shared config
 .claude
 CLAUDE.md
+.cline
+.clinerules
 
 .DS_Store
 

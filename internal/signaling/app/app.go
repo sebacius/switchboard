@@ -151,6 +151,20 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	}
 	slog.Info("Tenant prompts loaded", "tenants", prompts.Tenants())
 
+	// Load per-tenant routing tables (<tenant>.routing.json). This is the data
+	// deterministic resolution routes BY, and the source of the symbolic targets
+	// the model may dial — one file so the two cannot disagree. A malformed table
+	// IS fatal: starting without it would silently send every call that should
+	// have been routed in 0ms to a language model instead.
+	routingStore, err := agent.NewRoutingStore(cfg.RoutingPath)
+	if err != nil {
+		_ = ua.Close()
+		locStore.Close()
+		_ = mediaTransport.Close()
+		return nil, fmt.Errorf("failed to load tenant routing tables: %w", err)
+	}
+	slog.Info("Tenant routing tables loaded", "path", cfg.RoutingPath, "tenants", routingStore.Tenants())
+
 	// Load Class-of-Service + capacity policy. A missing file is the safe
 	// default: no external dialing anywhere, default channel limit per tenant.
 	policyCfg, err := agent.LoadPolicyConfig(cfg.PolicyPath)
@@ -175,14 +189,24 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		_ = mediaTransport.Close()
 		return nil, fmt.Errorf("no LLM server configured: the call supervisor requires --llm-server")
 	}
-	chatClient := llm.NewClient(llm.Config{ServerURL: cfg.LLMServerURL})
-	slog.Info("LLM supervisor configured", "server", cfg.LLMServerURL, "model", cfg.LLMModel)
+	chatClient := llm.NewClient(llm.Config{
+		ServerURL: cfg.LLMServerURL,
+		KeepAlive: cfg.LLMKeepAlive,
+	})
+	slog.Info("LLM supervisor configured",
+		"server", cfg.LLMServerURL, "model", cfg.LLMModel, "keep_alive", cfg.LLMKeepAlive)
+
+	// Check the model is reachable and pulled, then load it — in the background,
+	// because a cold multi-gigabyte load takes minutes and the SIP stack must not
+	// wait on it. Nothing here can fail the boot: a deployment whose LLM is down
+	// still routes every call its tenant routing tables resolve.
+	go llm.ProbeAndWarm(context.Background(), chatClient, cfg.LLMModel, slog.Default())
 
 	// Create file manager for config API
 	fileMgr := filemanager.New(filemanager.Config{
 		SettingsDir:      cfg.SettingsPath,
 		TenantsDir:       cfg.TenantsPath,
-		SettingsReloader: prompts,
+		SettingsReloader: filemanager.MultiReloader{prompts, routingStore},
 	})
 	apiServer.SetFileProvider(fileMgr)
 
@@ -228,25 +252,59 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// Deterministic pre-LLM layers: the router classifies direction and resolves
 	// the tenant (no default), and admission enforces preflight + per-tenant
 	// channel limits before the INVITE is answered.
-	callRouter := agent.NewRouter(agent.DirectoryFromLocation(locStore), sipTrunk, didRoutes)
-	admission := agent.NewAdmission(prompts, policyCfg.DefaultChannelLimit, policyCfg.ChannelLimits())
+	directory := agent.DirectoryFromLocation(locStore)
+	callRouter := agent.NewRouter(directory, sipTrunk, didRoutes)
+	admission := agent.NewAdmission(prompts, routingStore, policyCfg.DefaultChannelLimit, policyCfg.ChannelLimits())
+
+	// buildPolicy is shared by deterministic resolution and the supervisor so a
+	// destination is adjudicated identically however it was chosen. The symbolic
+	// targets come from the tenant's routing table — policy.json no longer
+	// carries them, and refuses to start if it still does.
+	buildPolicy := func(cc agent.CallContext) *agent.Policy {
+		return agent.NewPolicy(cc.Tenant,
+			policyCfg.TenantPolicyFor(cc.Tenant, agent.SymbolicTargetsFor(routingStore, cc.Tenant)),
+			slog.Default())
+	}
+
+	// operatorFor is the tenant's fallback human, read from the same routing table
+	// the resolver uses. The executor needs it so an unknown tool name transfers
+	// the caller instead of hanging up on them.
+	operatorFor := func(cc agent.CallContext) string {
+		table, ok := routingStore.TenantRouting(cc.Tenant)
+		if !ok {
+			return ""
+		}
+		return table.Operator
+	}
+
+	// Deterministic resolution runs BEFORE the supervisor. A call with exactly
+	// one correct destination — a registered extension, a *7XX pickup, a mapped
+	// DID, a ring group — is executed here and never reaches the model.
+	callResolution := agent.NewCallResolution(agent.CallResolutionConfig{
+		Resolver:    agent.NewResolver(routingStore, directory, parkService, slog.Default()),
+		Parking:     parkService,
+		BuildPolicy: buildPolicy,
+		Logger:      slog.Default(),
+	})
 
 	// The supervisor runner. The tool registry is built PER CALL from
 	// (tenant, direction) — an inbound caller is never offered external dial —
 	// and every consequential call is adjudicated by that tenant's policy.
 	runner := agent.NewRunner(agent.RunnerConfig{
-		Prompts: prompts,
-		Model:   cfg.LLMModel,
-		Voice:   cfg.TTSVoice,
-		Chat:    chatClient,
-		Logger:  slog.Default(),
+		Prompts:          prompts,
+		Model:            cfg.LLMModel,
+		Voice:            cfg.TTSVoice,
+		Chat:             chatClient,
+		Logger:           slog.Default(),
+		TurnTimeout:      cfg.TurnTimeout,
+		FirstTurnTimeout: cfg.FirstTurnTimeout,
 		BuildExecutor: func(cc agent.CallContext) agent.ToolExecutor {
-			policy := agent.NewPolicy(cc.Tenant, policyCfg.TenantPolicyFor(cc.Tenant), slog.Default())
+			policy := buildPolicy(cc)
 			registry := agent.BuildRegistry(cc, policy, agent.RegistryDeps{
 				Parking: parkService,
 				Logger:  slog.Default(),
 			})
-			return agent.NewCallExecutor(registry, policy)
+			return agent.NewCallExecutor(registry, policy, operatorFor(cc))
 		},
 	})
 
@@ -259,6 +317,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		apiServer,
 		callRouter,
 		admission,
+		callResolution,
 		runner,
 		locStore,
 		callService,

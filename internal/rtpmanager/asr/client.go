@@ -14,7 +14,7 @@ import (
 // DefaultModel is the transcription model requested when none is configured.
 // The OpenAI /v1/audio/transcriptions contract makes `model` REQUIRED, and
 // faster-whisper style servers reject the request with 422 when it is missing,
-// so there is no useful "unset" behaviour to fall back on.
+// so there is no useful "unset" behavior to fall back on.
 const DefaultModel = "Systran/faster-whisper-base"
 
 // Client is a Whisper ASR server client (OpenAI-compatible API)

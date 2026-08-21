@@ -17,6 +17,31 @@ type SettingsReloader interface {
 	ReloadSettings() error
 }
 
+// MultiReloader fans one reload out to several reloaders, reporting every
+// failure rather than the first. A tenant is described by two files now — its
+// prompt (.md) and its routing table (.routing.json) — and both are edited
+// through this API, so one config reload has to refresh both stores or they
+// drift until the next restart.
+type MultiReloader []SettingsReloader
+
+// ReloadSettings reloads every member, accumulating errors so one bad routing
+// file does not hide a prompt problem behind it.
+func (m MultiReloader) ReloadSettings() error {
+	var errs []string
+	for _, r := range m {
+		if r == nil {
+			continue
+		}
+		if err := r.ReloadSettings(); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 // TenantInfo describes a tenant markdown file.
 type TenantInfo struct {
 	Name     string    `json:"name"`
@@ -150,15 +175,15 @@ func (fm *FileManager) DeleteTenant(name string) error {
 	return nil
 }
 
-// Reload refreshes the cached tenant prompts. There is no dialplan to reload:
-// routing decisions are made per call by the supervisor, so a prompt edit is
-// the only reloadable routing input.
+// Reload refreshes the cached tenant prompts and routing tables. There is no
+// dialplan to reload: a call is routed either by the tenant's routing table or
+// by the supervisor, so those two files are the reloadable routing inputs.
 func (fm *FileManager) Reload() error {
 	var errors []string
 
 	if fm.settingsReloader != nil {
 		if err := fm.settingsReloader.ReloadSettings(); err != nil {
-			errors = append(errors, fmt.Sprintf("prompts: %v", err))
+			errors = append(errors, fmt.Sprintf("prompts/routing: %v", err))
 		}
 	}
 

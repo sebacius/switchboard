@@ -31,6 +31,7 @@ type InviteHandler struct {
 	sessionRecorder SessionRecorder
 	router          *agent.Router
 	admission       *agent.Admission
+	resolution      *agent.CallResolution
 	runner          *agent.Runner
 	locStore        location.LocationStore
 	callService     b2bua.CallService
@@ -47,6 +48,7 @@ func NewInviteHandler(
 	sessionRecorder SessionRecorder,
 	callRouter *agent.Router,
 	admission *agent.Admission,
+	resolution *agent.CallResolution,
 	runner *agent.Runner,
 	locStore location.LocationStore,
 	callService b2bua.CallService,
@@ -61,6 +63,7 @@ func NewInviteHandler(
 		sessionRecorder: sessionRecorder,
 		router:          callRouter,
 		admission:       admission,
+		resolution:      resolution,
 		runner:          runner,
 		locStore:        locStore,
 		callService:     callService,
@@ -71,12 +74,17 @@ func NewInviteHandler(
 
 // HandleINVITE processes incoming INVITE requests.
 //
-// The supervisor owns the answer decision (design #7), so this handler
-// deliberately does NOT send a 200 OK. It performs only the deterministic work
-// that must happen before any LLM round-trip — ingress authorization, direction
-// and tenant resolution, admission — sets up media, and then hands the call to
-// the agent runner, which decides between forwarding the INVITE (relaying real
-// ringback and the target's own final response) and answering to own the media.
+// This handler deliberately does NOT send a 200 OK: whoever ends up owning the
+// call decides that. It performs the deterministic work — ingress authorization,
+// direction and tenant resolution, tenant preflight — sets up media, rings the
+// caller, and then hands off:
+//
+//	deterministic resolution → forward / ring group / retrieve, no LLM at all
+//	no deterministic answer   → channel admission → the supervisor runner
+//
+// The order is the point. A call with exactly one correct destination is routed
+// without waiting on a model, and the channel limit is charged only to calls
+// that actually engage one.
 func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction) {
 	slog.Info("Received INVITE", "from", req.From(), "to", req.To(), "call_id", req.CallID())
 
@@ -104,27 +112,17 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 		return
 	}
 
-	// Admission runs pre-answer and without any LLM call: an unloaded tenant is a
-	// hard reject, and a tenant at its channel limit gets 486 Busy. The limit is
-	// what keeps the first-turn LLM call from queueing past SIP Timer B under
-	// load — calls fail fast instead of dying in a transaction timeout.
-	decision := h.admission.Admit(cc)
-	if !decision.Admitted {
-		code, reason := admissionStatus(decision.Reason)
-		slog.Warn("Rejecting INVITE at admission",
-			"tenant", cc.Tenant, "direction", cc.Direction, "reason", decision.Reason, "code", int(code))
+	// Preflight, pre-answer and without any LLM call: we must know this tenant at
+	// all. The channel limit is NOT charged here — it bounds concurrent
+	// supervised calls, and this call may yet be routed deterministically without
+	// engaging the model. It is applied at the hand-off instead.
+	if pre := h.admission.Preflight(cc); !pre.Admitted {
+		code, reason := admissionStatus(pre.Reason)
+		slog.Warn("Rejecting INVITE at preflight",
+			"tenant", cc.Tenant, "direction", cc.Direction, "reason", pre.Reason, "code", int(code))
 		_ = tx.Respond(sip.NewResponseFromRequest(req, code, reason, nil))
 		return
 	}
-
-	// From here the channel slot is held. Every failure path before the runner
-	// takes ownership must release it, or the tenant leaks capacity.
-	admitted := false
-	defer func() {
-		if !admitted {
-			decision.Release()
-		}
-	}()
 
 	// Create dialog via manager
 	dlg, err := h.dialogMgr.CreateFromInvite(req, tx)
@@ -218,8 +216,48 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 		session.MarkRinging()
 	}
 
-	admitted = true
-	go h.superviseCall(dlg, session, cc, decision.Release)
+	// Run the call on THIS goroutine, not a new one. sipgo's server calls
+	// tx.Terminate() the moment this handler returns (server.go handleRequest:
+	// "Must be called to prevent any transaction leaks"), and a terminated
+	// transaction silently swallows every later response — ServerTx.Respond spins
+	// a finished FSM and returns nil without writing anything. Handing the call to
+	// a goroutine and returning therefore made it impossible to ever deliver a
+	// 200 OK, a relayed final response, or a late 486: the caller sat on 180 until
+	// it gave up. Blocking here is the intended usage — sipgo's transaction layer
+	// already dispatches every request on its own goroutine
+	// (transaction_layer.go: "go txl.handleRequest(msg)").
+	h.routeCall(dlg, session, cc)
+}
+
+// routeCall gives the call to deterministic resolution first and to the
+// supervisor only if resolution declines it. It runs off the SIP transaction
+// goroutine because both paths block for the life of the call.
+func (h *InviteHandler) routeCall(dlg *dialog.Dialog, session agent.CallSession, cc agent.CallContext) {
+	if h.resolution != nil && h.resolution.Handle(dlg.Context(), session, &cc) {
+		// Resolution took the call and it is over. No LLM request was made.
+		if !dlg.IsTerminated() {
+			slog.Info("[Routing] Resolved call complete, terminating dialog", "call_id", dlg.CallID)
+			_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
+		}
+		return
+	}
+
+	// Nothing resolved: this call needs the model, so now it costs a channel.
+	decision := h.admission.Admit(cc)
+	if !decision.Admitted {
+		code, reason := admissionStatus(decision.Reason)
+		slog.Warn("Rejecting INVITE at admission",
+			"tenant", cc.Tenant, "direction", cc.Direction, "reason", decision.Reason, "code", int(code))
+		// We have sent a 180 but never a 200, so a final failure response is still
+		// the correct way to end this call.
+		if err := h.dialogMgr.RespondStatus(dlg, code, reason); err != nil {
+			slog.Warn("[Routing] Failed to reject at admission", "call_id", dlg.CallID, "error", err)
+		}
+		_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonError)
+		return
+	}
+
+	h.superviseCall(dlg, session, cc, decision.Release)
 }
 
 // superviseCall runs the agent runner for one call and guarantees the dialog is

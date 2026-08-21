@@ -15,6 +15,7 @@ type Client struct {
 	serverURL  string
 	httpClient *http.Client
 	model      string
+	keepAlive  string
 }
 
 // Config holds LLM client configuration
@@ -22,7 +23,22 @@ type Config struct {
 	ServerURL string        // Base URL of Ollama server (e.g., "http://localhost:11434")
 	Model     string        // Model name (e.g., "llama3")
 	Timeout   time.Duration // Request timeout (default 60s)
+	// KeepAlive is how long Ollama should hold the model resident after a
+	// request, in its own format ("30m", "-1" for indefinitely). Empty uses
+	// DefaultKeepAlive; Ollama's own default of 5 minutes is too short for a
+	// phone system, where the gap between calls is routinely longer than the
+	// gap the model survives.
+	KeepAlive string
 }
+
+// DefaultKeepAlive holds the model resident far longer than Ollama's 5-minute
+// default. The cost is memory the deployment already sized for; the benefit is
+// that a caller never pays a model load inside their turn budget.
+const DefaultKeepAlive = "30m"
+
+// readinessTimeout bounds the reachability check. Short on purpose: it answers
+// "is anything there", not "is it fast".
+const readinessTimeout = 3 * time.Second
 
 // Message represents a chat message
 type Message struct {
@@ -59,14 +75,23 @@ func NewClient(cfg Config) *Client {
 		model = "llama3"
 	}
 
+	keepAlive := cfg.KeepAlive
+	if keepAlive == "" {
+		keepAlive = DefaultKeepAlive
+	}
+
 	return &Client{
 		serverURL: cfg.ServerURL,
 		model:     model,
+		keepAlive: keepAlive,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
 	}
 }
+
+// ServerURL reports the configured Ollama base URL, for logging and probes.
+func (c *Client) ServerURL() string { return c.serverURL }
 
 // Chat sends a conversation to the LLM and returns the assistant's response
 func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
@@ -125,9 +150,21 @@ func (c *Client) ChatWithModel(ctx context.Context, messages []Message, model st
 	return chatResp.Choices[0].Message.Content, nil
 }
 
-// Ready checks if the LLM server is configured
+// Ready reports whether the LLM server actually answers.
+//
+// This used to return `serverURL != ""`, which is a statement about the flags,
+// not about the world — it was true for a URL pointing at nothing at all. Since
+// the supervisor is useless without a model, "ready" has to mean the server
+// responded.
 func (c *Client) Ready() bool {
-	return c.serverURL != ""
+	if c.serverURL == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), readinessTimeout)
+	defer cancel()
+
+	_, err := c.listModels(ctx)
+	return err == nil
 }
 
 // Conversation manages a multi-turn conversation with context

@@ -39,13 +39,75 @@ Example with multiple RTP Managers:
 
 ### Call Supervisor
 
-Every INVITE is handled by the LLM supervisor; there is no dialplan.
+Calls that deterministic resolution cannot answer are handled by the LLM
+supervisor (see the tenant routing table above for what resolves without it).
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
 | `--llm-server` | `LLM_SERVER` | http://localhost:11434 | Ollama server URL |
 | `--llm-model` | `LLM_MODEL` | qwen3:8b | Model used by the call supervisor |
+| `--llm-keep-alive` | `LLM_KEEP_ALIVE` | 30m | How long Ollama holds the model resident after a request (`-1` for indefinitely) |
+| `--first-turn-timeout` | `FIRST_TURN_TIMEOUT` | 90s | Deadline for the **first** supervisor turn |
+| `--turn-timeout` | `TURN_TIMEOUT` | 30s | Deadline for a **mid-call** supervisor turn |
 | `--tts-voice` | `TTS_VOICE` | *(empty)* | Piper voice for the supervisor (empty uses the RTP manager default) |
+
+#### Startup probe and model warm-up
+
+At startup the signaling server checks that the LLM answers and that
+`--llm-model` is actually pulled on it, then sends one small request to load the
+model, logging how long that took:
+
+```
+LLM ready and warmed load_time=6.774s note=this is what the first caller would otherwise have waited inside their turn budget
+```
+
+That number is the deployment's cold cost. Nothing here fails startup — a
+missing model or an unreachable server is a warning, because calls that resolve
+deterministically do not need the model at all:
+
+```
+LLM server is up but does NOT have the configured model; every supervised call will fail.
+Pull it (ollama pull) or fix --llm-model  available=[gemma3:4b qwen3:8b llama3.2:3b]
+
+LLM server did not answer; supervised calls will fail until it does.
+Deterministic routing is unaffected — check --llm-server
+```
+
+#### Why not a smaller model
+
+The obvious lever for first-turn latency is a smaller model. Measured on this
+hardware with `think: false` and the real prompts, it is the wrong one:
+
+| Model | Greeting | "I need to file a claim" | Reasoning in `content` |
+| --- | --- | --- | --- |
+| **qwen3:8b** | 19 tok, no tool | empty content + `dial(claims)` | 0 / 4 trials |
+| qwen3:4b | 1552–4027 tok | `dial(claims)` after 3236–6390 chars of monologue | **4 / 4 trials** |
+| qwen3:0.6b | 10 tok, no tool | **no tool call at all** | 0 / 4 trials |
+
+`qwen3:4b` evaluates the prompt faster (23.8s vs 44.0s cold) but generates so
+much more that the turn takes **148s against the 8b's 56s** — and with
+`think: false` it puts its chain of thought in `content`, which is the field the
+supervisor speaks. `qwen3:0.6b` is fast and quiet but will not dial.
+
+Use `--llm-keep-alive` and the startup warm-up for latency. Change `--llm-model`
+only with the same kind of measurement behind it.
+
+#### Why two turn budgets
+
+They are bounded by different things. The **first** turn runs while the caller
+hears ringback and may include loading a multi-gigabyte model, so its limit is
+caller patience. A **mid-call** turn is a silence with an open mic after the
+caller has stopped speaking, where 30s is already a long time.
+
+A single 30s budget for both is what produced this symptom in the field: a cold
+model took longer than 30s to load and answer, the turn was cancelled, and the
+caller heard "the assistant is unavailable" from a perfectly healthy LLM. Warm-up
+plus `--llm-keep-alive` is the fix; the larger first-turn budget is the safety
+net for a genuine cold start.
+
+If a turn does exceed its budget the log says so specifically, with the elapsed
+time — distinct from the server being unreachable, which is a different problem
+with a different fix.
 | `--policy-config` | `POLICY_CONFIG` | resources/config/policy.json | Class-of-Service and channel-limit configuration |
 
 The signaling server **requires** a reachable LLM server: without a supervisor
@@ -60,10 +122,57 @@ reasoning is never spoken.
 |------|---------|---------|-------------|
 | `--settings-path` | `SETTINGS_PATH` | resources/config | Directory containing settings.md |
 | `--tenants-path` | `TENANTS_PATH` | resources/tenants | Directory containing tenant .md files |
+| `--routing-path` | `ROUTING_PATH` | (same as `--tenants-path`) | Directory containing `<tenant>.routing.json` files |
 
-A tenant's prompt is `settings.md` followed by `tenants/<name>.md`. A tenant with
-no file of its own is **not admissible** — there is no default tenant, and an
-unattributable call is rejected rather than supervised by a guess.
+A tenant's prompt is `settings.md` followed by `tenants/<name>.md`. There is no
+default tenant: an unattributable call is rejected rather than supervised by a
+guess.
+
+A tenant is described by **two** files. The `.md` is judgement — identity, tone,
+business facts, escalation language. The `.routing.json` is data — extensions,
+DIDs, ring groups, and the names the model may dial. A tenant with only a routing
+table can be **routed** but not supervised; a tenant with only a prompt can be
+supervised but resolves nothing deterministically.
+
+### Tenant Routing Table
+
+`<tenant>.routing.json` is what deterministic resolution routes by, and the
+source of the symbolic targets `dial` narrows to. Both read the same file, so a
+name cannot resolve one way for the resolver and another way for the model.
+
+```json
+{
+  "operator": "user/150",
+  "retrieval_prefix": "*",
+  "extensions": { "105": "user/105", "100": "assistant", "130": "group/claims" },
+  "symbolic_targets": { "sales": "group/sales", "front-desk": "user/150" },
+  "dids": { "+15558001200": "assistant", "+15558001250": "group/claims" },
+  "groups": {
+    "claims": {
+      "strategy": "sequential",
+      "members": ["user/130", "user/120"],
+      "member_timeout_ms": 15000,
+      "no_answer": "supervisor"
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `operator` | Fallback human: where an unknown tool name sends the caller, and the `no_answer: operator` outcome. Empty means those paths keep the call alive instead of transferring — never a hangup |
+| `retrieval_prefix` | Dial prefix for picking up a parked call; the digits after it are the slot ID (`*701` → slot 701). Internal callers only |
+| `extensions` | Dialed extension → destination. `user/NNN` is an endpoint, `group/NAME` a ring group, `assistant` hands off to the supervisor |
+| `symbolic_targets` | Capability narrowing: the only names the model may dial. It can never express a raw number through `dial` |
+| `dids` | Inbound DID → destination **within** the tenant. The DID → *tenant* step happens earlier, in `routes.json`. Matched on digits, so the leading `+` is optional |
+| `groups` | Ring groups. `strategy` is `sequential` or `round-robin`; `member_timeout_ms` bounds one member's ring; `no_answer` is `supervisor`, `operator`, or `hangup` |
+
+A missing routing file means nothing resolves deterministically for that tenant
+and every call goes to the supervisor. A **malformed** one is a hard startup
+error — an unparseable table would silently send every call that should have been
+routed in milliseconds to a language model instead.
+
+Both files reload through `POST /api/v1/config/reload`.
 
 ### Trunk and DID Routing
 
@@ -79,13 +188,17 @@ change it, and anything it does not grant is denied. A **missing file is not an
 error**: it yields the safest posture (no external dialing anywhere, default
 channel limit).
 
+It says only what is *permitted*, never what a name *means*: `symbolic_targets`
+moved to the tenant routing table, and a leftover `symbolic_targets` key here is
+a hard startup error naming the file the entries belong in. Two sources for one
+name is exactly the drift the move was meant to end.
+
 ```json
 {
   "default_channel_limit": 10,
   "tenants": {
     "acme": {
       "channel_limit": 20,
-      "symbolic_targets": { "sales": "user/160", "support": "user/105" },
       "allow_external_dial": false,
       "external_allowlist": [],
       "max_external_units_per_day": 0,
@@ -97,9 +210,8 @@ channel limit).
 
 | Field | Meaning |
 |-------|---------|
-| `default_channel_limit` | Per-tenant concurrent-call cap when the tenant sets none. Rejects with 486 at the limit; keeps the first-turn LLM call from queueing past SIP Timer B |
+| `default_channel_limit` | Per-tenant cap on concurrent **supervised** calls when the tenant sets none. Rejects with 486 at the limit; keeps the first-turn LLM call from queueing past SIP Timer B. Deterministically resolved calls do not consume a channel |
 | `channel_limit` | Per-tenant override |
-| `symbolic_targets` | Capability narrowing: the names the model may dial, mapped to real targets. The model cannot express a raw number through `dial` |
 | `allow_external_dial` | Default-deny gate for any non-`user/` destination |
 | `external_allowlist` | Prefix allowlist, consulted only when external dial is enabled. Empty with external enabled denies everything |
 | `barred_prefixes` | Overrides the built-in barred classes (premium-rate, satellite, IRSF-heavy codes). Omit to inherit the defaults |
@@ -138,6 +250,7 @@ export LOGLEVEL=debug
   --llm-model qwen3:8b \
   --policy-config /etc/switchboard/policy.json \
   --tenants-path /etc/switchboard/tenants \
+  --routing-path /etc/switchboard/tenants \
   --loglevel debug
 ```
 
@@ -291,7 +404,13 @@ The Go services accept `--llm-server`, `--asr-server`, and `--tts-server` flags 
 
 ### Tenant Configuration
 
-Tenant configuration files are stored in `resources/tenants/` as Markdown files. Each file defines the configuration for a single tenant (e.g., `resources/tenants/default.md`).
+Tenant configuration files are stored in `resources/tenants/`. Each tenant has a Markdown prompt
+and a `<tenant>.routing.json` routing table (e.g. `devtenant.md` + `devtenant.routing.json`).
+
+The repository ships only `devtenant`, a minimal fixture for local testing. **There is no default
+tenant** — a call whose domain matches none is rejected with 404, pre-answer and without any LLM
+request. For a fully worked example of a realistic tenant, see
+[TENANT-EXAMPLE.md](TENANT-EXAMPLE.md).
 
 ### Settings
 

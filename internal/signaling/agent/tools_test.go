@@ -16,15 +16,17 @@ import (
 // recordingSession is a CallSession test double that records the targets passed
 // to Dial and the hangup count, for executor/handler assertions.
 type recordingSession struct {
-	mu         sync.Mutex
-	dialed     []string
-	forwarded  []string
-	hangups    int
-	answered   bool
-	dialErr    error
-	forwardErr error
-	playErr    error
-	played     []string
+	mu          sync.Mutex
+	dialed      []string
+	forwarded   []string
+	groupRounds [][]string
+	groupErr    error
+	hangups     int
+	answered    bool
+	dialErr     error
+	forwardErr  error
+	playErr     error
+	played      []string
 }
 
 func (s *recordingSession) CallID() string                                { return "rec-call" }
@@ -74,10 +76,21 @@ func (s *recordingSession) Forward(_ context.Context, target string, _ time.Dura
 	return s.forwardErr
 }
 
+// forwardedTargets returns what Forward was called with, in order.
 func (s *recordingSession) forwardedTargets() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.forwarded...)
+}
+
+// ForwardGroup records the rounds a ring group was asked to ring. The tool layer
+// never calls it — resolution does — so a recorded round here would mean the
+// supervisor grew a ring-group path nobody designed.
+func (s *recordingSession) ForwardGroup(_ context.Context, rounds [][]string, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.groupRounds = append(s.groupRounds, rounds...)
+	return s.groupErr
 }
 
 func (s *recordingSession) Hangup(string) error {
@@ -144,16 +157,52 @@ func TestRegistryInternalHasDialWhenEnabled(t *testing.T) {
 	}
 }
 
-// --- Executor: unknown tool → Terminal. ---
+// --- Executor: unknown tool → operator transfer, never a hangup. ---
 
-func TestExecutorUnknownToolTerminal(t *testing.T) {
-	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, nil, RegistryDeps{Logger: quietLogger()}), nil)
-	_, disp, err := exec.Execute(context.Background(), callWithArgs("teleport", nil), &recordingSession{})
+// One hallucinated token must not drop a customer's call. With an operator
+// configured, an unknown tool hands the caller to that person.
+func TestExecutorUnknownToolTransfersToOperator(t *testing.T) {
+	policy := NewPolicy("acme", TenantPolicy{}, quietLogger())
+	exec := NewCallExecutor(
+		BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}),
+		policy, "user/150")
+	sess := &recordingSession{}
+
+	result, disp, err := exec.Execute(context.Background(), callWithArgs("teleport", nil), sess)
 	if err != nil {
 		t.Fatalf("unexpected Go error: %v", err)
 	}
 	if disp != DispositionTerminal {
-		t.Fatalf("expected Terminal for unknown tool, got %s", disp)
+		t.Fatalf("a completed operator transfer ends the supervisor's involvement, got %s", disp)
+	}
+	if got := sess.forwardedTargets(); len(got) != 1 || got[0] != "user/150" {
+		t.Fatalf("expected a pre-answer forward to the operator, got %v", got)
+	}
+	if strings.Contains(result, "ending the call") {
+		t.Fatalf("the result must not describe a hangup, got %q", result)
+	}
+}
+
+// A tenant with no operator must still not hang up: the model is told what the
+// real tools are and gets to try again, bounded by the runaway breaker.
+func TestExecutorUnknownToolWithoutOperatorKeepsCallAlive(t *testing.T) {
+	exec := NewCallExecutor(
+		BuildRegistry(CallContext{Direction: DirectionInternal}, nil, RegistryDeps{Logger: quietLogger()}),
+		nil, "")
+	sess := &recordingSession{}
+
+	result, disp, err := exec.Execute(context.Background(), callWithArgs("teleport", nil), sess)
+	if err != nil {
+		t.Fatalf("unexpected Go error: %v", err)
+	}
+	if disp != DispositionContinue {
+		t.Fatalf("expected the call to continue without an operator, got %s", disp)
+	}
+	if len(sess.forwardedTargets()) != 0 {
+		t.Fatal("nothing should have been dialed")
+	}
+	if !strings.Contains(result, "hangup") || !strings.Contains(result, "play_audio") {
+		t.Fatalf("the model must be told which tools actually exist, got %q", result)
 	}
 }
 
@@ -161,7 +210,7 @@ func TestExecutorUnknownToolTerminal(t *testing.T) {
 
 func TestExecutorMissingArgActionableContinue(t *testing.T) {
 	policy := NewPolicy("acme", TenantPolicy{}, quietLogger())
-	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy)
+	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy, "")
 
 	result, disp, err := exec.Execute(context.Background(), callWithArgs("dial", map[string]any{}), &recordingSession{})
 	if err != nil {
@@ -179,7 +228,7 @@ func TestExecutorMissingArgActionableContinue(t *testing.T) {
 
 func TestExecutorDuplicateFailedCallRefused(t *testing.T) {
 	policy := NewPolicy("acme", TenantPolicy{}, quietLogger())
-	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy)
+	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy, "")
 	sess := &recordingSession{}
 
 	// First: dial an unknown symbol → policy deny (a failure).
@@ -209,7 +258,7 @@ func TestExecutorPolicyDeniedDialContinue(t *testing.T) {
 	policy := NewPolicy("acme", TenantPolicy{
 		SymbolicTargets: map[string]string{"support": "+18005551212"},
 	}, quietLogger())
-	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy)
+	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy, "")
 	sess := &recordingSession{}
 
 	result, disp, err := exec.Execute(context.Background(),
@@ -241,7 +290,7 @@ func TestExecutorPermittedDialForwardsResolvedTarget(t *testing.T) {
 		MaxExternalUnitsPerDay: 10,
 		SymbolicTargets:        map[string]string{"support": "+18005551212"},
 	}, quietLogger())
-	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy)
+	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy, "")
 	sess := &recordingSession{}
 
 	result, disp, err := exec.Execute(context.Background(),
@@ -277,7 +326,7 @@ func TestExecutorDialAfterAnswerBridges(t *testing.T) {
 	policy := NewPolicy("acme", TenantPolicy{
 		SymbolicTargets: map[string]string{"sales": "user/160"},
 	}, quietLogger())
-	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy)
+	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy, "")
 
 	sess := &recordingSession{}
 	if err := sess.Answer(context.Background()); err != nil {
@@ -307,7 +356,7 @@ func TestExecutorFailedDialIsRecoverable(t *testing.T) {
 	policy := NewPolicy("acme", TenantPolicy{
 		SymbolicTargets: map[string]string{"sales": "user/160"},
 	}, quietLogger())
-	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy)
+	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, policy, RegistryDeps{Logger: quietLogger()}), policy, "")
 	sess := &recordingSession{forwardErr: errors.New("486 Busy Here")}
 
 	result, disp, err := exec.Execute(context.Background(),
@@ -326,7 +375,7 @@ func TestExecutorFailedDialIsRecoverable(t *testing.T) {
 // --- Executor: hangup tool is Terminal and reaches the session. ---
 
 func TestExecutorHangupTerminal(t *testing.T) {
-	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, nil, RegistryDeps{Logger: quietLogger()}), nil)
+	exec := NewCallExecutor(BuildRegistry(CallContext{Direction: DirectionInternal}, nil, RegistryDeps{Logger: quietLogger()}), nil, "")
 	sess := &recordingSession{}
 
 	_, disp, err := exec.Execute(context.Background(), callWithArgs("hangup", nil), sess)

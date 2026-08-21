@@ -42,10 +42,16 @@ type TenantConfig struct {
 	// defaults; set an explicit empty array to bar nothing (rarely correct).
 	BarredPrefixes []string `json:"barred_prefixes"`
 
-	// SymbolicTargets maps the names the model may dial to concrete targets.
-	// This is capability narrowing: it is the ONLY way a dial can become an
-	// external number through the normal dial tool.
-	SymbolicTargets map[string]string `json:"symbolic_targets"`
+	// SymbolicTargets is RETIRED from this file. It now lives in the tenant's
+	// routing table (<tenant>.routing.json) so the deterministic resolver and the
+	// model-facing capability narrowing read the same names from one place.
+	//
+	// The field is kept only to DETECT a stale config: a pointer distinguishes
+	// "absent" from "present but empty", and LoadPolicyConfig refuses to start
+	// when it is present. Two sources for one name is exactly the drift moving it
+	// was meant to end, and a silent merge would let a stale entry here quietly
+	// outrank the routing file for the life of a deployment.
+	SymbolicTargets *map[string]string `json:"symbolic_targets"`
 
 	// MaxExternalUnitsPerDay is the spend circuit breaker. Zero permits no
 	// external spend at all.
@@ -94,6 +100,18 @@ func LoadPolicyConfig(path string) (*PolicyConfig, error) {
 	if parsed.Tenants != nil {
 		cfg.Tenants = parsed.Tenants
 	}
+
+	// Fail loudly on a config that still carries symbolic targets here. Starting
+	// anyway would leave the operator believing those names are dialable when the
+	// routing file is what actually decides.
+	for name, t := range cfg.Tenants {
+		if t.SymbolicTargets != nil {
+			return nil, fmt.Errorf(
+				"%s: tenant %q still defines \"symbolic_targets\"; move those entries to the "+
+					"tenant's routing file (<tenants-path>/%s.routing.json) under \"symbolic_targets\" "+
+					"and remove the key here", path, name, name)
+		}
+	}
 	return cfg, nil
 }
 
@@ -113,16 +131,21 @@ func (c *PolicyConfig) ChannelLimits() map[string]int {
 // tenant gets the zero TenantPolicy — the safest posture, not an error: the
 // router already proved the tenant exists, and a tenant with no COS entry
 // simply has no external reach.
-func (c *PolicyConfig) TenantPolicyFor(tenant string) TenantPolicy {
+//
+// symbolicTargets comes from the tenant's routing table, not from this file. The
+// parameter is explicit rather than a stored dependency so every construction
+// site has to say where the names came from — there is exactly one right answer,
+// and the compiler now asks the question.
+func (c *PolicyConfig) TenantPolicyFor(tenant string, symbolicTargets map[string]string) TenantPolicy {
 	t, ok := c.Tenants[tenant]
 	if !ok {
-		return TenantPolicy{}
+		return TenantPolicy{SymbolicTargets: symbolicTargets}
 	}
 	return TenantPolicy{
 		AllowExternalDial:         t.AllowExternalDial,
 		ExternalAllowlist:         t.ExternalAllowlist,
 		BarredPrefixes:            t.BarredPrefixes,
-		SymbolicTargets:           t.SymbolicTargets,
+		SymbolicTargets:           symbolicTargets,
 		MaxExternalUnitsPerDay:    t.MaxExternalUnitsPerDay,
 		AllowCallerProvidedNumber: t.AllowCallerProvidedNumber,
 	}

@@ -27,23 +27,30 @@ type fakeSession struct {
 	terminatedVal atomic.Bool
 
 	// Answer-model state (design #7). answered records the 200 OK; forwarded
-	// and dialled record which SIP path the dial tool took.
+	// and dialed record which SIP path the dial tool took.
 	answeredVal atomic.Bool
 	answerCalls atomic.Int32
 	rangEarly   atomic.Bool
 	forwarded   []string
-	dialled     []string
+	dialed      []string
 
 	// forwardErr / dialErr make the outbound leg fail, for the relay path.
 	forwardErr error
 	dialErr    error
 
-	// forwardBlocks makes Forward hang until the call context is cancelled,
-	// modelling a target that rings and rings while the caller may CANCEL.
+	// forwardBlocks makes Forward hang until the call context is canceled,
+	// modeling a target that rings and rings while the caller may CANCEL.
 	forwardBlocks bool
 	// forwardStarted closes once Forward has been entered, so a test can
 	// deterministically CANCEL mid-forward.
 	forwardStarted chan struct{}
+
+	// Ring-group state. groupRounds records what ForwardGroup was asked to ring,
+	// in order, which is how the strategy tests assert ring order. groupErr is
+	// what it returns — set it to ErrGroupNoAnswer to exercise a group nobody
+	// picks up.
+	groupRounds [][]string
+	groupErr    error
 }
 
 func newFakeSession() *fakeSession {
@@ -115,6 +122,35 @@ func (f *fakeSession) Forward(ctx context.Context, target string, _ time.Duratio
 	return nil
 }
 
+// ForwardGroup is the pre-answer ring-group path. It records the rounds it was
+// given and answers (or not) according to groupErr, so a test can drive both the
+// "someone picked up" and "nobody picked up" branches without a media stack.
+func (f *fakeSession) ForwardGroup(_ context.Context, rounds [][]string, _ time.Duration) error {
+	f.mu.Lock()
+	f.groupRounds = append(f.groupRounds, rounds...)
+	err := f.groupErr
+	f.mu.Unlock()
+
+	if err != nil {
+		return err
+	}
+	// A member answered: a real ForwardGroup relays the 200 upstream.
+	f.answeredVal.Store(true)
+	f.answerCalls.Add(1)
+	return nil
+}
+
+// rungRounds returns the rounds ForwardGroup was asked to ring, in order.
+func (f *fakeSession) rungRounds() [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][]string, 0, len(f.groupRounds))
+	for _, r := range f.groupRounds {
+		out = append(out, append([]string(nil), r...))
+	}
+	return out
+}
+
 func (f *fakeSession) forwards() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -124,7 +160,7 @@ func (f *fakeSession) forwards() []string {
 func (f *fakeSession) dials() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.dialled...)
+	return append([]string(nil), f.dialed...)
 }
 
 func (f *fakeSession) PlayTTS(ctx context.Context, text, _ string) error {
@@ -155,7 +191,7 @@ func (f *fakeSession) Listen(ctx context.Context, _, _ int) (string, error) {
 
 func (f *fakeSession) Dial(_ context.Context, target string, _ time.Duration) error {
 	f.mu.Lock()
-	f.dialled = append(f.dialled, target)
+	f.dialed = append(f.dialed, target)
 	err := f.dialErr
 	f.mu.Unlock()
 	return err
@@ -356,7 +392,7 @@ func TestTeardownIdempotent(t *testing.T) {
 		t.Fatalf("expected the teardown hook to run once, ran %d times", n)
 	}
 	if ctx.Err() == nil {
-		t.Fatal("expected callCtx cancelled after teardown")
+		t.Fatal("expected callCtx canceled after teardown")
 	}
 }
 

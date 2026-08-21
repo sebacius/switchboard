@@ -21,15 +21,18 @@ func ccFor(tenant string) CallContext {
 	return CallContext{Caller: "102", Callee: "103", Direction: DirectionInternal, Tenant: tenant}
 }
 
+// Admit is the SUPERVISION gate, so its rejection for an unknown tenant is
+// "nothing to supervise with" — the tenant-not-loaded check now belongs to
+// Preflight, which runs earlier and before deterministic resolution.
 func TestAdmitUnloadedTenantRejected(t *testing.T) {
-	a := NewAdmission(fakePrompts{"acme": "be helpful"}, 10, nil)
+	a := NewAdmission(fakePrompts{"acme": "be helpful"}, nil, 10, nil)
 
 	res := a.Admit(ccFor("ghost"))
 	if res.Admitted {
 		t.Fatalf("expected reject for unloaded tenant")
 	}
-	if res.Reason != reasonTenantNotLoaded {
-		t.Errorf("reason = %q, want %q", res.Reason, reasonTenantNotLoaded)
+	if res.Reason != reasonNoPrompt {
+		t.Errorf("reason = %q, want %q", res.Reason, reasonNoPrompt)
 	}
 	if res.Release == nil {
 		t.Errorf("Release must be non-nil even on reject")
@@ -41,7 +44,7 @@ func TestAdmitUnloadedTenantRejected(t *testing.T) {
 }
 
 func TestAdmitLoadedTenantWithinLimit(t *testing.T) {
-	a := NewAdmission(fakePrompts{"acme": "be helpful"}, 2, nil)
+	a := NewAdmission(fakePrompts{"acme": "be helpful"}, nil, 2, nil)
 
 	res := a.Admit(ccFor("acme"))
 	if !res.Admitted {
@@ -58,7 +61,7 @@ func TestAdmitLoadedTenantWithinLimit(t *testing.T) {
 }
 
 func TestAdmitAtLimitRejected(t *testing.T) {
-	a := NewAdmission(fakePrompts{"acme": "x"}, 1, nil)
+	a := NewAdmission(fakePrompts{"acme": "x"}, nil, 1, nil)
 
 	first := a.Admit(ccFor("acme"))
 	if !first.Admitted {
@@ -80,7 +83,7 @@ func TestAdmitAtLimitRejected(t *testing.T) {
 }
 
 func TestReleaseFreesSlotForSubsequentAdmit(t *testing.T) {
-	a := NewAdmission(fakePrompts{"acme": "x"}, 1, nil)
+	a := NewAdmission(fakePrompts{"acme": "x"}, nil, 1, nil)
 
 	first := a.Admit(ccFor("acme"))
 	if !first.Admitted {
@@ -99,7 +102,7 @@ func TestReleaseFreesSlotForSubsequentAdmit(t *testing.T) {
 }
 
 func TestReleaseIsIdempotent(t *testing.T) {
-	a := NewAdmission(fakePrompts{"acme": "x"}, 1, nil)
+	a := NewAdmission(fakePrompts{"acme": "x"}, nil, 1, nil)
 
 	res := a.Admit(ccFor("acme"))
 	if !res.Admitted {
@@ -127,7 +130,7 @@ func TestReleaseIsIdempotent(t *testing.T) {
 }
 
 func TestPerTenantOverride(t *testing.T) {
-	a := NewAdmission(fakePrompts{"acme": "x", "big": "y"}, 1, map[string]int{"big": 3})
+	a := NewAdmission(fakePrompts{"acme": "x", "big": "y"}, nil, 1, map[string]int{"big": 3})
 
 	// "acme" uses the default of 1.
 	if !a.Admit(ccFor("acme")).Admitted {
@@ -154,7 +157,7 @@ func TestPerTenantOverride(t *testing.T) {
 func TestAdmitConcurrent(t *testing.T) {
 	const limit = 50
 	const goroutines = 200
-	a := NewAdmission(fakePrompts{"acme": "x"}, limit, nil)
+	a := NewAdmission(fakePrompts{"acme": "x"}, nil, limit, nil)
 
 	var wg sync.WaitGroup
 	for i := 0; i < goroutines; i++ {
@@ -176,5 +179,57 @@ func TestAdmitConcurrent(t *testing.T) {
 
 	if got := a.Active("acme"); got != 0 {
 		t.Errorf("final active = %d, want 0", got)
+	}
+}
+
+// Preflight runs before deterministic resolution and asks only "do we know this
+// tenant at all". A tenant we cannot attribute is rejected there.
+func TestPreflightRejectsUnknownTenant(t *testing.T) {
+	a := NewAdmission(fakePrompts{"acme": "be helpful"}, nil, 10, nil)
+
+	res := a.Preflight(ccFor("ghost"))
+	if res.Admitted {
+		t.Fatal("an unattributable call must not pass preflight")
+	}
+	if res.Reason != reasonTenantNotLoaded {
+		t.Errorf("reason = %q, want %q", res.Reason, reasonTenantNotLoaded)
+	}
+	if res.Release == nil {
+		t.Error("Release must be non-nil even on reject")
+	}
+}
+
+// A tenant with a routing table but no prompt is loaded: it can be ROUTED even
+// though it cannot be supervised. Rejecting it at preflight would mean an
+// extension dial fails because nobody wrote the AI a personality.
+func TestPreflightAcceptsRoutingOnlyTenant(t *testing.T) {
+	routing := StaticRouting{"routed": {Extensions: map[string]string{"105": "user/105"}}}
+	a := NewAdmission(fakePrompts{}, routing, 10, nil)
+
+	if res := a.Preflight(ccFor("routed")); !res.Admitted {
+		t.Fatalf("a routing-only tenant must pass preflight, got %q", res.Reason)
+	}
+	// ...but it still cannot be supervised.
+	if res := a.Admit(ccFor("routed")); res.Admitted {
+		t.Fatal("a tenant with no prompt must not be admitted to supervision")
+	}
+}
+
+// The channel limit is charged only at the supervision hand-off, so a tenant
+// sitting at its limit must still be able to take deterministically routed
+// calls. This asserts the accounting half: Preflight never consumes a slot.
+func TestPreflightDoesNotConsumeAChannel(t *testing.T) {
+	a := NewAdmission(fakePrompts{"acme": "x"}, nil, 1, nil)
+
+	for range 5 {
+		if res := a.Preflight(ccFor("acme")); !res.Admitted {
+			t.Fatalf("preflight must not be capacity-limited, got %q", res.Reason)
+		}
+	}
+	if got := a.Active("acme"); got != 0 {
+		t.Fatalf("preflight consumed %d channels, want 0", got)
+	}
+	if res := a.Admit(ccFor("acme")); !res.Admitted {
+		t.Fatal("the single channel must still be free for a supervised call")
 	}
 }

@@ -1,5 +1,5 @@
 // Command agent-smoke drives the REAL call supervisor against a REAL Ollama
-// server with a fake CallSession, so the model's behaviour can be exercised
+// server with a fake CallSession, so the model's behavior can be exercised
 // without SIP, RTP, ASR, or TTS.
 //
 // It is the spike rig for the open question in the design: does qwen3 keep its
@@ -44,7 +44,7 @@ func main() {
 	var (
 		llmServer    = flag.String("llm-server", "http://localhost:11434", "Ollama server URL")
 		model        = flag.String("model", "qwen3:8b", "Ollama model")
-		tenant       = flag.String("tenant", "default", "Tenant whose prompt to load")
+		tenant       = flag.String("tenant", "devtenant", "Tenant whose prompt to load")
 		caller       = flag.String("caller", "102", "Caller (From user part)")
 		callee       = flag.String("callee", "105", "Callee (To user part / DID)")
 		direction    = flag.String("direction", "internal", "Call direction: internal | inbound | outbound")
@@ -87,6 +87,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The routing table supplies the symbolic targets the model may dial. The
+	// harness does not run the deterministic resolver — it exists to exercise the
+	// supervisor — but the model must be offered the same names it would be
+	// offered in production, or the smoke test measures a different system.
+	routingStore, err := agent.NewRoutingStore(*tenantsPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load routing tables: %v\n", err)
+		os.Exit(1)
+	}
+
 	// The HTTP client timeout must be at least the turn deadline, or it fires
 	// first and --turn-timeout does nothing. In production the opposite ordering
 	// is correct (a 30s turn ctx inside a 60s HTTP timeout), but here the whole
@@ -107,10 +117,12 @@ func main() {
 		Logger:      logger,
 		TurnTimeout: *turnTimeout,
 		BuildExecutor: func(cc agent.CallContext) agent.ToolExecutor {
-			policy := agent.NewPolicy(cc.Tenant, policyCfg.TenantPolicyFor(cc.Tenant), logger)
+			policy := agent.NewPolicy(cc.Tenant,
+				policyCfg.TenantPolicyFor(cc.Tenant, agent.SymbolicTargetsFor(routingStore, cc.Tenant)),
+				logger)
 			// No parking service in the harness: park/unpark need real media.
 			registry := agent.BuildRegistry(cc, policy, agent.RegistryDeps{Logger: logger})
-			return agent.NewCallExecutor(registry, policy)
+			return agent.NewCallExecutor(registry, policy, "")
 		},
 	})
 
@@ -251,6 +263,16 @@ func (f *fakeSession) Listen(ctx context.Context, _, _ int) (string, error) {
 // leaves the supervisor's control.
 func (f *fakeSession) Forward(_ context.Context, target string, _ time.Duration) error {
 	fmt.Printf(">>> forward %s (pre-answer; caller hears real ringback)\n", target)
+	f.cancel()
+	return nil
+}
+
+// ForwardGroup is the pre-answer ring-group path. The harness prints the rounds
+// rather than ringing anything: the supervisor never calls this (resolution
+// does), so it exists to satisfy the interface and to make an accidental call
+// from the runner visible instead of silent.
+func (f *fakeSession) ForwardGroup(_ context.Context, rounds [][]string, _ time.Duration) error {
+	fmt.Printf(">>> ring group %v (pre-answer)\n", rounds)
 	f.cancel()
 	return nil
 }

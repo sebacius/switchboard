@@ -18,7 +18,7 @@ const (
 
 	// DispositionParked holds the call alive without driving further turns. The
 	// loop keeps the call open (e.g. music-on-hold / a parking slot) until an
-	// unpark event arrives or the call context is cancelled.
+	// unpark event arrives or the call context is canceled.
 	DispositionParked
 )
 

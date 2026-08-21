@@ -124,7 +124,7 @@ func NewPolicy(tenant string, cfg TenantPolicy, log *slog.Logger) *Policy {
 // emitted through the normal dial tool. It resolves the symbol deterministically
 // and runs the resolved target through the full COS. It returns the resolved
 // concrete target (empty on deny) and the Decision. The model can never express
-// a raw external number here — an unrecognised symbol that is not an internal
+// a raw external number here — an unrecognized symbol that is not an internal
 // "user/..." target is denied, which is what makes capability narrowing real.
 func (p *Policy) AuthorizeDial(symbolicTarget string) (resolvedTarget string, d Decision) {
 	target := strings.TrimSpace(symbolicTarget)
@@ -191,6 +191,23 @@ func (p *Policy) resolveSymbol(symbol string) (string, bool) {
 	return "", false
 }
 
+// AuthorizeTarget adjudicates a concrete, already-resolved target — one the
+// deterministic resolver produced from the tenant's routing table, or one ring
+// group member about to be dialed. It is the same adjudication a model-issued
+// dial gets after symbol resolution, which is what keeps the resolver a
+// performance optimization rather than a second trust path.
+func (p *Policy) AuthorizeTarget(tool, resolved string) Decision {
+	target := strings.TrimSpace(resolved)
+	if target == "" {
+		d := deny("dial target is empty")
+		p.logDecision(tool, resolved, "", d)
+		return d
+	}
+	d := p.authorizeResolved(target)
+	p.logDecision(tool, resolved, target, d)
+	return d
+}
+
 // authorizeResolved applies COS to a concrete, already-resolved target. Internal
 // targets are always permitted; external targets run default-deny → barred-class
 // → allowlist → spend-breaker.
@@ -229,8 +246,15 @@ func (p *Policy) authorizeResolved(resolved string) Decision {
 
 // isInternalTarget reports whether a resolved target is an internal directory
 // reference that cannot reach an external trunk.
+//
+// A "group/..." target is internal for the same reason a "user/..." one is: a
+// ring group is a named set of endpoints from the tenant's routing table, and
+// the loader rejects a table whose group does not exist. It still reaches no
+// trunk by itself — the ring engine authorizes every member through
+// AuthorizeTarget before dialing it, so a member that IS external is adjudicated
+// on its own merits rather than inheriting the group's verdict.
 func isInternalTarget(target string) bool {
-	return strings.HasPrefix(target, "user/")
+	return strings.HasPrefix(target, "user/") || strings.HasPrefix(target, routingGroupPrefix)
 }
 
 // normalizeDigits strips formatting from a dial string so prefix matching is

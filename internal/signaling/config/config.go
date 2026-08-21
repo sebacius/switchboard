@@ -26,6 +26,19 @@ type Config struct {
 	LLMModel     string // Supervisor model served by Ollama (default "qwen3:8b")
 	TTSVoice     string // Piper voice used for the supervisor's speech
 
+	// LLMKeepAlive is how long Ollama holds the model resident after a request.
+	// Ollama's own default is 5 minutes, which is shorter than the gap between
+	// calls on a quiet PBX — so without this the model unloads overnight and the
+	// first caller of the day pays a multi-gigabyte load inside their turn budget.
+	LLMKeepAlive string
+
+	// TurnTimeout bounds a mid-call turn; FirstTurnTimeout bounds the first one,
+	// which happens while the caller hears ringback and may have to load the
+	// model. They differ because they are bounded by different things — see
+	// agent.RunnerConfig.
+	TurnTimeout      time.Duration
+	FirstTurnTimeout time.Duration
+
 	// PolicyPath points at the Class-of-Service / capacity JSON: per-tenant
 	// channel limits, external-dial allowlists, symbolic targets, and the spend
 	// circuit breaker. A missing file means the safe default posture.
@@ -34,6 +47,12 @@ type Config struct {
 	// File management paths
 	SettingsPath string // Directory containing settings.md (default "resources/config")
 	TenantsPath  string // Directory containing tenant .md files (default "resources/tenants")
+	// RoutingPath is the directory holding per-tenant <tenant>.routing.json
+	// files. Empty means "the same directory as the tenant prompts", which is
+	// where they belong: default.md is a tenant's judgement, default.routing.json
+	// is the same tenant's routing data. The flag exists for deployments that
+	// mount the two separately.
+	RoutingPath string
 
 	// Trunk settings
 	TrunkConfigPath string // Path to trunk peers JSON (list of {name,host,port,role})
@@ -70,9 +89,13 @@ func Load() *Config {
 	flag.StringVar(&cfg.LLMServerURL, "llm-server", "http://localhost:11434", "Ollama LLM server URL")
 	flag.StringVar(&cfg.LLMModel, "llm-model", "qwen3:8b", "Ollama model used by the call supervisor")
 	flag.StringVar(&cfg.TTSVoice, "tts-voice", "alloy", "Piper TTS voice for the supervisor")
+	flag.StringVar(&cfg.LLMKeepAlive, "llm-keep-alive", "30m", "How long Ollama holds the model resident after a request (Ollama format; -1 for indefinitely)")
+	flag.DurationVar(&cfg.TurnTimeout, "turn-timeout", 30*time.Second, "Deadline for a mid-call supervisor turn")
+	flag.DurationVar(&cfg.FirstTurnTimeout, "first-turn-timeout", 90*time.Second, "Deadline for the first supervisor turn, which may include loading the model while the caller hears ringback")
 	flag.StringVar(&cfg.PolicyPath, "policy-config", "resources/config/policy.json", "Path to tenant Class-of-Service and channel-limit configuration")
 	flag.StringVar(&cfg.SettingsPath, "settings-path", "resources/config", "Directory containing settings.md")
 	flag.StringVar(&cfg.TenantsPath, "tenants-path", "resources/tenants", "Directory containing tenant .md files")
+	flag.StringVar(&cfg.RoutingPath, "routing-path", "", "Directory containing per-tenant <tenant>.routing.json files (defaults to --tenants-path)")
 	flag.StringVar(&cfg.TrunkConfigPath, "trunk-config", "resources/config/trunk_peers.json", "Path to trunk peers configuration")
 	flag.StringVar(&cfg.RoutesPath, "routes-path", "resources/config/routes.json", "Path to DID->tenant routes (routes.json)")
 
@@ -126,6 +149,15 @@ func Load() *Config {
 	if voice := os.Getenv("TTS_VOICE"); voice != "" {
 		cfg.TTSVoice = voice
 	}
+	if keepAlive := os.Getenv("LLM_KEEP_ALIVE"); keepAlive != "" {
+		cfg.LLMKeepAlive = keepAlive
+	}
+	if d, err := time.ParseDuration(os.Getenv("TURN_TIMEOUT")); err == nil && d > 0 {
+		cfg.TurnTimeout = d
+	}
+	if d, err := time.ParseDuration(os.Getenv("FIRST_TURN_TIMEOUT")); err == nil && d > 0 {
+		cfg.FirstTurnTimeout = d
+	}
 	if policyPath := os.Getenv("POLICY_CONFIG"); policyPath != "" {
 		cfg.PolicyPath = policyPath
 	}
@@ -135,11 +167,19 @@ func Load() *Config {
 	if tenantsPath := os.Getenv("TENANTS_PATH"); tenantsPath != "" {
 		cfg.TenantsPath = tenantsPath
 	}
+	if routingPath := os.Getenv("ROUTING_PATH"); routingPath != "" {
+		cfg.RoutingPath = routingPath
+	}
 	if trunkConfig := os.Getenv("TRUNK_CONFIG"); trunkConfig != "" {
 		cfg.TrunkConfigPath = trunkConfig
 	}
 	if routesPath := os.Getenv("ROUTES_PATH"); routesPath != "" {
 		cfg.RoutesPath = routesPath
+	}
+
+	// Routing tables live beside the tenant prompts unless pointed elsewhere.
+	if cfg.RoutingPath == "" {
+		cfg.RoutingPath = cfg.TenantsPath
 	}
 
 	return cfg

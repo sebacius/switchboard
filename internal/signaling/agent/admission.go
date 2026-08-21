@@ -4,22 +4,23 @@ import (
 	"sync"
 )
 
-// Admission is the deterministic gate between the router and the runner
-// (design #9, spec: call-admission). It runs BEFORE the INVITE is answered and
-// BEFORE any LLM round-trip: it is pure decision + slot acquisition, no I/O. Two
-// checks, in order:
+// Admission is the deterministic gate around the supervisor (spec:
+// call-admission). It performs NO SIP and no I/O — pure decision plus slot
+// acquisition — and it now runs in TWO places, because deterministic resolution
+// sits between them:
 //
-//  1. Preflight — the call's tenant must resolve to a loaded, non-empty prompt.
-//     An unloaded tenant is a hard reject (no default tenant). Group 7 maps the
-//     rejection to a 4xx; admission performs NO SIP here.
-//  2. Channel limit — a per-tenant counting semaphore caps concurrent supervised
-//     calls. At the limit the call is rejected (group 7 → 486 Busy). Under the
-//     limit a slot is acquired and returned as an idempotent Release the runner's
-//     teardown funnel calls exactly once.
+//  1. Preflight, before resolution — the call's tenant must be loaded at all.
+//     An unattributable call is a hard reject (there is no default tenant).
+//  2. Admit, at the hand-off to the supervisor — the tenant's prompt must be
+//     non-empty, and a per-tenant counting semaphore must have a free channel.
 //
-// The concurrency bound is both cost control and SLA protection: it keeps the
-// first-turn LLM call (which runs inside the INVITE transaction) from queueing
-// past Timer B under load — calls reject fast rather than dying in the timeout.
+// Splitting them matters. The channel limit bounds concurrent SUPERVISED calls:
+// it exists to stop the first-turn LLM call from queueing past SIP Timer B, and
+// to cap spend. A deterministically resolved call makes no LLM request, so
+// charging it a channel would mean a tenant at its LLM limit gets 486 Busy on a
+// plain extension dial that costs nothing — a capacity regression caused by a
+// latency control. For the same reason a tenant with a routing table but no
+// prompt can still route: it simply cannot be supervised.
 
 // PromptSource resolves a tenant's combined prompt (settings.md + tenant.md).
 // It is the seam admission uses for preflight; real loading from disk/config is
@@ -41,10 +42,11 @@ type AdmissionResult struct {
 	Release  func()
 }
 
-// Stable rejection reasons. Group 7 maps these to SIP responses:
-// reasonTenantNotLoaded → 4xx, reasonChannelLimit → 486 Busy.
+// Stable rejection reasons. The INVITE handler maps these to SIP responses:
+// the two tenant reasons → 4xx, reasonChannelLimit → 486 Busy.
 const (
 	reasonTenantNotLoaded = "tenant not loaded"
+	reasonNoPrompt        = "tenant has no prompt to supervise with"
 	reasonChannelLimit    = "tenant at channel limit"
 )
 
@@ -59,6 +61,9 @@ func noopRelease() {}
 // tenants for the lifetime of the process.
 type Admission struct {
 	prompts PromptSource
+	// routing lets a tenant count as "loaded" on the strength of its routing
+	// table alone. Optional: nil means only a prompt makes a tenant loaded.
+	routing RoutingSource
 
 	// defaultLimit is the per-tenant concurrency cap when no override applies.
 	defaultLimit int
@@ -75,12 +80,13 @@ type Admission struct {
 // clamped to 1 so a misconfiguration never silently admits unbounded calls.
 // overrides may be nil; a per-tenant override <= 0 is ignored (the default
 // applies) for the same reason.
-func NewAdmission(prompts PromptSource, defaultLimit int, overrides map[string]int) *Admission {
+func NewAdmission(prompts PromptSource, routing RoutingSource, defaultLimit int, overrides map[string]int) *Admission {
 	if defaultLimit <= 0 {
 		defaultLimit = 1
 	}
 	return &Admission{
 		prompts:      prompts,
+		routing:      routing,
 		defaultLimit: defaultLimit,
 		overrides:    overrides,
 		active:       make(map[string]int),
@@ -96,15 +102,45 @@ func (a *Admission) limitFor(tenant string) int {
 	return a.defaultLimit
 }
 
-// Admit runs preflight then attempts to acquire a channel slot for the call's
-// tenant. It is the single entry point group 7 calls before answering. It does
-// no I/O and never engages the model: a rejection here is final and pre-answer.
+// Preflight is the check that runs BEFORE deterministic resolution: is this call
+// attributable to a tenant this system knows at all? A tenant is loaded if it
+// has a prompt, a routing table, or both — a tenant with only a routing table
+// can be routed but not supervised, and that is a legitimate configuration.
+//
+// It takes no slot: nothing has been committed yet.
+func (a *Admission) Preflight(cc CallContext) AdmissionResult {
+	if a.tenantLoaded(cc.Tenant) {
+		return AdmissionResult{Admitted: true, Release: noopRelease}
+	}
+	return AdmissionResult{Admitted: false, Reason: reasonTenantNotLoaded, Release: noopRelease}
+}
+
+// tenantLoaded reports whether the system knows this tenant by either half of
+// its configuration.
+func (a *Admission) tenantLoaded(tenant string) bool {
+	if tenant == "" {
+		return false
+	}
+	if _, ok := a.prompts.TenantPrompt(tenant); ok {
+		return true
+	}
+	if a.routing != nil {
+		if _, ok := a.routing.TenantRouting(tenant); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// Admit is the gate at the hand-off to the supervisor: the tenant must have a
+// prompt to supervise with, and a channel slot must be free. It is reached only
+// after deterministic resolution declined the call, so everything it rejects is
+// a call that genuinely needed the model.
 func (a *Admission) Admit(cc CallContext) AdmissionResult {
-	// Preflight: the tenant must resolve to a loaded, non-empty prompt. The
-	// router already guarantees a non-empty tenant on its happy path, but
-	// admission re-checks rather than trust its caller.
+	// A tenant with no prompt cannot be supervised. Resolution has already had
+	// its chance, so this is the end of the road for the call.
 	if _, ok := a.prompts.TenantPrompt(cc.Tenant); !ok {
-		return AdmissionResult{Admitted: false, Reason: reasonTenantNotLoaded, Release: noopRelease}
+		return AdmissionResult{Admitted: false, Reason: reasonNoPrompt, Release: noopRelease}
 	}
 
 	// Channel limit: acquire a slot under the lock so the check-and-increment is
