@@ -240,11 +240,11 @@ func (s *callService) DialAndBridge(ctx context.Context, legA Leg, target string
 // --- Ring Group Support ---
 
 // DialParallel originates to every target at once and returns the first leg to
-// answer, cancelling the rest. It is the ring-group primitive: one round of a
+// answer, canceling the rest. It is the ring-group primitive: one round of a
 // group is one DialParallel call, so a single-member round is just the
 // degenerate case of the same code path.
 //
-// Losing legs are torn down two ways on purpose. Cancelling the shared dial
+// Losing legs are torn down two ways on purpose. Canceling the shared dial
 // context aborts anything still ringing, and any leg that answers inside the
 // race window — after a winner was picked but before its context died — is hung
 // up explicitly. Without the second path a caller could be left connected to a
@@ -350,7 +350,7 @@ func (s *callService) DialParallel(ctx context.Context, targets []*LookupResult,
 			continue
 		}
 		// Answered in the race window after a winner was already chosen.
-		slog.Info("[CallService] DialParallel cancelling late answer", "target", r.target, "winner", winnerTarget)
+		slog.Info("[CallService] DialParallel canceling late answer", "target", r.target, "winner", winnerTarget)
 		_ = r.leg.Hangup(context.Background(), TerminationCauseNormal)
 	}
 

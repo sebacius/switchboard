@@ -23,7 +23,7 @@ import (
 // scenarioRunner builds a runner whose executor is the real CallExecutor over a
 // real registry and policy, so tool authorization and disposition handling are
 // exercised rather than faked.
-func scenarioRunner(t *testing.T, chat llm.ChatClient, policy TenantPolicy, deps RegistryDeps) *Runner {
+func scenarioRunner(t *testing.T, chat llm.ChatClient, deps RegistryDeps) *Runner {
 	t.Helper()
 	if deps.Logger == nil {
 		deps.Logger = quietLogger()
@@ -33,7 +33,7 @@ func scenarioRunner(t *testing.T, chat llm.ChatClient, policy TenantPolicy, deps
 		Logger:  quietLogger(),
 		Prompts: StaticPrompts{"acme": "You are the Acme receptionist."},
 		BuildExecutor: func(cc CallContext) ToolExecutor {
-			p := NewPolicy(cc.Tenant, policy, quietLogger())
+			p := NewPolicy(cc.Tenant, TenantPolicy{}, quietLogger())
 			return NewCallExecutor(BuildRegistry(cc, p, deps), p, "")
 		},
 	})
@@ -48,7 +48,7 @@ func dialCall(target string) llm.ToolCall {
 
 // --- Scenario: silent internal forward (first-turn tool-only). ---
 //
-// The defining behaviour of the change: a staff member dialing an extension is
+// The defining behavior of the change: a staff member dialing an extension is
 // forwarded WITHOUT the supervisor answering, so the caller hears the real
 // phone ring instead of an AI greeting. If this test ever passes while
 // HasAnswered() is true, the AI has inserted itself into a call that did not
@@ -60,7 +60,7 @@ func TestSilentInternalForwardNeverAnswers(t *testing.T) {
 		Thinking:  "the caller wants extension 105, route it",
 		ToolCalls: []llm.ToolCall{dialCall("user/105")},
 	})
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	runner := scenarioRunner(t, chat, RegistryDeps{})
 	sess := newFakeSession()
 
 	if err := runWithTimeout(t, runner, sess, 2*time.Second); err != nil {
@@ -104,7 +104,7 @@ func TestIVRAnswerPathAnswersThenConverses(t *testing.T) {
 			ToolCalls: []llm.ToolCall{{Function: llm.ToolCallFunction{Name: "hangup"}}},
 		},
 	)
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	runner := scenarioRunner(t, chat, RegistryDeps{})
 	sess := newFakeSession()
 	sess.queueTranscript("I have a billing question")
 
@@ -140,7 +140,7 @@ func TestForwardThenCancelUnwindsCleanly(t *testing.T) {
 	chat := llm.NewScriptedClient(&llm.ChatResult{
 		ToolCalls: []llm.ToolCall{dialCall("user/105")},
 	})
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	runner := scenarioRunner(t, chat, RegistryDeps{})
 	sess := newFakeSession()
 	sess.forwardBlocks = true // the target rings and rings
 
@@ -167,14 +167,14 @@ func TestForwardThenCancelUnwindsCleanly(t *testing.T) {
 	}
 
 	if sess.HasAnswered() {
-		t.Fatal("a call cancelled during forwarding must never have been answered")
+		t.Fatal("a call canceled during forwarding must never have been answered")
 	}
 	if n := sess.hangupCalls.Load(); n != 1 {
 		t.Fatalf("expected teardown to hang up exactly once, got %d", n)
 	}
 }
 
-// --- Scenario: an orphaned B-leg is cancelled by teardown. ---
+// --- Scenario: an orphaned B-leg is canceled by teardown. ---
 //
 // This drives the REAL sessionImpl cleanup, not a fake: when the caller vanishes
 // mid-forward, the outbound leg we created must be hung up, or a phone keeps
@@ -188,13 +188,13 @@ func TestOrphanedBLegIsCancelledOnTeardown(t *testing.T) {
 	}
 	sess.setBLeg(leg)
 
-	sess.hangupBLeg("caller cancelled")
+	sess.hangupBLeg("caller canceled")
 
 	if n := leg.hangups.Load(); n != 1 {
 		t.Fatalf("expected the orphaned B-leg to be hung up once, got %d", n)
 	}
 	// A second teardown pass must not double-hangup: the leg handle is cleared.
-	sess.hangupBLeg("caller cancelled")
+	sess.hangupBLeg("caller canceled")
 	if n := leg.hangups.Load(); n != 1 {
 		t.Fatalf("B-leg cleanup must be idempotent, got %d hangups", n)
 	}
@@ -212,7 +212,7 @@ func TestParkedDispositionHoldsCallUntilCancel(t *testing.T) {
 		ToolCalls: []llm.ToolCall{{Function: llm.ToolCallFunction{Name: "park"}}},
 	})
 	park := &fakeParking{}
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{Parking: park})
+	runner := scenarioRunner(t, chat, RegistryDeps{Parking: park})
 	sess := newFakeSession()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -278,7 +278,7 @@ func TestAdmissionSlotReleasedOnceByTeardown(t *testing.T) {
 	chat := llm.NewScriptedClient(&llm.ChatResult{
 		ToolCalls: []llm.ToolCall{{Function: llm.ToolCallFunction{Name: "hangup"}}},
 	})
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	runner := scenarioRunner(t, chat, RegistryDeps{})
 	sess := newFakeSession()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -310,14 +310,14 @@ func TestCOSDenyOfExternalDialKeepsCallAlive(t *testing.T) {
 		// The model tries an external destination the tenant never allowed.
 		&llm.ChatResult{ToolCalls: []llm.ToolCall{dialCall("+18005551212")}},
 		// The deny result comes back as an actionable tool message, so the model
-		// gets an autonomous turn to recover. It apologises and ends the call.
+		// gets an autonomous turn to recover. It apologizes and ends the call.
 		&llm.ChatResult{
 			Content:   "I'm not able to place that call, sorry.",
 			ToolCalls: []llm.ToolCall{{Function: llm.ToolCallFunction{Name: "hangup"}}},
 		},
 	)
 	// External dialing disabled: the default, safest posture.
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	runner := scenarioRunner(t, chat, RegistryDeps{})
 	sess := newFakeSession()
 
 	if err := runWithTimeout(t, runner, sess, 2*time.Second); err != nil {
@@ -541,7 +541,7 @@ func TestInternalFirstTurnWithToolCallIsOneRoundTrip(t *testing.T) {
 	chat := llm.NewScriptedClient(&llm.ChatResult{
 		ToolCalls: []llm.ToolCall{dialCall("user/105")},
 	})
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	runner := scenarioRunner(t, chat, RegistryDeps{})
 	sess := newFakeSession()
 
 	if err := runWithTimeout(t, runner, sess, 2*time.Second); err != nil {
@@ -559,7 +559,7 @@ func TestInboundFirstTurnProseIsSpokenAsIs(t *testing.T) {
 		&llm.ChatResult{Content: "Thanks for calling Acme."},
 		&llm.ChatResult{ToolCalls: []llm.ToolCall{{Function: llm.ToolCallFunction{Name: "hangup"}}}},
 	)
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	runner := scenarioRunner(t, chat, RegistryDeps{})
 	sess := newFakeSession()
 	sess.queueTranscript("goodbye")
 
@@ -690,7 +690,7 @@ func TestChatFailureTellsTheCallerAndEndsDeliberately(t *testing.T) {
 	// A scripted client with no results errors on its very first call, which is
 	// what an unreachable Ollama looks like from here.
 	chat := llm.NewScriptedClient()
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	runner := scenarioRunner(t, chat, RegistryDeps{})
 	sess := newFakeSession()
 
 	if err := runWithTimeout(t, runner, sess, 2*time.Second); err != nil {
@@ -723,7 +723,7 @@ func TestChatFailureMidConversationEndsTheCall(t *testing.T) {
 		&llm.ChatResult{Content: "Thanks for calling Acme."},
 		// The script is exhausted from here, so the reactive turn errors.
 	)
-	runner := scenarioRunner(t, chat, TenantPolicy{}, RegistryDeps{})
+	runner := scenarioRunner(t, chat, RegistryDeps{})
 	sess := newFakeSession()
 	sess.queueTranscript("I need to speak to someone about a claim")
 

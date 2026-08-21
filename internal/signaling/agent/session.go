@@ -60,7 +60,7 @@ type CallSession interface {
 	Forward(ctx context.Context, target string, timeout time.Duration) error
 
 	// ForwardGroup is the pre-answer routing path for a ring group. Each round is
-	// dialed at once (first answer wins, the rest cancelled) and rounds are tried
+	// dialed at once (first answer wins, the rest canceled) and rounds are tried
 	// in order, each bounded by memberTimeout. Unlike Forward, exhausting every
 	// round returns ErrGroupNoAnswer WITHOUT relaying a failure to the caller —
 	// the call is left pre-answer so the group's no-answer outcome can still run.

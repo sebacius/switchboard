@@ -41,10 +41,10 @@ func groupTable() *RoutingTable {
 	}
 }
 
-// newResolution builds the real resolution layer over the given tenant policy.
+// newResolution builds the real resolution layer over a default-deny policy.
 // Every extension in groupTable is treated as registered so the tests exercise
-// authorization and ring behaviour rather than registration.
-func newResolution(t *testing.T, tenantPolicy TenantPolicy) *CallResolution {
+// authorization and ring behavior rather than registration.
+func newResolution(t *testing.T) *CallResolution {
 	t.Helper()
 	routing := StaticRouting{"acme": groupTable()}
 	return NewCallResolution(CallResolutionConfig{
@@ -52,7 +52,7 @@ func newResolution(t *testing.T, tenantPolicy TenantPolicy) *CallResolution {
 			resolverDirectory{"105": true, "106": true, "107": true, "150": true},
 			nil, quietLogger()),
 		BuildPolicy: func(cc CallContext) *Policy {
-			return NewPolicy(cc.Tenant, tenantPolicy, quietLogger())
+			return NewPolicy(cc.Tenant, TenantPolicy{}, quietLogger())
 		},
 		Logger: quietLogger(),
 	})
@@ -72,7 +72,7 @@ func newResolution(t *testing.T, tenantPolicy TenantPolicy) *CallResolution {
 // "resolved=false ... destination +18005551212 is not registered" and no INVITE
 // left the box.
 func TestResolvedExternalDestinationIsNeverDialedDeterministically(t *testing.T) {
-	res := newResolution(t, TenantPolicy{}) // default-deny external
+	res := newResolution(t) // default-deny external
 	sess := newFakeSession()
 
 	handled := res.Handle(context.Background(), sess, ptr(internalCall("400")))
@@ -87,7 +87,7 @@ func TestResolvedExternalDestinationIsNeverDialedDeterministically(t *testing.T)
 
 // The permitted case, so the deny above is not passing for the wrong reason.
 func TestResolvedInternalDestinationIsForwarded(t *testing.T) {
-	res := newResolution(t, TenantPolicy{})
+	res := newResolution(t)
 	sess := newFakeSession()
 
 	if !res.Handle(context.Background(), sess, ptr(internalCall("300"))) {
@@ -105,7 +105,7 @@ func TestResolvedInternalDestinationIsForwarded(t *testing.T) {
 
 // Sequential rings members in configured order, one per round.
 func TestSequentialGroupRingsInConfiguredOrder(t *testing.T) {
-	res := newResolution(t, TenantPolicy{})
+	res := newResolution(t)
 	sess := newFakeSession()
 
 	if !res.Handle(context.Background(), sess, ptr(internalCall("200"))) {
@@ -127,7 +127,7 @@ func TestSequentialGroupRingsInConfiguredOrder(t *testing.T) {
 // Round-robin starts at a different member on each successive call. Without the
 // advancing cursor the first member takes every call and the strategy is a lie.
 func TestRoundRobinAdvancesAcrossCalls(t *testing.T) {
-	res := newResolution(t, TenantPolicy{})
+	res := newResolution(t)
 
 	var firsts []string
 	for range 4 {
@@ -186,7 +186,7 @@ func TestRingGroupMembersAreAuthorizedIndividually(t *testing.T) {
 // The default: nobody answered, the call is still pre-answer and intact, so the
 // supervisor picks it up and can offer voicemail or another person.
 func TestGroupNoAnswerHandsToSupervisor(t *testing.T) {
-	res := newResolution(t, TenantPolicy{})
+	res := newResolution(t)
 	sess := newFakeSession()
 	sess.groupErr = ErrGroupNoAnswer
 
@@ -199,7 +199,7 @@ func TestGroupNoAnswerHandsToSupervisor(t *testing.T) {
 }
 
 func TestGroupNoAnswerForwardsToOperator(t *testing.T) {
-	res := newResolution(t, TenantPolicy{})
+	res := newResolution(t)
 	sess := newFakeSession()
 	sess.groupErr = ErrGroupNoAnswer
 
@@ -212,7 +212,7 @@ func TestGroupNoAnswerForwardsToOperator(t *testing.T) {
 }
 
 func TestGroupNoAnswerHangsUp(t *testing.T) {
-	res := newResolution(t, TenantPolicy{})
+	res := newResolution(t)
 	sess := newFakeSession()
 	sess.groupErr = ErrGroupNoAnswer
 
@@ -256,7 +256,7 @@ func TestGroupNoAnswerWithoutOperatorHandsOff(t *testing.T) {
 // Resolution makes no LLM request at all, so an outage is invisible to it. This
 // is the whole point of the change's failure story: the PBX keeps routing.
 func TestResolutionNeedsNoLLM(t *testing.T) {
-	res := newResolution(t, TenantPolicy{})
+	res := newResolution(t)
 	sess := newFakeSession()
 
 	// There is no chat client anywhere in this test — if resolution needed one,

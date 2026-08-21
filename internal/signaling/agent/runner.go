@@ -25,7 +25,7 @@ const (
 
 	// maxListenFailures bounds consecutive Listen errors before the runner gives
 	// up on the call. Listen failing repeatedly means the media path is broken
-	// (RTP session gone, ASR unreachable, the session's own scope cancelled) and
+	// (RTP session gone, ASR unreachable, the session's own scope canceled) and
 	// there is nothing left to supervise. Without this bound the producer would
 	// retry forever at listenFailureBackoff, spinning for the life of the call.
 	maxListenFailures = 5
@@ -101,7 +101,7 @@ type RunnerConfig struct {
 }
 
 // TeardownHook is a per-call cleanup the teardown funnel invokes exactly once,
-// inside the sync.Once, after the context tree is cancelled and before the
+// inside the sync.Once, after the context tree is canceled and before the
 // session is hung up. It is how resources owned OUTSIDE the runner — the
 // admission channel slot above all — are released on every exit path without
 // the runner having to know what they are.
@@ -159,7 +159,7 @@ type callRun struct {
 	// the first-turn discipline (design #11).
 	cc CallContext
 
-	// callCtx is the whole-call scope. Cancelling it (BYE/CANCEL/timeout/terminal
+	// callCtx is the whole-call scope. Canceling it (BYE/CANCEL/timeout/terminal
 	// tool) is the only shutdown signal; the events channel is never closed.
 	callCtx    context.Context
 	callCancel context.CancelFunc
@@ -189,8 +189,8 @@ type callRun struct {
 }
 
 // HandleCall supervises one call from the first turn through teardown. It owns
-// the call until callCtx is cancelled (by the caller, a terminal tool, a timeout,
-// or the parent cancelling callCtx). It returns nil on a clean end.
+// the call until callCtx is canceled (by the caller, a terminal tool, a timeout,
+// or the parent canceling callCtx). It returns nil on a clean end.
 func (r *Runner) HandleCall(callCtx context.Context, session CallSession, cc CallContext, hooks ...TeardownHook) error {
 	// Misconfiguration bails out before the teardown funnel exists, so these
 	// paths must release the caller's resources themselves. They are the worst
@@ -257,7 +257,7 @@ func (r *Runner) HandleCall(callCtx context.Context, session CallSession, cc Cal
 }
 
 // run executes the first-turn decision, then (if the call engaged media) starts
-// the speech producer and drains the event loop until callCtx is cancelled.
+// the speech producer and drains the event loop until callCtx is canceled.
 func (c *callRun) run() error {
 	// First-turn single-shot decision (decisions #8/#11): system + empty user
 	// message. This turn is reactive (it is the caller's INVITE), so it does not
@@ -294,7 +294,7 @@ func (c *callRun) run() error {
 
 	c.dispatchLoop()
 
-	// dispatchLoop only returns after teardown cancelled callCtx, which unblocks
+	// dispatchLoop only returns after teardown canceled callCtx, which unblocks
 	// the speech producer's Listen. Wait for it so HandleCall never leaks the
 	// producer goroutine (decision #5 / the "no goroutine leak" guarantee).
 	c.teardownWG.Wait()
@@ -308,7 +308,7 @@ func (c *callRun) dispatchLoop() {
 	for {
 		select {
 		case <-c.callCtx.Done():
-			c.teardown("ctx-cancelled")
+			c.teardown("ctx-canceled")
 			return
 		case ev := <-c.events:
 			// A caller event is reactive: reset the runaway counter (decision #12).
@@ -332,7 +332,7 @@ func (c *callRun) dispatchLoop() {
 // against the runaway breaker.
 //
 // The only thing the first turn does differently is get a larger budget, passed
-// in by the caller. It no longer has a behavioural special case: the corrective
+// in by the caller. It no longer has a behavioral special case: the corrective
 // re-prompt that used to live here patched a decision the model should never
 // have been making, and that call is now resolved deterministically before the
 // runner is started at all.
@@ -571,8 +571,8 @@ func (c *callRun) speechLoop() {
 			// session's own scope: the leg is gone, so end the call rather than
 			// retrying into a dead session.
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				c.log.Info("listen cancelled by the session scope, ending call", "error", err)
-				c.teardown("listen-cancelled")
+				c.log.Info("listen canceled by the session scope, ending call", "error", err)
+				c.teardown("listen-canceled")
 				return
 			}
 
@@ -608,7 +608,7 @@ func (c *callRun) speechLoop() {
 
 // sendEvent pushes an event ctx-safely (decision #5): it never blocks past
 // callCtx cancellation, so a producer never deadlocks after the consumer exits.
-// Returns false if the call was cancelled.
+// Returns false if the call was canceled.
 func (c *callRun) sendEvent(ev Event) bool {
 	select {
 	case c.events <- ev:

@@ -124,7 +124,7 @@ func NewPolicy(tenant string, cfg TenantPolicy, log *slog.Logger) *Policy {
 // emitted through the normal dial tool. It resolves the symbol deterministically
 // and runs the resolved target through the full COS. It returns the resolved
 // concrete target (empty on deny) and the Decision. The model can never express
-// a raw external number here — an unrecognised symbol that is not an internal
+// a raw external number here — an unrecognized symbol that is not an internal
 // "user/..." target is denied, which is what makes capability narrowing real.
 func (p *Policy) AuthorizeDial(symbolicTarget string) (resolvedTarget string, d Decision) {
 	target := strings.TrimSpace(symbolicTarget)

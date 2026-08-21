@@ -203,7 +203,7 @@ func (s *sessionImpl) completeForward(ctx context.Context, bLeg b2bua.Leg, targe
 }
 
 // ForwardGroup rings a ring group pre-answer. Each round is dialed at once
-// (first answer wins, the rest are cancelled) and rounds are tried in order,
+// (first answer wins, the rest are canceled) and rounds are tried in order,
 // each bounded by memberTimeout.
 //
 // The critical difference from Forward: a group that nobody answers returns
@@ -349,8 +349,8 @@ func (s *sessionImpl) hangupBLeg(reason string) {
 	if leg == nil {
 		return
 	}
-	s.logger.Info("[Session] Cancelling orphaned B-leg", "call_id", s.callID, "leg_id", leg.ID(), "reason", reason)
-	// Use a background context: the call context is already cancelled by the
+	s.logger.Info("[Session] Canceling orphaned B-leg", "call_id", s.callID, "leg_id", leg.ID(), "reason", reason)
+	// Use a background context: the call context is already canceled by the
 	// time teardown runs, and the CANCEL/BYE still has to go out on the wire.
 	if err := leg.Hangup(context.Background(), b2bua.TerminationCauseNormal); err != nil {
 		s.logger.Warn("[Session] B-leg hangup failed", "call_id", s.callID, "error", err)

@@ -58,7 +58,7 @@ func TestPromptStoreCombinesSettingsAndTenant(t *testing.T) {
 
 // The "no default tenant" rule, at the prompt layer: a tenant with no file of
 // its own must NOT inherit settings.md and become admissible. If it did, any
-// unrecognised subdomain would get a working generic receptionist.
+// unrecognized subdomain would get a working generic receptionist.
 func TestPromptStoreUnknownTenantNeverInheritsSettings(t *testing.T) {
 	settingsDir, tenantsDir := promptTree(t, "GLOBAL RULES", map[string]string{"acme": "ACME"})
 

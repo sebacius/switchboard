@@ -1,5 +1,5 @@
 // Command agent-smoke drives the REAL call supervisor against a REAL Ollama
-// server with a fake CallSession, so the model's behaviour can be exercised
+// server with a fake CallSession, so the model's behavior can be exercised
 // without SIP, RTP, ASR, or TTS.
 //
 // It is the spike rig for the open question in the design: does qwen3 keep its

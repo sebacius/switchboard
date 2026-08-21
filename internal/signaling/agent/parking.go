@@ -186,7 +186,7 @@ func watchUnparkedBridge(sess CallSession, parked *parking.ParkSlot, bridgeID st
 		parkerHungUp = true
 	}
 
-	// Use a background context: the losing side's context is already cancelled
+	// Use a background context: the losing side's context is already canceled
 	// but the unbridge still has to reach the RTP manager.
 	if err := transport.UnbridgeMedia(context.Background(), bridgeID); err != nil {
 		logger.Warn("[Agent] Failed to unbridge unparked call", "bridge_id", bridgeID, "error", err)
