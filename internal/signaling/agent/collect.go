@@ -72,6 +72,13 @@ func (r CollectResult) TimedOut() bool {
 		r.Reason == CollectNoInput
 }
 
+// ClassifyDialError maps a dial failure onto a typed outcome. Exported so the
+// flow engine can classify a post-answer bridge, which returns a plain error
+// where the pre-answer path returns an outcome.
+func ClassifyDialError(target string, err error) DialOutcome {
+	return classifyDialError(target, err)
+}
+
 // CollectDigits plays a prompt and collects digits.
 func (s *sessionImpl) CollectDigits(ctx context.Context, req CollectRequest) (CollectResult, error) {
 	s.mu.Lock()

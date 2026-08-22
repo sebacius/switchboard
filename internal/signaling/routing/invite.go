@@ -32,7 +32,7 @@ type InviteHandler struct {
 	sessionRecorder SessionRecorder
 	router          *agent.Router
 	admission       *agent.Admission
-	resolution      *agent.CallResolution
+	resolution      CallRouter
 	operatorFor     func(agent.CallContext) string
 	locStore        location.LocationStore
 	callService     b2bua.CallService
@@ -49,7 +49,7 @@ func NewInviteHandler(
 	sessionRecorder SessionRecorder,
 	callRouter *agent.Router,
 	admission *agent.Admission,
-	resolution *agent.CallResolution,
+	resolution CallRouter,
 	operatorFor func(agent.CallContext) string,
 	locStore location.LocationStore,
 	callService b2bua.CallService,
@@ -233,6 +233,16 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	// already dispatches every request on its own goroutine
 	// (transaction_layer.go: "go txl.handleRequest(msg)").
 	h.routeCall(dlg, session, cc)
+}
+
+// CallRouter is whatever decides where a call goes. It returns true when it has
+// taken the call and the call is finished.
+//
+// The contract is the important half: an implementation BLOCKS for the life of
+// the call, because sipgo terminates the transaction when this handler returns
+// and a terminated transaction silently swallows every later response.
+type CallRouter interface {
+	Handle(ctx context.Context, sess agent.CallSession, cc *agent.CallContext) bool
 }
 
 // operatorDialTimeout bounds the fallback forward to the tenant operator. A

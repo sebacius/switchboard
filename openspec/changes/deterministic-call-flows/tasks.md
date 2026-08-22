@@ -82,16 +82,16 @@
 
 ## 10. The flow engine
 
-- [ ] 10.1 Create `internal/signaling/flow/`; `Cursor` with current node, digit buffer, per-node retry counts, hop list, and deadline
-- [ ] 10.2 Nested budgets `flowCtx ⊃ nodeCtx ⊃ playCtx`, with `flowCtx` derived from `dlg.Context()`; `maxHops` backstop
-- [ ] 10.3 `Engine.Handle(ctx, sess, cc) bool` keeping `CallResolution.Handle`'s exact contract and blocking on the SIP transaction goroutine
-- [ ] 10.4 `*7XX` retrieval as the first branch, before entry-mapping patterns, with the internal-only guard intact
-- [ ] 10.5 Media nodes `tts` and `play_audio`; answer at the top of every media node
-- [ ] 10.6 `ivr` node: prompt-and-collect, digit exits, `timeout`/`invalid`/`retries_exceeded`, retries bounded inside the node
-- [ ] 10.7 `dial_user` and `dial_external` nodes over `ForwardOutcome`/`ForwardGroupOutcome`; pre-answer forwards, post-answer bridges; every target through `Policy`
-- [ ] 10.8 `transfer` (blind) and `hangup` nodes; `hangup` relays its cause when the call is unanswered
-- [ ] 10.9 Release the cursor on every teardown path including mid-menu abandonment
-- [ ] 10.10 One fake session in `flow/flowtest` — not a fourth variant
+- [x] 10.1 Create `internal/signaling/flow/`; `Cursor` with current node, digit buffer, per-node retry counts, hop list, and deadline
+- [x] 10.2 Nested budgets `flowCtx ⊃ nodeCtx ⊃ playCtx`, with `flowCtx` derived from `dlg.Context()`; `maxHops` backstop
+- [x] 10.3 `Engine.Handle(ctx, sess, cc) bool` keeping `CallResolution.Handle`'s exact contract and blocking on the SIP transaction goroutine
+- [x] 10.4 `*7XX` retrieval as the first branch, before entry-mapping patterns, with the internal-only guard intact
+- [x] 10.5 Media nodes `tts` and `play_audio`; answer at the top of every media node
+- [x] 10.6 `ivr` node: prompt-and-collect, digit exits, `timeout`/`invalid`/`retries_exceeded`, retries bounded inside the node
+- [x] 10.7 `dial_user` and `dial_external` nodes over `ForwardOutcome`/`ForwardGroupOutcome`; pre-answer forwards, post-answer bridges; every target through `Policy`
+- [x] 10.8 `transfer` (blind) and `hangup` nodes; `hangup` relays its cause when the call is unanswered
+- [x] 10.9 Release the cursor on every teardown path including mid-menu abandonment
+- [x] 10.10 One fake session in `flow/flowtest` — not a fourth variant
 
 ## 11. Validator
 
@@ -121,7 +121,7 @@
 
 ## 14. Wire it up
 
-- [ ] 14.1 Swap `resolution.Handle` for `flow.Engine.Handle` in `invite.go`; delete `resolver.go` and `resolution_exec.go` in the same commit
+- [x] 14.1 Swap `resolution.Handle` for `flow.Engine.Handle` in `invite.go`; delete `resolver.go` and `resolution_exec.go` in the same commit
 - [ ] 14.2 Construct the engine in `app.go` with the routing store, policy builder, parking service, and CDR sink
 - [ ] 14.3 Ship an example `resources/tenants/devtenant.flows.json` exercising every node type
 

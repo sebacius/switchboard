@@ -212,6 +212,7 @@ func checkFlow(tenant, base string, table *RoutingTable, flow *FlowDef) Problems
 			ps = append(ps, Problem{tenant, path, "node is null", SeverityError})
 			continue
 		}
+		node.ID = id
 		if !KnownNodeType(node.Type) {
 			ps = append(ps, Problem{tenant, path + ".type", fmt.Sprintf(
 				"unknown node type %q (want one of %s)", node.Type, strings.Join(NodeTypes(), ", ")),

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // A flow is a directed graph of nodes that routes a call without a language
@@ -225,23 +226,41 @@ type HangupEntry struct {
 // LOAD, never per call, so a malformed entry is a startup error rather than a
 // surprise three menus deep.
 type Node struct {
+	// ID is the node's key in the flow, filled in at load so a node can be
+	// identified from the node alone.
+	ID string `json:"-"`
+
 	Type  NodeType          `json:"type"`
 	Entry json.RawMessage   `json:"entry,omitempty"`
 	Exits map[string]string `json:"exits,omitempty"`
 
-	// entry holds the decoded entry. It is set by decodeEntry during load and is
-	// read by the executor without further parsing.
-	entry any
+	// entry holds the decoded entry. Decoding happens at load so a malformed
+	// entry is a startup error rather than a surprise three menus deep.
+	entry     any
+	entryOnce sync.Once
 }
 
-// DecodedEntry returns the type-specific entry decoded at load.
-func (n *Node) DecodedEntry() any { return n.entry }
+// DecodedEntry returns the type-specific entry.
+//
+// It decodes on demand if the load path has not already done so. That path
+// always validates, and validation decodes — but a Node is an exported type and
+// a caller who builds one directly should get a working node rather than one
+// that silently does nothing.
+func (n *Node) DecodedEntry() any {
+	if n.entry == nil {
+		n.entryOnce.Do(func() { _ = n.decodeEntry() })
+	}
+	return n.entry
+}
 
 // decodeEntry decodes Entry into the struct for this node's type, rejecting
 // unknown fields. DisallowUnknownFields is the point: without it a typo like
 // "timout_ms" defaults the real field to zero, and a menu that should wait five
 // seconds silently waits none.
 func (n *Node) decodeEntry() error {
+	if n.entry != nil {
+		return nil
+	}
 	target, err := entryTarget(n.Type)
 	if err != nil {
 		return err

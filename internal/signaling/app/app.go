@@ -16,6 +16,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/drain"
 	"github.com/sebas/switchboard/internal/signaling/filemanager"
+	"github.com/sebas/switchboard/internal/signaling/flow"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 	"github.com/sebas/switchboard/internal/signaling/parking"
@@ -259,7 +260,11 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 
 	// A call with exactly one correct destination — a registered extension, a
 	// *7XX pickup, a mapped DID, a ring group — is executed directly.
-	callResolution := agent.NewCallResolution(agent.CallResolutionConfig{
+	// The flow engine routes every call: single-hop destinations directly, and
+	// anything mapped to a flow through its graph.
+	flowEngine := flow.New(flow.Config{
+		Routing:     routingStore,
+		Flows:       routingStore,
 		Resolver:    agent.NewResolver(routingStore, directory, parkService, slog.Default()),
 		Parking:     parkService,
 		BuildPolicy: buildPolicy,
@@ -275,7 +280,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		apiServer,
 		callRouter,
 		admission,
-		callResolution,
+		flowEngine,
 		operatorFor,
 		locStore,
 		callService,
@@ -343,7 +348,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	uas.OnRequest(sip.CANCEL, proxy.handleCANCEL)
 	uas.OnRequest(sip.INFO, proxy.handleINFO)
 
-	slog.Info("SIP handlers registered", "methods", "REGISTER, INVITE, BYE, ACK, CANCEL")
+	slog.Info("SIP handlers registered", "methods", "REGISTER, INVITE, BYE, ACK, CANCEL, INFO")
 	slog.Info("Configuration", "port", cfg.Port, "bind", cfg.BindAddr, "realm", realm)
 
 	return proxy, nil
