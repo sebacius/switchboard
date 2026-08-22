@@ -23,7 +23,11 @@
     "engineering": "group/engineering"
   },
 
-  "dids": {},
+  "_comment_dids": "Step TWO for an inbound call: what HAPPENS to a call to this number. Step one — which tenant owns it — already happened in resources/config/routes.json, which is why the same number appears in both files answering different questions. A number routed here by step one but absent from this map is still OUR call; it simply matches nothing and reaches the operator.",
+  "dids": {
+    "+15558001200": "flow/main-ivr",
+    "+15558001201": "group/engineering"
+  },
 
   "groups": {
     "engineering": {

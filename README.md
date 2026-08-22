@@ -369,11 +369,11 @@ docker run -d --name piper-tts -p 8000:8000 ghcr.io/matatonic/openedai-speech
 
 | File | Purpose |
 | --- | --- |
-| `resources/tenants/<name>.routing.json` | Entry mapping (patterns + literals), extensions, DIDs, ring groups, operator, and the symbolic names that are externally dialable |
+| `resources/tenants/<name>.routing.json` | Entry mapping (patterns + literals), extensions, DIDs (**what happens** to a call to a number this tenant owns), ring groups, operator, and the symbolic names that are externally dialable |
 | `resources/tenants/<name>.flows.json` | Flow graphs: menus, prompts, transfers. Optional |
 | `resources/config/policy.json` | Class of Service and capacity only: channel limits, external allowlist, barred prefixes, spend breaker. A leftover `symbolic_targets` key is a hard startup error — it belongs in the routing file |
 | `resources/config/trunk_peers.json` | SIP trunk peers — the ingress gate matches inbound INVITEs against these |
-| `resources/config/routes.json` | DID → tenant mapping for inbound calls |
+| `resources/config/routes.json` | **Whose** number is this — DID → tenant, global and not tenant-editable. What then happens to the call is the tenant's `dids` block |
 
 ## Vision & Roadmap
 

@@ -115,7 +115,7 @@ type RoutingTable struct {
 	// in code — a test fixture, say — match correctly without a load path.
 	compileOnce  sync.Once
 	extensionMap *DigitMap
-	didMap       *DigitMap
+	didMap       *DIDMap
 }
 
 // ensureCompiled builds the digit maps if the table was constructed directly
@@ -128,7 +128,7 @@ func (t *RoutingTable) ensureCompiled() {
 			t.extensionMap, _ = CompileDigitMap(t.Extensions)
 		}
 		if t.didMap == nil {
-			t.didMap, _ = CompileDigitMap(t.DIDs)
+			t.didMap, _ = CompileDIDMap(t.DIDs)
 		}
 	})
 }
@@ -155,9 +155,9 @@ func (t *RoutingTable) MatchExtensionWithDigits(dialed string) (string, string, 
 
 // MatchDID resolves an inbound DID against the tenant's DID mapping.
 //
-// Carriers are inconsistent about the leading '+', so the lookup tries both
-// forms. A tenant writing its table one way while its carrier signals the other
-// would otherwise fail to route every inbound call it owns.
+// The '+'-tolerance and pattern support live in DIDMap, which the trunk-level
+// DID -> tenant table uses too, so the two lookups a DID passes through cannot
+// disagree about whether a number matches.
 func (t *RoutingTable) MatchDID(dialed string) (string, bool) {
 	if t == nil {
 		return "", false
@@ -174,14 +174,7 @@ func (t *RoutingTable) MatchDIDWithDigits(dialed string) (string, string, bool) 
 		return "", "", false
 	}
 	t.ensureCompiled()
-
-	if dest, digits, ok := t.didMap.LookupWithDigits(dialed); ok {
-		return dest, digits, true
-	}
-	if alt, ok := togglePlus(dialed); ok {
-		return t.didMap.LookupWithDigits(alt)
-	}
-	return "", "", false
+	return t.didMap.LookupWithDigits(dialed)
 }
 
 // togglePlus returns the other E.164 form of a number: "+1555..." <-> "1555...".
@@ -203,7 +196,7 @@ func (t *RoutingTable) compile(tenant string) error {
 	if err != nil {
 		return fmt.Errorf("tenant %s: extensions: %w", tenant, err)
 	}
-	dids, err := CompileDigitMap(t.DIDs)
+	dids, err := CompileDIDMap(t.DIDs)
 	if err != nil {
 		return fmt.Errorf("tenant %s: dids: %w", tenant, err)
 	}

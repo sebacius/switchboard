@@ -215,6 +215,55 @@ the problems attached and never reaches disk.
 | `--trunk-config` | `TRUNK_CONFIG` | resources/config/trunk_peers.json | SIP trunk peers |
 | `--routes-path` | `ROUTES_PATH` | resources/config/routes.json | DID → tenant mapping |
 
+An inbound DID is looked up **twice**, and the two lookups answer different
+questions:
+
+| Step | File | Question | Who may edit it |
+|------|------|----------|-----------------|
+| 1 | `routes.json` | **Whose** number is this? DID → tenant | operator only, global |
+| 2 | `<tenant>.routing.json` → `dids` | **What happens** to a call to it? DID → destination | the tenant |
+
+They are separate files for a reason worth keeping. A tenant can edit its own
+routing table through the config API, so if tenants declared their own DIDs, one
+could add another tenant's number and start receiving their calls. The
+number-to-tenant binding lives where no tenant can write it.
+
+```json
+// routes.json — step 1: the number belongs to devtenant
+{ "dids": { "+15558001200": "devtenant", "+1555800XXXX": "devtenant" } }
+
+// devtenant.routing.json — step 2: what devtenant does with it
+"dids": {
+  "+15558001200": "flow/main-ivr",
+  "+15558001201": "group/engineering"
+}
+```
+
+A call to `+15558001200` from a trunk peer is attributed to `devtenant` by step
+1, then enters the main menu by step 2. A call to `+15558009999` is still
+*devtenant's* call — the block in step 1 says so — but matches nothing in step 2,
+so it reaches the tenant operator.
+
+Both steps use the same matcher, so they cannot disagree about whether a number
+matches:
+
+- **Either E.164 form works.** A carrier signalling `15558001200` finds a route
+  written `+15558001200`. Which form a given trunk sends is not something the
+  operator writing this file can know in advance.
+- **Patterns work**, so owning a block is one line rather than ten thousand.
+- **The most specific claim wins**, so carving one number out of a block and
+  handing it to a different tenant works as expected.
+- **Two claims that overlap with neither more specific fail at startup**, naming
+  both tenants. Whose calls those are would otherwise be undefined.
+
+`switchboard-signaling validate` cross-checks the two files: a DID routing to a
+tenant that has no routing file is an **error** (such a call is attributed to a
+tenant that does not exist and rejected with 404), and a tenant handling a
+literal DID that `routes.json` does not send it is a **warning** — it will never
+receive a call on that number. Tenants whose DID keys are patterns are not
+cross-checked, because deciding whether one pattern contains another is a harder
+problem than the warning is worth.
+
 ### Policy Configuration
 
 `policy.json` is the deterministic authorization boundary — configuration cannot

@@ -1,5 +1,12 @@
 {
+  "_comment": "Step ONE of two for an inbound call: WHOSE number is this? This file maps a dialed number to the tenant that owns it, and nothing more. What then happens to the call is step two, and belongs to that tenant: see the 'dids' block in resources/tenants/<tenant>.routing.json.",
+
+  "_comment_why_separate": "The two steps live in different files because a tenant can edit its own routing table through the config API. If tenants declared their own DIDs, one could add another's number and start receiving their calls. This binding lives where no tenant can write it.",
+
+  "_comment_matching": "Keys are literals or digit-map patterns (X=0-9, N=2-9, Z=1-9, [2-8] sets). Both E.164 forms match, so a carrier signalling 15558001200 finds a route written +15558001200. The most specific match wins, so a literal carved out of a block is how you hand one number to a different tenant. Two claims that overlap with neither more specific is a startup error, because whose calls those are would be undefined.",
+
   "dids": {
-    "+15551234567": "acme_support"
+    "+15558001200": "devtenant",
+    "+1555800XXXX": "devtenant"
   }
 }

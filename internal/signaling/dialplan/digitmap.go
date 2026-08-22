@@ -476,14 +476,27 @@ func CompileDigitMap(raw map[string]Entry) (*DigitMap, error) {
 			if a.Dominates(b) || b.Dominates(a) {
 				continue
 			}
-			return nil, fmt.Errorf(
-				"patterns %q and %q can match the same digits and neither is more specific, "+
-					"so which one wins is undefined; make one of them narrower",
-				a.Raw(), b.Raw())
+			return nil, &AmbiguousPatternsError{A: a.Raw(), B: b.Raw()}
 		}
 	}
 
 	return m, nil
+}
+
+// AmbiguousPatternsError reports two patterns that can match the same input
+// with neither more specific.
+//
+// It is a typed error so a caller can say something more useful than the
+// generic message: a DID table knows that the two patterns are two TENANTS
+// claiming the same number, which is what the operator actually needs told.
+type AmbiguousPatternsError struct {
+	A, B string
+}
+
+func (e *AmbiguousPatternsError) Error() string {
+	return fmt.Sprintf(
+		"patterns %q and %q can match the same digits and neither is more specific, "+
+			"so which one wins is undefined; make one of them narrower", e.A, e.B)
 }
 
 // Lookup returns the destination for a dialed string: the most specific match,

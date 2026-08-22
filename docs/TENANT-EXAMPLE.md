@@ -9,6 +9,11 @@ split between them is the whole design:
 | `resources/tenants/<tenant>.flows.json` | **Behaviour** — menus, prompts, transfers, conditional dialling | the flow engine |
 | `resources/config/policy.json` → `tenants.<tenant>` | **Authorization** — what is permitted, never what a name means | the policy layer, on every dial |
 
+One more file matters for inbound calls, and it is deliberately **not** a tenant
+file: `resources/config/routes.json` says which tenant a number belongs to. See
+§0 below — the fact that the same number appears in two files, answering two
+different questions, is the part that most often confuses people.
+
 Keeping them apart is what makes the system safe and predictable:
 
 - The flow graph is **data, never authority**. Every destination it produces —
@@ -27,6 +32,61 @@ all before the call is answered.
 
 This example is documentation; it is not loaded by anything. `resources/tenants/`
 ships only `devtenant`, a smaller fixture for local testing.
+
+---
+
+## 0. Whose number is it? — `routes.json`
+
+An inbound DID is looked up **twice**, and the two lookups answer different
+questions. This is the single most confusing thing in the configuration until
+you see it stated plainly:
+
+| Step | File | Question | Who may edit it |
+|---|---|---|---|
+| 1 | `resources/config/routes.json` | **Whose** number is this? DID → tenant | operator only, global |
+| 2 | `<tenant>.routing.json` → `dids` | **What happens** to a call to it? DID → destination | the tenant |
+
+They are separate files because a tenant can edit its own routing table through
+the config API. If tenants declared their own DIDs, tenant A could add tenant
+B's number to its own file and start receiving B's calls. The number-to-tenant
+binding has to live where no tenant can write it. The apparent redundancy **is**
+the security property.
+
+```jsonc
+// resources/config/routes.json — step 1, and nothing more
+{
+  "dids": {
+    "+15558001200": "acme",       // one number
+    "+1555800XXXX": "acme"        // ...and the block it sits in
+  }
+}
+```
+
+The tenant then decides what to do with the numbers it owns, in §1's `dids`
+block. Following one call through both steps:
+
+```
+INVITE from a trunk peer, To: +15558001200
+  step 1  routes.json          -> tenant "acme"          (unmapped -> 603 Declined)
+  step 2  acme.routing.json    -> "flow/main-ivr"        (unmatched -> the operator)
+          the flow runs
+```
+
+A call to `+15558009999` is still **acme's** call — the block in step 1 says so —
+but matches nothing in step 2, so it reaches acme's operator rather than being
+declined. That difference is exactly why the two steps are not one table.
+
+Both steps use the same matcher, so they cannot disagree about whether a number
+matches. Either E.164 form works, because a carrier signalling `15558001200`
+must find a route written `+15558001200` — which form a given trunk sends is not
+something you can know when you write the file. Patterns work, so a block is one
+line. The most specific claim wins, so carving a single number out of a block
+and handing it to another tenant does what you would expect. And two claims that
+overlap with neither more specific **fail at startup naming both tenants**,
+because whose calls those are would otherwise be undefined.
+
+`switchboard-signaling validate` cross-checks the two files in both directions —
+see §4.
 
 ---
 
@@ -78,9 +138,11 @@ This is the reference: every routing feature appears here.
     "answering-service": "+15558009999"
   },
 
-  // Inbound DID -> destination WITHIN this tenant. The DID -> tenant step
-  // happened earlier, in routes.json. Both "+1555..." and "1555..." match,
-  // because carriers are inconsistent about the leading plus.
+  // Step 2: inbound DID -> destination WITHIN this tenant. Step 1 — which
+  // tenant owns the number — already happened in routes.json, which is why the
+  // same number appears in both files. Both "+1555..." and "1555..." match.
+  // A number routed here by step 1 but absent from this map is still OUR call;
+  // it simply matches nothing and reaches the operator.
   "dids": {
     "+15558001200": "flow/main-ivr",
     "+15558001250": "group/claims",
@@ -359,7 +421,7 @@ spend the tenant's daily budget.
 ## 4. Checking it before a caller does
 
 ```bash
-# Every problem at once, each with its path.
+# Every problem at once, each with its path. Also cross-checks routes.json.
 switchboard-signaling validate --routing-path resources/tenants
 
 # Walk a flow against a fake call and print the traversal.
@@ -381,6 +443,20 @@ outcome: answered
 The same traversal is written to the call record when `--cdr-path` is set, which
 is what makes "why did this caller end up with the operator" answerable after the
 fact rather than a matter of speculation.
+
+`validate` also cross-checks the two DID steps against each other:
+
+```
+error:   DID "+15551234567" routes to tenant "ghost", which has no routing file;
+         a call to this number would be attributed to a tenant that does not
+         exist and rejected with 404
+warning: tenant handles DID "+15558001200" but routes.json does not route that
+         number to it, so no call will ever arrive on it
+```
+
+The first is an error because the call fails. The second is a warning because
+the configuration still loads — but it catches the likeliest mistake there is:
+adding a number to the tenant file and forgetting the global one.
 
 ---
 

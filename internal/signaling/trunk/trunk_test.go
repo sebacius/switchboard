@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"github.com/emiago/sipgo/sip"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 func TestMatchInbound(t *testing.T) {
@@ -93,5 +96,97 @@ func TestApplyTenantIdentity(t *testing.T) {
 	}
 	if hdr.Value() != "acme" {
 		t.Fatalf("%s = %q, want %q", DefaultTenantHeader, hdr.Value(), "acme")
+	}
+}
+
+// The bug this exists to prevent: the gate declined a call the tenant's own
+// table would have matched, because the two layers disagreed about whether a
+// leading '+' was required. A carrier that signals "15558001200" against a
+// "+15558001200" route got 603 at the door.
+func TestTenantForDIDToleratesTheLeadingPlus(t *testing.T) {
+	routes := NewDIDRoutes(map[string]string{
+		"+15558001200": "acme",
+		"15558009999":  "beta", // written the other way round
+	})
+
+	cases := map[string]string{
+		"+15558001200": "acme", // as written
+		"15558001200":  "acme", // carrier omitted the +
+		"15558009999":  "beta", // as written
+		"+15558009999": "beta", // carrier added a +
+	}
+	for did, want := range cases {
+		got, ok := routes.TenantForDID(did)
+		if !ok {
+			t.Errorf("TenantForDID(%q) found nothing, want %q", did, want)
+			continue
+		}
+		if got != want {
+			t.Errorf("TenantForDID(%q) = %q, want %q", did, got, want)
+		}
+	}
+}
+
+// Owning a block of numbers should be one line, not ten thousand.
+func TestTenantForDIDMatchesABlock(t *testing.T) {
+	routes := NewDIDRoutes(map[string]string{"+1555800XXXX": "acme"})
+
+	for _, did := range []string{"+15558000000", "+15558001200", "+15558009999"} {
+		if tenant, ok := routes.TenantForDID(did); !ok || tenant != "acme" {
+			t.Errorf("TenantForDID(%q) = %q/%v, want acme", did, tenant, ok)
+		}
+	}
+	// Outside the block nobody owns it.
+	if _, ok := routes.TenantForDID("+15558010000"); ok {
+		t.Error("a number outside the block must not resolve")
+	}
+}
+
+// A specific number can be carved out of a block someone else owns, because
+// specificity is computed rather than declared.
+func TestSpecificDIDBeatsABlock(t *testing.T) {
+	routes := NewDIDRoutes(map[string]string{
+		"+1555800XXXX": "acme",
+		"+15558001200": "beta",
+	})
+
+	if tenant, _ := routes.TenantForDID("+15558001200"); tenant != "beta" {
+		t.Errorf("the literal should win, got %q", tenant)
+	}
+	if tenant, _ := routes.TenantForDID("+15558001201"); tenant != "acme" {
+		t.Errorf("the block should own the rest, got %q", tenant)
+	}
+}
+
+// Two tenants claiming the same numbers with neither claim more specific means
+// whose calls these are is undefined. That is a startup error, not a coin toss.
+func TestOverlappingClaimsFailToLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "routes.json")
+	body := `{"dids":{"+1555NXX1200":"acme","+1555800XXXX":"beta"}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	_, err := LoadRoutes(path)
+	if err == nil {
+		t.Fatal("two overlapping claims must fail the load")
+	}
+	for _, want := range []string{"acme", "beta"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error should name both claimants, missing %q: %v", want, err)
+		}
+	}
+}
+
+// A missing routes.json means nothing is routed inbound, which is the safe
+// posture — not a startup failure.
+func TestMissingRoutesFileRejectsEveryDID(t *testing.T) {
+	routes, err := LoadRoutes(filepath.Join(t.TempDir(), "absent.json"))
+	if err != nil {
+		t.Fatalf("a missing routes file must not be an error: %v", err)
+	}
+	if _, ok := routes.TenantForDID("+15558001200"); ok {
+		t.Error("with no routes table, every DID must be unmapped")
 	}
 }

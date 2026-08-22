@@ -23,6 +23,16 @@ func writeConfig(t *testing.T, routing, flows string) string {
 	return dir
 }
 
+// writeRoutes lays out a DID -> tenant table.
+func writeRoutes(t *testing.T, dir, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, "routes.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
+	return path
+}
+
 func writePolicy(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "policy.json")
@@ -110,5 +120,122 @@ func TestMissingDirectoryIsAnError(t *testing.T) {
 
 	if code := Run([]string{"--routing-path", "/nonexistent", "--policy-config", policy}, &out); code != ExitProblem {
 		t.Fatalf("exit = %d, want %d", code, ExitProblem)
+	}
+}
+
+// The bug that shipped: routes.json pointed at a tenant nobody had configured,
+// and the only sign was a 404 on a real call.
+func TestDIDRoutingToAMissingTenantIsAnError(t *testing.T) {
+	dir := writeConfig(t,
+		`{"operator":"user/100","extensions":{"100":"user/100"}}`, "")
+	routes := writeRoutes(t, dir, `{"dids":{"+15551234567":"ghost"}}`)
+	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+
+	var out bytes.Buffer
+	code := Run([]string{
+		"--routing-path", dir, "--policy-config", policy, "--routes-path", routes,
+	}, &out)
+
+	if code != ExitProblem {
+		t.Fatalf("exit = %d, want %d. output:\n%s", code, ExitProblem, out.String())
+	}
+	text := out.String()
+	if !strings.Contains(text, "ghost") {
+		t.Errorf("the error should name the missing tenant:\n%s", text)
+	}
+	if !strings.Contains(text, "404") {
+		t.Errorf("the error should say what a caller would experience:\n%s", text)
+	}
+}
+
+// The likeliest operator mistake: adding a DID to the tenant file and
+// forgetting the global one. A warning, because the configuration still loads.
+func TestTenantDIDWithNoRouteIsWarned(t *testing.T) {
+	dir := writeConfig(t,
+		`{"operator":"user/100","extensions":{"100":"user/100"},
+		  "dids":{"+15558001200":"user/100"}}`, "")
+	routes := writeRoutes(t, dir, `{"dids":{}}`)
+	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+
+	var out bytes.Buffer
+	code := Run([]string{
+		"--routing-path", dir, "--policy-config", policy, "--routes-path", routes,
+	}, &out)
+
+	if code != ExitOK {
+		t.Fatalf("a missing route is a warning, not an error: exit %d\n%s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "+15558001200") {
+		t.Errorf("the warning should name the orphaned DID:\n%s", out.String())
+	}
+}
+
+// A DID the global table does route is not warned about.
+func TestRoutedTenantDIDIsNotWarned(t *testing.T) {
+	dir := writeConfig(t,
+		`{"operator":"user/100","extensions":{"100":"user/100"},
+		  "dids":{"+15558001200":"user/100"}}`, "")
+	routes := writeRoutes(t, dir, `{"dids":{"+15558001200":"acme"}}`)
+	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+
+	var out bytes.Buffer
+	if code := Run([]string{
+		"--routing-path", dir, "--policy-config", policy, "--routes-path", routes,
+	}, &out); code != ExitOK {
+		t.Fatalf("exit = %d, want clean:\n%s", code, out.String())
+	}
+	if strings.Contains(out.String(), "+15558001200") {
+		t.Errorf("a correctly routed DID should not be mentioned:\n%s", out.String())
+	}
+}
+
+// The cross-check uses the same matcher the call path does, so a DID written
+// one way and routed the other still counts as covered.
+func TestCrossCheckToleratesTheLeadingPlus(t *testing.T) {
+	dir := writeConfig(t,
+		`{"operator":"user/100","extensions":{"100":"user/100"},
+		  "dids":{"+15558001200":"user/100"}}`, "")
+	// Routed WITHOUT the plus; the tenant handles it WITH one.
+	routes := writeRoutes(t, dir, `{"dids":{"15558001200":"acme"}}`)
+	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+
+	var out bytes.Buffer
+	Run([]string{"--routing-path", dir, "--policy-config", policy, "--routes-path", routes}, &out)
+
+	if strings.Contains(out.String(), "+15558001200") {
+		t.Errorf("the two E.164 forms are the same number and must not warn:\n%s", out.String())
+	}
+}
+
+// A tenant using patterns for its DIDs is not cross-checked rather than checked
+// badly: deciding whether one pattern contains another is a harder problem than
+// this warning is worth.
+func TestPatternDIDsAreNotCrossChecked(t *testing.T) {
+	dir := writeConfig(t,
+		`{"operator":"user/100","extensions":{"100":"user/100"},
+		  "dids":{"+1555800XXXX":"user/100"}}`, "")
+	routes := writeRoutes(t, dir, `{"dids":{}}`)
+	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+
+	var out bytes.Buffer
+	Run([]string{"--routing-path", dir, "--policy-config", policy, "--routes-path", routes}, &out)
+
+	if strings.Contains(out.String(), "XXXX") {
+		t.Errorf("pattern DIDs should not be warned about:\n%s", out.String())
+	}
+}
+
+// A missing routes.json is the safe posture — no inbound routing — not a
+// failure, so a signaling-only deployment still validates.
+func TestMissingRoutesFileIsNotAnError(t *testing.T) {
+	dir := writeConfig(t, `{"operator":"user/100","extensions":{"100":"user/100"}}`, "")
+	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+
+	var out bytes.Buffer
+	if code := Run([]string{
+		"--routing-path", dir, "--policy-config", policy,
+		"--routes-path", filepath.Join(dir, "absent.json"),
+	}, &out); code != ExitOK {
+		t.Fatalf("a missing routes file must not fail validation: exit %d\n%s", code, out.String())
 	}
 }

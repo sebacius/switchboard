@@ -18,6 +18,7 @@ import (
 
 	"github.com/sebas/switchboard/internal/signaling/agent"
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
+	"github.com/sebas/switchboard/internal/signaling/trunk"
 )
 
 // Exit codes, following the usual convention so CI can branch on them.
@@ -36,6 +37,8 @@ func Run(args []string, out io.Writer) int {
 		"Directory containing per-tenant <tenant>.routing.json and <tenant>.flows.json files")
 	policyPath := fs.String("policy-config", "resources/config/policy.json",
 		"Path to tenant Class-of-Service and channel-limit configuration")
+	routesPath := fs.String("routes-path", "resources/config/routes.json",
+		"Path to the DID -> tenant table")
 	quiet := fs.Bool("quiet", false, "Print problems only")
 
 	fs.Usage = func() {
@@ -49,7 +52,7 @@ func Run(args []string, out io.Writer) int {
 		return ExitUsage
 	}
 
-	problems, err := check(*routingPath, *policyPath)
+	problems, err := check(*routingPath, *policyPath, *routesPath)
 	if err != nil {
 		fmt.Fprintf(out, "error: %v\n", err)
 		return ExitProblem
@@ -60,7 +63,7 @@ func Run(args []string, out io.Writer) int {
 
 // check loads every tenant and validates it, collecting problems rather than
 // stopping at the first.
-func check(routingPath, policyPath string) (dialplan.Problems, error) {
+func check(routingPath, policyPath, routesPath string) (dialplan.Problems, error) {
 	policyCfg, err := agent.LoadPolicyConfig(policyPath)
 	if err != nil {
 		return nil, fmt.Errorf("load policy config: %w", err)
@@ -92,6 +95,7 @@ func check(routingPath, policyPath string) (dialplan.Problems, error) {
 	sort.Strings(names)
 
 	var problems dialplan.Problems
+	tables := map[string]*dialplan.RoutingTable{}
 	for _, tenant := range names {
 		table, set, err := dialplan.ParseTenant(routingPath, tenant)
 		if err != nil {
@@ -103,6 +107,7 @@ func check(routingPath, policyPath string) (dialplan.Problems, error) {
 			})
 			continue
 		}
+		tables[tenant] = table
 
 		// Class of Service is checked with the same policy the call path uses,
 		// through the side-effect-free classifier so validating a configuration
@@ -115,7 +120,106 @@ func check(routingPath, policyPath string) (dialplan.Problems, error) {
 			dialplan.CheckFlowsWithPolicy(tenant, table, set, policyClassifier{policy})...)
 	}
 
+	problems = append(problems, checkRoutes(routesPath, tables)...)
 	return problems, nil
+}
+
+// checkRoutes cross-checks the global DID -> tenant table against the tenants
+// that actually exist.
+//
+// A DID naming a tenant with no routing file is the shipped bug this change was
+// written for: the call is attributed to a tenant nobody has configured, so it
+// reaches a 404 at 2am rather than a message at startup.
+func checkRoutes(routesPath string, tables map[string]*dialplan.RoutingTable) dialplan.Problems {
+	var ps dialplan.Problems
+
+	routes, err := trunk.LoadRoutes(routesPath)
+	if err != nil {
+		return append(ps, dialplan.Problem{
+			Path:     routesPath,
+			Message:  err.Error(),
+			Severity: dialplan.SeverityError,
+		})
+	}
+
+	mapped := routes.All()
+	dids := make([]string, 0, len(mapped))
+	for did := range mapped {
+		dids = append(dids, did)
+	}
+	sort.Strings(dids)
+
+	// Forward: every routed DID must name a tenant that exists.
+	for _, did := range dids {
+		tenant := mapped[did]
+		if _, ok := tables[tenant]; ok {
+			continue
+		}
+		ps = append(ps, dialplan.Problem{
+			Tenant: tenant,
+			Path:   "routes.dids." + did,
+			Message: fmt.Sprintf(
+				"DID %q routes to tenant %q, which has no routing file; a call to this number "+
+					"would be attributed to a tenant that does not exist and rejected with 404",
+				did, tenant),
+			Severity: dialplan.SeverityError,
+		})
+	}
+
+	// Reverse: a tenant that handles a DID nobody sends it will never see a
+	// call. This is the likeliest operator mistake — adding the number to the
+	// tenant file and forgetting the global one.
+	//
+	// Only LITERAL keys are checked. Deciding whether one pattern contains
+	// another is a harder problem than this warning is worth, so a tenant using
+	// patterns for its DIDs simply is not cross-checked, rather than being
+	// checked badly.
+	tenants := make([]string, 0, len(tables))
+	for tenant := range tables {
+		tenants = append(tenants, tenant)
+	}
+	sort.Strings(tenants)
+
+	for _, tenant := range tenants {
+		table := tables[tenant]
+		if table == nil {
+			continue
+		}
+		own := make([]string, 0, len(table.DIDs))
+		for did := range table.DIDs {
+			own = append(own, did)
+		}
+		sort.Strings(own)
+
+		for _, did := range own {
+			if !isLiteralDID(did) {
+				continue
+			}
+			if owner, ok := routes.TenantForDID(did); ok && owner == tenant {
+				continue
+			}
+			ps = append(ps, dialplan.Problem{
+				Tenant: tenant,
+				Path:   "dids." + did,
+				Message: fmt.Sprintf(
+					"tenant handles DID %q but %s does not route that number to it, so no call "+
+						"will ever arrive on it", did, filepath.Base(routesPath)),
+				Severity: dialplan.SeverityWarning,
+			})
+		}
+	}
+
+	return ps
+}
+
+// isLiteralDID reports whether a key is a plain number rather than a pattern.
+func isLiteralDID(did string) bool {
+	for _, r := range strings.TrimPrefix(did, "+") {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return did != "" && did != "+"
 }
 
 // policyClassifier adapts agent.Policy to the validator's seam.
