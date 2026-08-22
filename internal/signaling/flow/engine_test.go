@@ -24,7 +24,7 @@ func testEngine(t *testing.T, extensions map[string]string, flowsJSON string) *E
 
 	table := &dialplan.RoutingTable{
 		Operator:        "user/100",
-		Extensions:      extensions,
+		Extensions:      dialplan.Entries(extensions),
 		SymbolicTargets: map[string]string{"sales": "user/110", "afterhours": "+18005551212"},
 		Groups: map[string]dialplan.RingGroup{
 			"claims": {Strategy: dialplan.StrategySequential, Members: []string{"user/130", "user/131"}},
@@ -353,7 +353,7 @@ func TestDeniedExternalTakesDeniedExit(t *testing.T) {
 		}}}}`
 
 	table := &dialplan.RoutingTable{
-		Extensions:      map[string]string{"100": "flow/main"},
+		Extensions:      dialplan.Entries(map[string]string{"100": "flow/main"}),
 		SymbolicTargets: map[string]string{"blocked": "+19005551212"},
 	}
 	var set dialplan.FlowSet

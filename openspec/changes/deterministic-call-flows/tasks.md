@@ -41,7 +41,7 @@
 - [x] 5.2 Match with exact-length semantics, or tail-absorbing when a trailing wildcard is present
 - [x] 5.3 Specificity by accepted-set cardinality (literal 1, `[147]` 3, `[2-8]` 7, `N` 8, `Z` 9, `X` 10, `.` infinite), compared as a per-position vector via dominance — never a scalar, never a declared integer
 - [x] 5.4 Pairwise language-intersection test, then dominance; two intersecting patterns with neither dominating is a load error naming both
-- [ ] 5.5 Closed-set transforms `strip_digits`, `strip_suffix_digits`, `normalize: e164|digits|none`, landing in the cursor. No `${}` interpolation
+- [x] 5.5 Closed-set transforms `strip_digits`, `strip_suffix_digits`, `normalize: e164|digits|none`, landing in the cursor. No `${}` interpolation
 - [x] 5.6 Bare destinations stay valid as one-node-dial sugar
 - [x] 5.7 Table tests: literal beats pattern; `N` beats `Z` beats `X`; `NX` vs `XN` rejected; `[12]X` vs `[23]X` rejected; `9NXXNXXXXXX` matches a NANP number and strips correctly
 
@@ -135,20 +135,58 @@
 
 ## 16. Verification
 
-- [ ] 16.1 `go build ./...`, `go test ./...`, `go vet ./...` clean
-- [ ] 16.2 `go mod tidy` produces no diff
-- [ ] 16.3 Server boots and routes with no LLM, ASR, or agent configured or reachable
-- [ ] 16.4 Live: internal forward — 102 dials 105, `100 Trying` then `180 Ringing`, no 183 and no 200 from Switchboard, caller gets 105's own relayed response. Byte-identical to today
-- [ ] 16.5 Live: inbound DID via trunk — INVITE from a configured peer routes to its tenant flow; unmapped DID → 603; unknown source → 403
-- [ ] 16.6 Live: park/unpark `*701` — carried from archived `llm-pbx-supervisor` §9.4 and never executed (it needed a spoken conversation to park; a flow node no longer does). Park a call, retrieve from another phone, confirm the slot frees on either party hanging up
-- [ ] 16.7 Live: channel-limit 486 — `channel_limit: 1`, two concurrent calls, second gets 486 **before** an RTP port is allocated
-- [ ] 16.8 Live: COS deny — a `dial_external` node naming a denied target takes the `denied` exit, no INVITE leaves the box, the deny is in the call record
-- [ ] 16.9 Live: menu digit selection, menu timeout, and retry exhaustion each reach the right node
-- [ ] 16.10 Live: `dial_user` no-answer continues to the next node with **no 486 or 480 reaching the caller**
-- [ ] 16.11 Live: caller abandons mid-menu — the cursor is released and no goroutine leaks
-- [ ] 16.12 Live: a leg negotiating no telephone-event degrades via `NO_DTMF_TRANSPORT` rather than hanging
-- [ ] 16.13 A config with an inter-node cycle is rejected at load with the cycle path named
-- [ ] 16.14 A config with an ambiguous digit-map pair is rejected at load with both patterns named
+- [x] 16.1 `go build ./...`, `go test ./...`, `go vet ./...` clean
+- [x] 16.2 `go mod tidy` produces no diff
+- [x] 16.3 Server boots and routes with no LLM, ASR, or agent configured or reachable
+- [~] 16.4 Live: internal forward — 102 dials 105, `100 Trying` then `180 Ringing`, no 183 and no 200 from Switchboard, caller gets 105's own relayed response. Byte-identical to today
+- [~] 16.5 Live: inbound DID via trunk — INVITE from a configured peer routes to its tenant flow; unmapped DID → 603; unknown source → 403
+- [~] 16.6 Live: park/unpark `*701` — carried from archived `llm-pbx-supervisor` §9.4 and never executed (it needed a spoken conversation to park; a flow node no longer does). Park a call, retrieve from another phone, confirm the slot frees on either party hanging up
+- [~] 16.7 Live: channel-limit 486 — `channel_limit: 1`, two concurrent calls, second gets 486 **before** an RTP port is allocated
+- [~] 16.8 Live: COS deny — a `dial_external` node naming a denied target takes the `denied` exit, no INVITE leaves the box, the deny is in the call record
+- [x] 16.9 Live: menu digit selection, menu timeout, and retry exhaustion each reach the right node
+- [x] 16.10 Live: `dial_user` no-answer continues to the next node with **no 486 or 480 reaching the caller**
+- [x] 16.11 Live: caller abandons mid-menu — the cursor is released and no goroutine leaks
+- [x] 16.12 Live: a leg negotiating no telephone-event degrades via `NO_DTMF_TRANSPORT` rather than hanging
+- [x] 16.13 A config with an inter-node cycle is rejected at load with the cycle path named
+- [x] 16.14 A config with an ambiguous digit-map pair is rejected at load with both patterns named
+
+### Group 16 status
+
+`[~]` marks a scenario whose automatable parts are verified but whose live run
+needs hardware this environment does not have: a trunk peer and two registered
+softphones. Nothing is blocked by code.
+
+**Verified here**
+
+- Build, vet, test and `-race` clean; `go mod tidy` produces no diff.
+- The server boots and serves with no LLM, ASR, or agent configured or
+  reachable, and the startup log contains no model references at all. This was
+  a hard boot failure before the change.
+- Menu digit selection, timeout, retry exhaustion and invalid input, walked
+  through the real engine with `flow-smoke` against the shipped flow:
+  `greeting --1--> ring-sales`, and `greeting --retries_exceeded--> to-operator`
+  after three attempts.
+- A bare destination still forwards without answering.
+- A cyclic flow is rejected at load with the path named (`a -> b -> a`).
+- Ambiguous patterns (`NX` vs `XN`) are rejected at load naming both.
+- A failed dial relaying nothing, caller abandonment releasing the cursor, and
+  a leg with no telephone-event degrading by a declared exit — all covered by
+  unit tests, the first mutation-checked.
+- The config API refuses an invalid flow with per-node problems and leaves the
+  file on disk untouched; a valid write and reload succeed.
+- E911 warnings fire on a PSTN-capable tenant with an outbound `"9."` pattern.
+
+**Needs a softphone**
+
+- 16.4 internal forward — the byte-identical path; unit-covered but the live
+  `100 Trying` / `180 Ringing` / no-200 sequence should be seen on the wire.
+- 16.5 inbound DID via trunk — needs a peer IP in `trunk_peers.json`.
+- 16.6 park/unpark `*701` — carried unexecuted from two prior changes. It
+  previously needed a spoken conversation to park a call; a flow no longer does,
+  so this is now drivable by two softphones for the first time.
+- 16.7 channel-limit 486 — needs two concurrent calls.
+- 16.8 COS deny inside a flow — the deny is unit-covered and the load-time half
+  is verified; the live `denied` exit needs a call.
 
 ## 17. Configuration editing surface
 

@@ -98,7 +98,7 @@ func TestCrossingPatternsAreAmbiguous(t *testing.T) {
 		t.Fatal("neither NX nor XN is more specific; a scalar score would wrongly rank them")
 	}
 
-	_, err := CompileDigitMap(map[string]string{"NX": "user/1", "XN": "user/2"})
+	_, err := CompileDigitMap(Entries(map[string]string{"NX": "user/1", "XN": "user/2"}))
 	if err == nil {
 		t.Fatal("an ambiguous pair must be rejected at compile time")
 	}
@@ -111,7 +111,7 @@ func TestCrossingPatternsAreAmbiguous(t *testing.T) {
 
 // Equal-cardinality overlapping sets are ambiguous for the same reason.
 func TestEqualCardinalityOverlapIsAmbiguous(t *testing.T) {
-	_, err := CompileDigitMap(map[string]string{"[12]X": "user/1", "[23]X": "user/2"})
+	_, err := CompileDigitMap(Entries(map[string]string{"[12]X": "user/1", "[23]X": "user/2"}))
 	if err == nil {
 		t.Fatal("[12]X and [23]X both match 2X with neither narrower; must be rejected")
 	}
@@ -124,7 +124,7 @@ func TestNonOverlappingPatternsCoexist(t *testing.T) {
 		{"2XX": "user/1", "2XXX": "user/2"},    // different lengths
 		{"NXX": "user/1", "1XX": "user/2"},     // N excludes 1
 	} {
-		if _, err := CompileDigitMap(m); err != nil {
+		if _, err := CompileDigitMap(Entries(m)); err != nil {
 			t.Errorf("patterns that cannot collide must coexist: %v (%v)", err, m)
 		}
 	}
@@ -133,11 +133,11 @@ func TestNonOverlappingPatternsCoexist(t *testing.T) {
 // A more specific pattern coexisting with a wider one is the normal case, and
 // the specific one must win at lookup.
 func TestMostSpecificWins(t *testing.T) {
-	m, err := CompileDigitMap(map[string]string{
+	m, err := CompileDigitMap(Entries(map[string]string{
 		"110": "user/110",
 		"1XX": "flow/catchall",
 		"XXX": "flow/anything",
-	})
+	}))
 	if err != nil {
 		t.Fatalf("CompileDigitMap: %v", err)
 	}
@@ -166,13 +166,13 @@ func TestMostSpecificWins(t *testing.T) {
 // The realistic table: extensions, a retrieval prefix, a DID block, and NANP
 // outbound all coexisting.
 func TestRealisticDigitMapCompiles(t *testing.T) {
-	m, err := CompileDigitMap(map[string]string{
+	m, err := CompileDigitMap(Entries(map[string]string{
 		"0":            "user/100",
 		"1XX":          "flow/extensions",
 		"*7XX":         "flow/retrieval",
 		"9NXXNXXXXXX":  "flow/outbound",
 		"+1555800XXXX": "flow/inbound-did",
-	})
+	}))
 	if err != nil {
 		t.Fatalf("a realistic table must compile: %v", err)
 	}
@@ -227,5 +227,115 @@ func TestNoPriorityCanBeDeclared(t *testing.T) {
 	p := mustCompile(t, "2XX")
 	if p.Raw() != "2XX" {
 		t.Errorf("Raw() = %q, want the pattern as written", p.Raw())
+	}
+}
+
+// Transforms are a CLOSED set with no interpolation. Template substitution is
+// how a routing table becomes a small programming language, and the moment
+// matched digits can be spliced into a destination, symbolic narrowing is
+// bypassed.
+func TestTransformsReshapeDialledDigits(t *testing.T) {
+	cases := []struct {
+		name      string
+		transform Transform
+		dialed    string
+		want      string
+	}{
+		{"strip an outbound prefix", Transform{StripDigits: 1}, "95551212", "5551212"},
+		{"strip a suffix", Transform{StripSuffixDigits: 2}, "1234", "12"},
+		{"normalize to e164", Transform{Normalize: NormalizeE164}, "15558001234", "+15558001234"},
+		{"e164 is idempotent", Transform{Normalize: NormalizeE164}, "+15558001234", "+15558001234"},
+		{"digits only", Transform{Normalize: NormalizeDigits}, "+1 (555) 800-1234", "15558001234"},
+		{"none leaves it alone", Transform{Normalize: NormalizeNone}, "95551212", "95551212"},
+		{"strip then normalize", Transform{StripDigits: 1, Normalize: NormalizeE164}, "915558001234", "+15558001234"},
+		{"stripping everything yields nothing", Transform{StripDigits: 9}, "911", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.transform.Apply(tc.dialed); got != tc.want {
+				t.Errorf("Apply(%q) = %q, want %q", tc.dialed, got, tc.want)
+			}
+		})
+	}
+}
+
+// A transform can only ever narrow or reshape what was dialled. It must never
+// be able to lengthen the string, because that is the difference between
+// normalising input and constructing a destination.
+func TestTransformNeverLengthensBeyondAPlus(t *testing.T) {
+	for _, tr := range []Transform{
+		{StripDigits: 2}, {StripSuffixDigits: 3}, {Normalize: NormalizeDigits},
+		{Normalize: NormalizeE164}, {StripDigits: 1, Normalize: NormalizeE164},
+	} {
+		got := tr.Apply("915558001234")
+		// e164 adds exactly one '+' and nothing else.
+		if len(got) > len("915558001234")+1 {
+			t.Errorf("%+v lengthened the input: %q", tr, got)
+		}
+	}
+}
+
+func TestUnknownNormalizeIsRejected(t *testing.T) {
+	err := Transform{Normalize: "e123"}.validate()
+	if err == nil {
+		t.Fatal("an unknown normalisation must be rejected")
+	}
+	if !strings.Contains(err.Error(), "e164") {
+		t.Errorf("the error should list the valid forms: %v", err)
+	}
+}
+
+// The bare form stays valid, so a simple table needs no objects.
+func TestEntryAcceptsBothForms(t *testing.T) {
+	var bare Entry
+	if err := bare.UnmarshalJSON([]byte(`"user/110"`)); err != nil {
+		t.Fatalf("a bare destination must parse: %v", err)
+	}
+	if bare.Destination != "user/110" || bare.Transform != (Transform{}) {
+		t.Errorf("bare entry = %+v", bare)
+	}
+
+	var obj Entry
+	if err := obj.UnmarshalJSON([]byte(`{"flow":"outbound","strip_digits":1,"normalize":"e164"}`)); err != nil {
+		t.Fatalf("the object form must parse: %v", err)
+	}
+	if obj.Destination != "flow/outbound" {
+		t.Errorf("destination = %q, want flow/outbound", obj.Destination)
+	}
+	if obj.Transform.StripDigits != 1 || obj.Transform.Normalize != NormalizeE164 {
+		t.Errorf("transform = %+v", obj.Transform)
+	}
+}
+
+// An unknown field in an entry is a typo, and a typo that silently defaults is
+// exactly what DisallowUnknownFields exists to prevent.
+func TestEntryRejectsUnknownFields(t *testing.T) {
+	var e Entry
+	if err := e.UnmarshalJSON([]byte(`{"flow":"out","strip_digit":1}`)); err == nil {
+		t.Fatal("a misspelled field must be rejected")
+	}
+}
+
+// No interpolation anywhere: a destination is a literal, never a template.
+func TestNoInterpolationInDestinations(t *testing.T) {
+	m, err := CompileDigitMap(map[string]Entry{
+		"9NXXNXXXXXX": {Destination: "flow/outbound", Transform: Transform{StripDigits: 1}},
+	})
+	if err != nil {
+		t.Fatalf("CompileDigitMap: %v", err)
+	}
+
+	dest, digits, ok := m.LookupWithDigits("95555551212")
+	if !ok {
+		t.Fatal("the pattern should match")
+	}
+	// The destination is exactly what was written — the matched digits did not
+	// become part of it.
+	if dest != "flow/outbound" {
+		t.Errorf("destination = %q, want the literal flow/outbound", dest)
+	}
+	if digits != "5555551212" {
+		t.Errorf("transformed digits = %q, want the prefix stripped", digits)
 	}
 }

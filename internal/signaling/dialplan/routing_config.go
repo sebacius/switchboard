@@ -95,7 +95,7 @@ type RoutingTable struct {
 	// Keys may be digit-map patterns as well as literals, because extension
 	// ranges and number plans cannot be enumerated. The most specific match wins,
 	// computed rather than declared — see digitmap.go.
-	Extensions map[string]string `json:"extensions"`
+	Extensions map[string]Entry `json:"extensions"`
 
 	// SymbolicTargets maps dialable names to destinations. This is the
 	// capability narrowing tool-authorization enforces; it lives here so every
@@ -105,7 +105,7 @@ type RoutingTable struct {
 	// DIDs maps an inbound DID to a destination within this tenant. The DID→
 	// tenant step happens earlier, in routes.json (basic-sip-trunk); this is the
 	// DID→destination step inside the tenant.
-	DIDs map[string]string `json:"dids"`
+	DIDs map[string]Entry `json:"dids"`
 
 	// Groups holds this tenant's ring groups by name.
 	Groups map[string]RingGroup `json:"groups"`
@@ -143,6 +143,16 @@ func (t *RoutingTable) MatchExtension(dialed string) (string, bool) {
 	return t.extensionMap.Lookup(dialed)
 }
 
+// MatchExtensionWithDigits also returns the dialled digits after the matching
+// entry's transform.
+func (t *RoutingTable) MatchExtensionWithDigits(dialed string) (string, string, bool) {
+	if t == nil {
+		return "", "", false
+	}
+	t.ensureCompiled()
+	return t.extensionMap.LookupWithDigits(dialed)
+}
+
 // MatchDID resolves an inbound DID against the tenant's DID mapping.
 //
 // Carriers are inconsistent about the leading '+', so the lookup tries both
@@ -154,13 +164,24 @@ func (t *RoutingTable) MatchDID(dialed string) (string, bool) {
 	}
 	t.ensureCompiled()
 
-	if dest, ok := t.didMap.Lookup(dialed); ok {
-		return dest, true
+	dest, _, ok := t.MatchDIDWithDigits(dialed)
+	return dest, ok
+}
+
+// MatchDIDWithDigits also returns the dialled digits after the transform.
+func (t *RoutingTable) MatchDIDWithDigits(dialed string) (string, string, bool) {
+	if t == nil {
+		return "", "", false
+	}
+	t.ensureCompiled()
+
+	if dest, digits, ok := t.didMap.LookupWithDigits(dialed); ok {
+		return dest, digits, true
 	}
 	if alt, ok := togglePlus(dialed); ok {
-		return t.didMap.Lookup(alt)
+		return t.didMap.LookupWithDigits(alt)
 	}
-	return "", false
+	return "", "", false
 }
 
 // togglePlus returns the other E.164 form of a number: "+1555..." <-> "1555...".
@@ -267,9 +288,9 @@ func (t *RoutingTable) validate(tenant string, raw []byte) error {
 
 	// A destination naming a group that does not exist is a routing dead end;
 	// catch it at load rather than as a call that resolves to nothing.
-	check := func(kind string, m map[string]string) error {
-		for key, dest := range m {
-			if name, ok := IsGroupTarget(dest); ok {
+	check := func(kind string, m map[string]Entry) error {
+		for key, entry := range m {
+			if name, ok := IsGroupTarget(entry.Destination); ok {
 				if _, exists := t.Groups[name]; !exists {
 					return fmt.Errorf("tenant %s: %s %q routes to unknown ring group %q", tenant, kind, key, name)
 				}
@@ -280,10 +301,23 @@ func (t *RoutingTable) validate(tenant string, raw []byte) error {
 	if err := check("extension", t.Extensions); err != nil {
 		return err
 	}
-	if err := check("symbolic target", t.SymbolicTargets); err != nil {
+	if err := checkSymbolic("symbolic target", t.SymbolicTargets, t.Groups, tenant); err != nil {
 		return err
 	}
 	return check("DID", t.DIDs)
+}
+
+// checkSymbolic is the same check over the plain string map of symbolic
+// targets, which take no transform.
+func checkSymbolic(kind string, m map[string]string, groups map[string]RingGroup, tenant string) error {
+	for key, dest := range m {
+		if name, ok := IsGroupTarget(dest); ok {
+			if _, exists := groups[name]; !exists {
+				return fmt.Errorf("tenant %s: %s %q routes to unknown ring group %q", tenant, kind, key, name)
+			}
+		}
+	}
+	return nil
 }
 
 // rejectRetiredVocabulary fails a table that still speaks the LLM supervisor's
@@ -295,7 +329,18 @@ func (t *RoutingTable) validate(tenant string, raw []byte) error {
 // tenant would keep "working" while routing calls somewhere the operator never
 // intended.
 func (t *RoutingTable) rejectRetiredVocabulary(tenant string, raw []byte) error {
-	for _, m := range []map[string]string{t.Extensions, t.SymbolicTargets, t.DIDs} {
+	entryMaps := []map[string]Entry{t.Extensions, t.DIDs}
+	for _, m := range entryMaps {
+		for key, entry := range m {
+			if strings.TrimSpace(entry.Destination) == retiredAssistantTarget {
+				return fmt.Errorf(
+					"tenant %s: %q routes to %q, which is no longer a valid destination — "+
+						"the LLM supervisor was removed; route it to an extension, a ring group, or a flow",
+					tenant, key, retiredAssistantTarget)
+			}
+		}
+	}
+	for _, m := range []map[string]string{t.SymbolicTargets} {
 		for key, dest := range m {
 			if strings.TrimSpace(dest) == retiredAssistantTarget {
 				return fmt.Errorf(

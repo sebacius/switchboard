@@ -79,7 +79,7 @@ func (e *Engine) Handle(ctx context.Context, sess agent.CallSession, cc *agent.C
 		return false
 	}
 
-	dest, matched := e.entryFor(table, callCtx)
+	dest, dialed, matched := e.entryFor(table, callCtx)
 	if !matched {
 		// Nothing claims this call; the caller decides what to do about it.
 		return false
@@ -104,14 +104,17 @@ func (e *Engine) Handle(ctx context.Context, sess agent.CallSession, cc *agent.C
 		return false
 	}
 
-	return e.runFlow(ctx, sess, callCtx, flowName, def)
+	return e.runFlow(ctx, sess, callCtx, flowName, def, dialed)
 }
 
 // runFlow walks the graph until a terminal outcome.
 func (e *Engine) runFlow(ctx context.Context, sess agent.CallSession, cc agent.CallContext,
-	flowName string, def *dialplan.FlowDef) bool {
+	flowName string, def *dialplan.FlowDef, dialed string) bool {
 
 	cursor := newCursor(sess.CallID(), cc.Tenant, flowName, def)
+	// What the caller dialled, after the entry's transform. A flow can read it;
+	// it is never a dial target.
+	cursor.dialed = dialed
 	e.track(cursor)
 	defer e.release(cursor)
 
@@ -232,15 +235,13 @@ func (e *Engine) tryRetrieval(ctx context.Context, sess agent.CallSession, cc ag
 	return true
 }
 
-// entryFor resolves dialed digits against the tenant's entry mapping.
-func (e *Engine) entryFor(table *dialplan.RoutingTable, cc agent.CallContext) (string, bool) {
+// entryFor resolves dialed digits against the tenant's entry mapping, returning
+// the destination and the dialled digits after any transform.
+func (e *Engine) entryFor(table *dialplan.RoutingTable, cc agent.CallContext) (string, string, bool) {
 	if cc.Direction == agent.DirectionInbound {
-		if dest, ok := table.MatchDID(cc.Callee); ok {
-			return dest, true
-		}
-		return "", false
+		return table.MatchDIDWithDigits(cc.Callee)
 	}
-	return table.MatchExtension(cc.Callee)
+	return table.MatchExtensionWithDigits(cc.Callee)
 }
 
 func (e *Engine) tenantTable(tenant string) (*dialplan.RoutingTable, bool) {

@@ -1,6 +1,8 @@
 package dialplan
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -289,14 +291,154 @@ func minInt(a, b int) int {
 	return b
 }
 
+// Transform normalises matched digits before they reach the cursor.
+//
+// The set is CLOSED, and there is no `${}` interpolation anywhere. Template
+// substitution in a dialplan is how a routing table becomes a small programming
+// language: the moment matched digits can be spliced into a destination,
+// symbolic narrowing is bypassed and a config edit can reach an arbitrary
+// number. These transforms only ever narrow or reshape what was dialled; they
+// cannot construct a target.
+type Transform struct {
+	// StripDigits removes N leading digits — a "9" outbound prefix, say.
+	StripDigits int `json:"strip_digits,omitempty"`
+	// StripSuffixDigits removes N trailing digits.
+	StripSuffixDigits int `json:"strip_suffix_digits,omitempty"`
+	// Normalize is "e164", "digits" or "none".
+	Normalize string `json:"normalize,omitempty"`
+}
+
+// Normalisation forms.
+const (
+	NormalizeNone   = "none"
+	NormalizeDigits = "digits"
+	NormalizeE164   = "e164"
+)
+
+// validate rejects a transform that names an unknown normalisation.
+func (t Transform) validate() error {
+	switch t.Normalize {
+	case "", NormalizeNone, NormalizeDigits, NormalizeE164:
+	default:
+		return fmt.Errorf("unknown normalize %q (want %q, %q or %q)",
+			t.Normalize, NormalizeNone, NormalizeDigits, NormalizeE164)
+	}
+	if t.StripDigits < 0 || t.StripSuffixDigits < 0 {
+		return fmt.Errorf("strip counts must not be negative")
+	}
+	return nil
+}
+
+// Apply reshapes dialled digits. It never lengthens the string, which is the
+// property that keeps a transform from constructing a destination.
+func (t Transform) Apply(dialed string) string {
+	rs := []rune(dialed)
+
+	if t.StripDigits > 0 {
+		if t.StripDigits >= len(rs) {
+			return ""
+		}
+		rs = rs[t.StripDigits:]
+	}
+	if t.StripSuffixDigits > 0 {
+		if t.StripSuffixDigits >= len(rs) {
+			return ""
+		}
+		rs = rs[:len(rs)-t.StripSuffixDigits]
+	}
+
+	out := string(rs)
+	switch t.Normalize {
+	case NormalizeDigits:
+		out = keepDigits(out)
+	case NormalizeE164:
+		digits := keepDigits(out)
+		if digits == "" {
+			return ""
+		}
+		out = "+" + digits
+	}
+	return out
+}
+
+// keepDigits strips everything that is not 0-9.
+func keepDigits(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // DigitMap is a compiled set of patterns with their destinations.
 type DigitMap struct {
 	entries []mapEntry
 }
 
 type mapEntry struct {
-	pattern *Pattern
-	dest    string
+	pattern   *Pattern
+	dest      string
+	transform Transform
+}
+
+// Entry is one entry-mapping value. It is either a bare destination string or
+// an object naming a destination and a transform, so the simple case stays a
+// single line of JSON.
+type Entry struct {
+	Destination string
+	Transform   Transform
+}
+
+// UnmarshalJSON accepts either form:
+//
+//	"110":         "user/110"
+//	"9NXXNXXXXXX": {"flow": "outbound", "strip_digits": 1}
+func (e *Entry) UnmarshalJSON(data []byte) error {
+	var bare string
+	if err := json.Unmarshal(data, &bare); err == nil {
+		e.Destination = bare
+		return nil
+	}
+
+	var obj struct {
+		Destination string `json:"destination,omitempty"`
+		Flow        string `json:"flow,omitempty"`
+		Transform
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&obj); err != nil {
+		return fmt.Errorf("entry must be a destination string or an object: %w", err)
+	}
+
+	switch {
+	case obj.Flow != "" && obj.Destination != "":
+		return fmt.Errorf("entry sets both \"flow\" and \"destination\"; pick one")
+	case obj.Flow != "":
+		e.Destination = routingFlowPrefix + obj.Flow
+	default:
+		e.Destination = obj.Destination
+	}
+	if e.Destination == "" {
+		return fmt.Errorf("entry names no destination")
+	}
+
+	e.Transform = obj.Transform
+	return e.Transform.validate()
+}
+
+// MarshalJSON writes the bare form when there is no transform, so a round trip
+// through the config API does not rewrite every simple entry into an object.
+func (e Entry) MarshalJSON() ([]byte, error) {
+	if e.Transform == (Transform{}) {
+		return json.Marshal(e.Destination)
+	}
+	return json.Marshal(struct {
+		Destination string `json:"destination"`
+		Transform
+	}{e.Destination, e.Transform})
 }
 
 // CompileDigitMap compiles an entry mapping and rejects ambiguity.
@@ -304,7 +446,7 @@ type mapEntry struct {
 // Two patterns that can match the same input with neither more specific are a
 // configuration error, not a tiebreak: there is no defensible winner, so asking
 // the operator is the only honest option.
-func CompileDigitMap(raw map[string]string) (*DigitMap, error) {
+func CompileDigitMap(raw map[string]Entry) (*DigitMap, error) {
 	m := &DigitMap{}
 
 	keys := make([]string, 0, len(raw))
@@ -318,7 +460,11 @@ func CompileDigitMap(raw map[string]string) (*DigitMap, error) {
 		if err != nil {
 			return nil, err
 		}
-		m.entries = append(m.entries, mapEntry{pattern: p, dest: raw[k]})
+		m.entries = append(m.entries, mapEntry{
+			pattern:   p,
+			dest:      raw[k].Destination,
+			transform: raw[k].Transform,
+		})
 	}
 
 	for i := 0; i < len(m.entries); i++ {
@@ -343,8 +489,19 @@ func CompileDigitMap(raw map[string]string) (*DigitMap, error) {
 // Lookup returns the destination for a dialed string: the most specific match,
 // or false. Ambiguity was rejected at compile time, so the winner is unique.
 func (m *DigitMap) Lookup(dialed string) (string, bool) {
+	dest, _, ok := m.LookupWithDigits(dialed)
+	return dest, ok
+}
+
+// LookupWithDigits also returns the dialled digits after the winning entry's
+// transform, for a flow that wants to know what was dialled.
+//
+// The transformed value is data the flow can read; it is never a dial target.
+// Pattern matching selects WHAT TO RUN, and only symbolic targets say WHERE TO
+// DIAL — which is what stops a config edit reaching an arbitrary number.
+func (m *DigitMap) LookupWithDigits(dialed string) (string, string, bool) {
 	if m == nil {
-		return "", false
+		return "", "", false
 	}
 
 	var best *mapEntry
@@ -358,9 +515,9 @@ func (m *DigitMap) Lookup(dialed string) (string, bool) {
 		}
 	}
 	if best == nil {
-		return "", false
+		return "", "", false
 	}
-	return best.dest, true
+	return best.dest, best.transform.Apply(dialed), true
 }
 
 // Len reports how many patterns the map holds.
@@ -369,4 +526,18 @@ func (m *DigitMap) Len() int {
 		return 0
 	}
 	return len(m.entries)
+}
+
+// Entries builds an entry map from bare destinations. It keeps test fixtures
+// and code-built tables readable, since the object form is only needed when a
+// transform is involved.
+func Entries(m map[string]string) map[string]Entry {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]Entry, len(m))
+	for k, v := range m {
+		out[k] = Entry{Destination: v}
+	}
+	return out
 }

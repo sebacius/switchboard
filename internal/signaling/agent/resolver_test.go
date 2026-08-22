@@ -32,18 +32,18 @@ func testTable() *dialplan.RoutingTable {
 	return &dialplan.RoutingTable{
 		Operator:        "user/150",
 		RetrievalPrefix: "*",
-		Extensions: map[string]string{
+		Extensions: dialplan.Entries(map[string]string{
 			"105": "user/105",
 			"106": "user/106", // present in the table, never registered
 			"100": "assistant",
 			"130": "group/claims",
-		},
+		}),
 		SymbolicTargets: map[string]string{"claims": "group/claims"},
-		DIDs: map[string]string{
+		DIDs: dialplan.Entries(map[string]string{
 			"+15558001200": "assistant",
 			"+15558001250": "group/claims",
 			"+15558001210": "user/105",
-		},
+		}),
 		Groups: map[string]dialplan.RingGroup{
 			"claims": {Strategy: dialplan.StrategySequential, Members: []string{"user/105"}},
 		},
@@ -213,10 +213,10 @@ func TestResolveTablesAreDirectionScoped(t *testing.T) {
 // isolation, so a table that compiles but is never consulted fails here.
 func TestResolvePatternedExtension(t *testing.T) {
 	routing := dialplan.StaticRouting{"acme": {
-		Extensions: map[string]string{
+		Extensions: dialplan.Entries(map[string]string{
 			"1XX": "user/150", // any 1xx extension reaches the same desk
 			"110": "user/110", // except 110, which is more specific
-		},
+		}),
 	}}
 	r := NewResolver(routing, resolverDirectory{"110": true, "150": true}, nil, quietLogger())
 

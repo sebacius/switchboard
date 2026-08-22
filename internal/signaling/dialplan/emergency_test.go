@@ -9,7 +9,7 @@ import (
 // silently swallows 911, because 9 followed by 11 matches "9.".
 func TestOutboundPrefixShadowingEmergencyIsWarned(t *testing.T) {
 	table := &RoutingTable{
-		Extensions: map[string]string{"9.": "flow/outbound"},
+		Extensions: Entries(map[string]string{"9.": "flow/outbound"}),
 	}
 
 	ps := CheckEmergency("acme", table)
@@ -35,7 +35,7 @@ func TestOutboundPrefixShadowingEmergencyIsWarned(t *testing.T) {
 // An explicit entry is not shadowing itself.
 func TestExplicitEmergencyEntryIsNotWarnedAsShadowing(t *testing.T) {
 	table := &RoutingTable{
-		Extensions: map[string]string{"911": "user/150"},
+		Extensions: Entries(map[string]string{"911": "user/150"}),
 	}
 
 	for _, p := range CheckEmergency("acme", table) {
@@ -49,7 +49,7 @@ func TestExplicitEmergencyEntryIsNotWarnedAsShadowing(t *testing.T) {
 // out loud.
 func TestPSTNCapableTenantWithoutEmergencyIsWarned(t *testing.T) {
 	table := &RoutingTable{
-		Extensions:      map[string]string{"100": "user/100"},
+		Extensions:      Entries(map[string]string{"100": "user/100"}),
 		SymbolicTargets: map[string]string{"afterhours": "+15558001234"},
 	}
 
@@ -66,7 +66,7 @@ func TestPSTNCapableTenantWithoutEmergencyIsWarned(t *testing.T) {
 // about — a warning on every lab fixture would train people to ignore them.
 func TestInternalOnlyTenantIsNotWarned(t *testing.T) {
 	table := &RoutingTable{
-		Extensions:      map[string]string{"100": "user/100"},
+		Extensions:      Entries(map[string]string{"100": "user/100"}),
 		SymbolicTargets: map[string]string{"operator": "user/100"},
 	}
 
@@ -78,7 +78,7 @@ func TestInternalOnlyTenantIsNotWarned(t *testing.T) {
 // Warnings must never fail a load.
 func TestEmergencyWarningsDoNotFailValidation(t *testing.T) {
 	ps := CheckEmergency("acme", &RoutingTable{
-		Extensions: map[string]string{"9.": "flow/outbound"},
+		Extensions: Entries(map[string]string{"9.": "flow/outbound"}),
 	})
 
 	if ps.HasErrors() {
