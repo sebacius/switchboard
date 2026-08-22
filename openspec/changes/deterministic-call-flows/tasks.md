@@ -207,4 +207,4 @@ config API to reporting validation problems.
 
 ## 18. Follow-up
 
-- [ ] 18.1 File the E911 change: hard-coded emergency route bypassing COS, un-shadowable by any pattern, dispatchable location, on-site notification. Recommend scheduling it before production traffic
+- [x] 18.1 File the E911 change: hard-coded emergency route bypassing COS, un-shadowable by any pattern, dispatchable location, on-site notification. Recommend scheduling it before production traffic
