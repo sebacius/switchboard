@@ -7,13 +7,19 @@
 
 ## About
 
-Switchboard is a **full-stack VoIP server and deterministic call routing engine**. It handles the complete telephony lifecycle — SIP registrations, presence, inbound and outbound calls, call bridging, parking, and transfers — and routes every call through a validated **flow graph**: IVR menus, prompts, transfers, and conditional dialing, expressed as data. It separates signaling and media into independently scalable components, using SIP for call control, RTP for media transport, and gRPC to coordinate services.
+Switchboard is a **full-stack VoIP server and deterministic call routing engine**. It handles the call lifecycle — SIP registrations, inbound and outbound calls, call bridging, parking, and blind transfers — and routes every call through a validated **flow graph**: IVR menus, prompts, transfers, and conditional dialing, expressed as data. It separates signaling and media into independently scalable components, using SIP for call control, RTP for media transport, and gRPC to coordinate services.
 
 Routing needs no model, no GPU, and no network egress. Every flow is checked at startup and is **provably terminating**, so a misconfigured menu is a startup error rather than a caller stuck in a loop at 2am.
 
 Switchboard is **Kubernetes-native by design**. Live media re-anchoring allows active calls to be migrated between RTP Manager pods mid-call, making graceful drain, rolling updates, and autoscaling possible without dropping calls.
 
-The routing agent **stays with the caller for the entire duration of the call**. Switchboard's agent maintains full context throughout — if a transfer fails because nobody picked up, the agent comes back, apologizes, and offers alternatives (try another person, take a voicemail, schedule a callback). The caller is never left in a dead end. It's like having a real switchboard receptionist who stays with you until you're taken care of.
+The flow **stays with the caller for the whole call**. A dial that fails does not
+end it: the cursor takes that node's `no_answer`, `busy`, `rejected` or
+`unavailable` exit and keeps going, so "nobody picked up" leads wherever the
+graph says — another group, the operator, a closing message — rather than to a
+dead end. Every one of those branches is written down in the flow file and
+checked at startup, which is what makes the behaviour predictable rather than
+improvised.
 
 ```mermaid
 flowchart LR
@@ -85,22 +91,17 @@ flowchart LR
   linkStyle 10 stroke:#00a86b,stroke-width:2px;
   linkStyle 11 stroke:#00a86b,stroke-width:2px;
   linkStyle 12 stroke:#00a86b,stroke-width:2px;
+  %% RTP1,2,3 → TTS  (last link is 15; there are 16 edges, 0-15)
   linkStyle 13 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
   linkStyle 14 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
-  %% RTP → TTS
   linkStyle 15 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
-  linkStyle 16 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
-  linkStyle 17 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
-  linkStyle 18 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
-  linkStyle 19 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
-  linkStyle 20 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
 ```
 
 ## Quick Start
 
 ```bash
 # Clone
-git clone https://github.com/sebas/switchboard.git
+git clone https://github.com/sebacius/switchboard.git
 cd switchboard
 
 # Build
@@ -109,10 +110,10 @@ make build-all
 # Run all services
 make run
 
-# Or run individually
-./switchboard-rtpmanager --grpc-port 9090 &
-./switchboard-signaling --rtpmanager localhost:9090 &
-./switchboard-ui --backends http://localhost:8080
+# Or run individually (make build-all writes into build/)
+./build/switchboard-rtpmanager --grpc-port 9090 &
+./build/switchboard-signaling --rtpmanager localhost:9090 &
+./build/switchboard-ui --backends http://localhost:8080
 ```
 
 ## How It Works
@@ -345,13 +346,20 @@ make flow-smoke DIALED=700 DIGITS=2
 ```
 dialing "700" as internal for tenant devtenant
 
-flow "main-ivr", 2 hop(s)
+flow "main-ivr", 2 hop(s), 0ms
   1. greeting         (ivr)          --2--> digits 2
   2. ring-engineering (dial_user)    --answered--> bridged to user/101
 
 path: greeting -> ring-engineering
 outcome: answered
+
+dialed:
+  user/101
 ```
+
+`--tenant`, `--direction`, `--routing-path` and `--policy-config` are also
+accepted; they default to `devtenant`, `internal`, and the paths under
+`resources/`.
 
 ### Running with TTS
 
@@ -360,7 +368,7 @@ outcome: answered
 docker run -d --name piper-tts -p 8000:8000 ghcr.io/matatonic/openedai-speech
 
 # Point the RTP manager at it
-./switchboard-rtpmanager --tts-server http://localhost:8000
+./build/switchboard-rtpmanager --tts-server http://localhost:8000
 
 # Register a softphone and dial 700 to reach the example menu
 ```
@@ -409,7 +417,9 @@ the PBX, where it does not belong.
 - Authentication (anyone can register as anyone)
 - Persistent storage (everything is in-memory)
 - SRTP/TLS (plaintext only)
-- Most SIP edge cases (re-INVITE, UPDATE, REFER, etc.)
+- Presence — no SUBSCRIBE/NOTIFY handler; the only registered methods are
+  REGISTER, INVITE, ACK, CANCEL, BYE and INFO
+- Most SIP edge cases (re-INVITE, UPDATE, REFER, OPTIONS keepalives, etc.)
 - Proper error handling in many places
 - **Voicemail and call recording** — nothing writes audio to disk
 - In-band DTMF tone detection (RFC 4733 and SIP INFO only)
@@ -464,7 +474,8 @@ so flows and tenants can be managed by tooling rather than by editing files.
 
 | Document | Description |
 |----------|-------------|
-| [Configuration](docs/CONFIGURATION.md) | All flags and environment variables per service |
+| [Configuration](docs/CONFIGURATION.md) | Every flag and environment variable, per service |
+| [Tenant example](docs/TENANT-EXAMPLE.md) | A worked tenant: routing table, flows, policy, and the two DID lookups |
 
 ## Technology Stack
 
