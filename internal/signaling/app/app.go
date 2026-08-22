@@ -152,7 +152,16 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		_ = mediaTransport.Close()
 		return nil, fmt.Errorf("failed to load tenant routing tables: %w", err)
 	}
-	slog.Info("Tenant routing tables loaded", "path", cfg.RoutingPath, "tenants", routingStore.Tenants())
+	flowTenants := make([]string, 0)
+	for _, tenant := range routingStore.Tenants() {
+		if set, ok := routingStore.TenantFlows(tenant); ok {
+			flowTenants = append(flowTenants, fmt.Sprintf("%s:%v", tenant, set.Names()))
+		}
+	}
+	slog.Info("Tenant routing loaded",
+		"path", cfg.RoutingPath,
+		"tenants", routingStore.Tenants(),
+		"flows", flowTenants)
 
 	// Load Class-of-Service + capacity policy. A missing file is the safe
 	// default: no external dialing anywhere, default channel limit per tenant.

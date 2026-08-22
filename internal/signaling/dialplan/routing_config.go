@@ -226,77 +226,141 @@ func (t *RoutingTable) rejectRetiredVocabulary(tenant string, raw []byte) error 
 // RoutingSource resolves a tenant's routing table. It is the seam the resolver
 // and the policy wiring depend on so tests can supply a table without touching
 // disk. A tenant with no table is reported as not-found, which means nothing
-// resolves deterministically for it and every call goes to the supervisor.
+// resolves for it at all.
 type RoutingSource interface {
 	TenantRouting(tenant string) (*RoutingTable, bool)
 }
 
-// RoutingStore loads and caches per-tenant routing tables from the tenants
-// directory. It is safe for concurrent use and is reloaded through the same
-// config-API path as the prompts, so a routing edit takes effect without a
-// restart.
+// FlowSource resolves a tenant's flows. Separate from RoutingSource so a caller
+// that only routes need not depend on the flow vocabulary.
+type FlowSource interface {
+	TenantFlows(tenant string) (*FlowSet, bool)
+}
+
+// RoutingStore loads and caches per-tenant routing tables and flows from the
+// tenants directory. It is safe for concurrent use and is reloaded through the
+// config API, so an edit takes effect without a restart.
+//
+// A tenant's two files are loaded and validated as ONE unit. That is what makes
+// cross-file validation meaningful: a flow may reference a ring group, so the
+// two must never be swapped in independently or there is a window where a flow
+// points at a group the other file just deleted.
 type RoutingStore struct {
 	tenantsDir string
 
 	mu     sync.RWMutex
 	tables map[string]*RoutingTable
+	flows  map[string]*FlowSet
 }
 
 // NewRoutingStore builds a store over the tenants directory and performs an
-// initial load. Unlike the prompt store, a load error here is worth surfacing
-// loudly: an unparseable routing file means a tenant silently loses every
-// deterministic route, which looks exactly like "the AI decided to handle it".
+// initial load. A load error is worth surfacing loudly: an unparseable routing
+// file means a tenant has nowhere to send calls, and answering a call we cannot
+// route is worse than not starting.
 func NewRoutingStore(tenantsDir string) (*RoutingStore, error) {
 	s := &RoutingStore{
 		tenantsDir: tenantsDir,
 		tables:     make(map[string]*RoutingTable),
+		flows:      make(map[string]*FlowSet),
 	}
 	return s, s.Reload()
 }
 
-// Reload re-reads every <tenant>.routing.json from the tenants directory,
-// replacing the cache atomically. A malformed or invalid file fails the reload
-// and leaves the previous cache in place — a bad edit must not silently strip a
-// live tenant's routing.
+// Reload re-reads every tenant's configuration, replacing the cache atomically.
+// A malformed or invalid file fails the reload and leaves the previous cache in
+// force — a bad edit must never strip a live tenant's routing, which is the most
+// valuable property this store has.
 func (s *RoutingStore) Reload() error {
 	entries, err := os.ReadDir(s.tenantsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// No tenants directory at all: nothing routes deterministically.
+			// No tenants directory at all: nothing routes.
 			s.mu.Lock()
 			s.tables = make(map[string]*RoutingTable)
+			s.flows = make(map[string]*FlowSet)
 			s.mu.Unlock()
 			return nil
 		}
 		return fmt.Errorf("read tenants dir %s: %w", s.tenantsDir, err)
 	}
 
-	tables := make(map[string]*RoutingTable)
+	// Collect the tenants named by either file first, so a tenant with flows and
+	// no routing table is a validation error rather than a silently ignored file.
+	tenants := map[string]bool{}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), routingFileSuffix) {
+		if entry.IsDir() {
 			continue
 		}
-		path := filepath.Join(s.tenantsDir, entry.Name())
-		tenant := strings.TrimSuffix(entry.Name(), routingFileSuffix)
+		switch {
+		case strings.HasSuffix(entry.Name(), routingFileSuffix):
+			tenants[strings.TrimSuffix(entry.Name(), routingFileSuffix)] = true
+		case strings.HasSuffix(entry.Name(), flowFileSuffix):
+			tenants[strings.TrimSuffix(entry.Name(), flowFileSuffix)] = true
+		}
+	}
 
-		data, err := os.ReadFile(path)
+	tables := make(map[string]*RoutingTable)
+	flows := make(map[string]*FlowSet)
+	for tenant := range tenants {
+		table, flowSet, err := s.loadTenant(tenant)
 		if err != nil {
-			return fmt.Errorf("read routing file %s: %w", path, err)
+			return err
 		}
-		var table RoutingTable
-		if err := json.Unmarshal(data, &table); err != nil {
-			return fmt.Errorf("parse routing file %s: %w", path, err)
+		tables[tenant] = table
+		if flowSet != nil {
+			flows[tenant] = flowSet
 		}
-		if err := table.validate(tenant, data); err != nil {
-			return fmt.Errorf("invalid routing file %s: %w", path, err)
-		}
-		tables[tenant] = &table
 	}
 
 	s.mu.Lock()
 	s.tables = tables
+	s.flows = flows
 	s.mu.Unlock()
 	return nil
+}
+
+// loadTenant reads and validates one tenant's routing table and flows together.
+// Both files are parsed before either is validated, so validation can see across
+// them — a flow dialing a ring group is checked against the table that defines
+// it, in the same pass.
+func (s *RoutingStore) loadTenant(tenant string) (*RoutingTable, *FlowSet, error) {
+	routingPath := filepath.Join(s.tenantsDir, tenant+routingFileSuffix)
+	flowPath := filepath.Join(s.tenantsDir, tenant+flowFileSuffix)
+
+	data, err := os.ReadFile(routingPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, fmt.Errorf(
+				"tenant %s has %s but no %s: flows need a routing table to name their operator and ring groups",
+				tenant, tenant+flowFileSuffix, tenant+routingFileSuffix)
+		}
+		return nil, nil, fmt.Errorf("read routing file %s: %w", routingPath, err)
+	}
+	var table RoutingTable
+	if err := json.Unmarshal(data, &table); err != nil {
+		return nil, nil, fmt.Errorf("parse routing file %s: %w", routingPath, err)
+	}
+	if err := table.validate(tenant, data); err != nil {
+		return nil, nil, fmt.Errorf("invalid routing file %s: %w", routingPath, err)
+	}
+
+	flowData, err := os.ReadFile(flowPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Flows are optional: a tenant may route entirely by direct mapping.
+			return &table, nil, nil
+		}
+		return nil, nil, fmt.Errorf("read flow file %s: %w", flowPath, err)
+	}
+	var set FlowSet
+	if err := json.Unmarshal(flowData, &set); err != nil {
+		return nil, nil, fmt.Errorf("parse flow file %s: %w", flowPath, err)
+	}
+	if err := ValidateFlows(tenant, &table, &set); err != nil {
+		return nil, nil, fmt.Errorf("invalid flow file %s: %w", flowPath, err)
+	}
+
+	return &table, &set, nil
 }
 
 // ReloadSettings satisfies the file manager's reloader seam, so an edit made
@@ -312,6 +376,17 @@ func (s *RoutingStore) TenantRouting(tenant string) (*RoutingTable, bool) {
 	defer s.mu.RUnlock()
 	t, ok := s.tables[tenant]
 	return t, ok
+}
+
+// TenantFlows returns a tenant's flows, if it has any.
+func (s *RoutingStore) TenantFlows(tenant string) (*FlowSet, bool) {
+	if tenant == "" {
+		return nil, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	set, ok := s.flows[tenant]
+	return set, ok && set != nil
 }
 
 // Tenants returns the names of every tenant with a routing table, sorted. It is

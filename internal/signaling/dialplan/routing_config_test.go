@@ -146,3 +146,90 @@ func TestFailedReloadKeepsPreviousTables(t *testing.T) {
 		t.Errorf("operator = %q, want the previously loaded user/100", table.Operator)
 	}
 }
+
+// The shipped flows are configuration, and a flow that does not load is a
+// deployment that cannot route the calls it promises to. This loads the real
+// files rather than a fixture.
+func TestShippedFlowsLoad(t *testing.T) {
+	store, err := NewRoutingStore(repoResources(t, "tenants"))
+	if err != nil {
+		t.Fatalf("the shipped configuration must load: %v", err)
+	}
+
+	set, ok := store.TenantFlows("devtenant")
+	if !ok {
+		t.Fatal("devtenant should have flows")
+	}
+	if _, ok := set.Flow("main-ivr"); !ok {
+		t.Fatalf("expected the main-ivr flow, got %v", set.Names())
+	}
+}
+
+// A tenant's routing table and flows must load and validate as ONE unit. If they
+// were swapped in independently there would be a window where a flow points at a
+// ring group the other file just removed.
+func TestRoutingAndFlowsValidateTogether(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	// The flow dials a group the routing table does not define.
+	write("acme"+routingFileSuffix, `{"operator":"user/100","groups":{}}`)
+	write("acme"+flowFileSuffix, `{"flows":{"main":{
+		"start":"d",
+		"nodes":{
+			"d":{"type":"dial_user","entry":{"target":"group/claims"},
+				"exits":{"no_answer":"bye","busy":"bye","rejected":"bye","unavailable":"bye"}},
+			"bye":{"type":"hangup","entry":{}}
+		}}}}`)
+
+	_, err := NewRoutingStore(dir)
+	if err == nil {
+		t.Fatal("a flow dialing an undefined group must fail the load")
+	}
+	if !strings.Contains(err.Error(), "claims") {
+		t.Errorf("error should name the missing group: %v", err)
+	}
+}
+
+// Flows are optional: a tenant may route entirely by direct mapping.
+func TestTenantWithoutFlowsLoads(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "acme"+routingFileSuffix),
+		[]byte(`{"operator":"user/100","extensions":{"100":"user/100"}}`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	store, err := NewRoutingStore(dir)
+	if err != nil {
+		t.Fatalf("a tenant with no flows must load: %v", err)
+	}
+	if _, ok := store.TenantFlows("acme"); ok {
+		t.Error("a tenant with no flow file should report no flows")
+	}
+	if _, ok := store.TenantRouting("acme"); !ok {
+		t.Error("its routing table should still be loaded")
+	}
+}
+
+// A flow file with no routing table beside it is a misconfiguration, not a
+// tenant: flows need the table to name their operator and ring groups.
+func TestFlowsWithoutRoutingTableIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "acme"+flowFileSuffix),
+		[]byte(`{"flows":{}}`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, err := NewRoutingStore(dir)
+	if err == nil {
+		t.Fatal("a flow file with no routing table must fail the load")
+	}
+	if !strings.Contains(err.Error(), routingFileSuffix) {
+		t.Errorf("error should name the file that is missing: %v", err)
+	}
+}

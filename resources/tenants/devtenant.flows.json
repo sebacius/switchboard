@@ -1,0 +1,78 @@
+{
+  "_comment": "Flow graphs for the local-testing tenant. A flow is entered from the routing table's entry mapping ('100': 'flow/main-ivr'); a bare destination there stays valid as sugar for a one-node dial. Every node has the same {type, entry, exits} shape, exit names are fixed in Go, and the inter-node graph must be acyclic — repetition lives inside a node, bounded by ivr.max_retries, which is what makes every flow provably terminating.",
+
+  "flows": {
+    "main-ivr": {
+      "start": "greeting",
+      "timeout_ms": 300000,
+
+      "_comment_nodes": "Note that 'answered' is absent everywhere: it is terminal, so declaring it is a load error. The flow's job ends when the call is connected.",
+      "nodes": {
+        "greeting": {
+          "type": "ivr",
+          "entry": {
+            "prompt": {
+              "text": "Thanks for calling. Press 1 for sales, 2 for engineering, or hold for the operator.",
+              "voice": "alloy"
+            },
+            "timeout_ms": 5000,
+            "max_retries": 2,
+            "terminator": "#",
+            "interruptible": true
+          },
+          "exits": {
+            "1": "ring-sales",
+            "2": "ring-engineering",
+            "timeout": "to-operator",
+            "invalid": "to-operator",
+            "retries_exceeded": "to-operator"
+          }
+        },
+
+        "ring-sales": {
+          "type": "dial_user",
+          "entry": { "target": "user/110", "timeout_ms": 20000 },
+          "exits": {
+            "no_answer": "to-operator",
+            "busy": "to-operator",
+            "rejected": "to-operator",
+            "unavailable": "to-operator"
+          }
+        },
+
+        "ring-engineering": {
+          "type": "dial_user",
+          "entry": { "target": "group/engineering", "timeout_ms": 20000 },
+          "exits": {
+            "no_answer": "to-operator",
+            "busy": "to-operator",
+            "rejected": "to-operator",
+            "unavailable": "to-operator"
+          }
+        },
+
+        "to-operator": {
+          "type": "dial_user",
+          "entry": { "target": "user/100", "timeout_ms": 25000 },
+          "exits": {
+            "no_answer": "closing",
+            "busy": "closing",
+            "rejected": "closing",
+            "unavailable": "closing"
+          }
+        },
+
+        "closing": {
+          "type": "tts",
+          "entry": { "text": "Sorry, nobody is available right now. Please call back later.", "voice": "alloy" },
+          "exits": { "done": "bye" }
+        },
+
+        "bye": {
+          "type": "hangup",
+          "entry": { "cause": "normal_clearing" }
+        }
+      }
+    }
+  }
+}

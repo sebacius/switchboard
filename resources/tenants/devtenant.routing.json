@@ -11,7 +11,8 @@
     "102": "user/102",
     "105": "user/105",
     "110": "user/110",
-    "600": "group/engineering"
+    "600": "group/engineering",
+    "700": "flow/main-ivr"
   },
 
   "symbolic_targets": {

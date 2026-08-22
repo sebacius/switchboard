@@ -30,10 +30,10 @@
 ## 4. The `dialplan` package
 
 - [x] 4.1 Create `internal/signaling/dialplan/`; move `routing_config.go` and its tests from `agent/` as a pure rename commit (~15 files of import churn, reviewed separately)
-- [ ] 4.2 `flowdef.go`: `FlowDef`, `Node`, `NodeType`, the shared `PromptSpec`, and per-type entry structs decoded at load with `DisallowUnknownFields`
-- [ ] 4.3 `var nodeExits map[NodeType][]string` and `terminalExits` — exit names fixed in Go
-- [ ] 4.4 Load `<tenant>.routing.json` and `<tenant>.flows.json` as one atomic unit in a single fail-closed `Reload` pass
-- [ ] 4.5 Tests: a flow referencing a group the routing file does not define fails to load; a bad edit leaves the previous config in force
+- [x] 4.2 `flowdef.go`: `FlowDef`, `Node`, `NodeType`, the shared `PromptSpec`, and per-type entry structs decoded at load with `DisallowUnknownFields`
+- [x] 4.3 `var nodeExits map[NodeType][]string` and `terminalExits` — exit names fixed in Go
+- [x] 4.4 Load `<tenant>.routing.json` and `<tenant>.flows.json` as one atomic unit in a single fail-closed `Reload` pass
+- [x] 4.5 Tests: a flow referencing a group the routing file does not define fails to load; a bad edit leaves the previous config in force
 
 ## 5. Digit-map matcher
 
@@ -95,12 +95,12 @@
 
 ## 11. Validator
 
-- [ ] 11.1 `dialplan.Validate(tenant, table, flows, opts) []Problem` returning **all** problems with a path like `flows.main-ivr.nodes.greeting.exits.timeout`
-- [ ] 11.2 Schema checks: unknown node type, unknown entry field, missing required fields
-- [ ] 11.3 Exit checks: declared exits exist for the type; every non-terminal exit wired; terminal exits absent; every target names a real node
-- [ ] 11.4 `start` exists; BFS reachability; unreachable nodes are an error
-- [ ] 11.5 Acyclicity by three-colour DFS, reporting the actual cycle path
-- [ ] 11.6 Every sink node is terminal-typed
+- [x] 11.1 `dialplan.Validate(tenant, table, flows, opts) []Problem` returning **all** problems with a path like `flows.main-ivr.nodes.greeting.exits.timeout`
+- [x] 11.2 Schema checks: unknown node type, unknown entry field, missing required fields
+- [x] 11.3 Exit checks: declared exits exist for the type; every non-terminal exit wired; terminal exits absent; every target names a real node
+- [x] 11.4 `start` exists; BFS reachability; unreachable nodes are an error
+- [x] 11.5 Acyclicity by three-colour DFS, reporting the actual cycle path
+- [x] 11.6 Every sink node is terminal-typed
 - [ ] 11.7 Target and COS checks via `Policy.Classify` — syntax, group existence, symbolic membership. **No registration check** (runtime state; would fail every boot)
 - [ ] 11.8 Digit-map checks per group 5
 - [ ] 11.9 E911 **warning-only**: a pattern that shadows an emergency number; a PSTN-capable tenant with no emergency route
