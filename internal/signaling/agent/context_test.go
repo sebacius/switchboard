@@ -1,40 +1,38 @@
 package agent
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestCallContextFormatForPrompt(t *testing.T) {
+// CallContext is the identity every layer shares. These are the only fields
+// that survived the supervisor, and the direction constants are what gates
+// internal-only capabilities like call retrieval.
+func TestCallContextCarriesCallIdentity(t *testing.T) {
 	cc := CallContext{
 		Caller:    "102",
 		Callee:    "105",
 		Direction: DirectionInternal,
 		Tenant:    "acme",
 	}
-	out := cc.FormatForPrompt()
 
-	if !strings.HasPrefix(out, "# Call Context") {
-		t.Fatalf("expected Call Context header, got:\n%s", out)
+	if cc.Caller != "102" || cc.Callee != "105" {
+		t.Errorf("caller/callee = %q/%q, want 102/105", cc.Caller, cc.Callee)
 	}
-	for _, want := range []string{"Caller: 102", "Callee: 105", "Direction: internal", "Tenant: acme"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("output missing %q:\n%s", want, out)
-		}
+	if cc.Tenant != "acme" {
+		t.Errorf("tenant = %q, want acme", cc.Tenant)
+	}
+	if cc.Direction != DirectionInternal {
+		t.Errorf("direction = %q, want %q", cc.Direction, DirectionInternal)
 	}
 }
 
-func TestEventKindString(t *testing.T) {
-	cases := map[EventKind]string{
-		EventSpeech:    "speech",
-		EventDTMF:      "dtmf",
-		EventSignaling: "signaling",
-		EventMedia:     "media",
-		EventKind(99):  "unknown",
-	}
-	for k, want := range cases {
-		if got := k.String(); got != want {
-			t.Fatalf("EventKind(%d).String() = %q, want %q", int(k), got, want)
+func TestDirectionsAreDistinct(t *testing.T) {
+	seen := map[Direction]bool{}
+	for _, d := range []Direction{DirectionInternal, DirectionInbound, DirectionOutbound} {
+		if d == "" {
+			t.Error("a direction constant is empty")
 		}
+		if seen[d] {
+			t.Errorf("duplicate direction value %q", d)
+		}
+		seen[d] = true
 	}
 }

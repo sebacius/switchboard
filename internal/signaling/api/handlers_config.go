@@ -14,8 +14,6 @@ import (
 
 // FileProvider provides file management operations for the API.
 type FileProvider interface {
-	GetSettings() (string, error)
-	PutSettings(content string) error
 	ListTenants() ([]filemanager.TenantInfo, error)
 	GetTenant(name string) (string, error)
 	CreateTenant(name, content string) error
@@ -27,48 +25,6 @@ type FileProvider interface {
 // SetFileProvider sets the file manager for config API endpoints.
 func (s *Server) SetFileProvider(fp FileProvider) {
 	s.fileProvider = fp
-}
-
-// handleConfigSettings handles GET/PUT /api/v1/config/settings
-func (s *Server) handleConfigSettings(w http.ResponseWriter, r *http.Request) {
-	if s.fileProvider == nil {
-		http.Error(w, "File management not configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		content, err := s.fileProvider.GetSettings()
-		if err != nil {
-			slog.Error("[API] Failed to read settings", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		s.writeJSON(w, map[string]string{"content": content})
-
-	case http.MethodPut:
-		body, err := io.ReadAll(io.LimitReader(r.Body, 512*1024))
-		if err != nil {
-			http.Error(w, "Failed to read body", http.StatusBadRequest)
-			return
-		}
-		var req struct {
-			Content string `json:"content"`
-		}
-		if err := json.Unmarshal(body, &req); err != nil {
-			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
-			return
-		}
-		if err := s.fileProvider.PutSettings(req.Content); err != nil {
-			slog.Error("[API] Failed to write settings", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		s.writeJSON(w, map[string]string{"status": "ok"})
-
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
 }
 
 // handleConfigTenantList handles GET /api/v1/config/tenants and POST (create)

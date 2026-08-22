@@ -6,15 +6,19 @@ import (
 	"sync"
 )
 
-// The model is UNTRUSTED. Everything in this file is the deterministic
-// authorization boundary that adjudicates a tool call before it executes
-// (design #10). It NEVER reads prompt/conversation content — the only inputs are
-// the tenant policy config and the symbolic target the model emitted. Prompt
-// injection therefore cannot move any verdict here.
+// CONFIG IS NOT AUTHORITY. Everything in this file is the deterministic
+// authorization boundary that adjudicates a destination before it is dialed.
+//
+// The untrusted input used to be a language model's tool call; it is now a
+// configuration file — an entry mapping, a flow node, or a ring group member.
+// The principle is unchanged: the only inputs to a verdict are the tenant's
+// policy and the symbolic target being asked for. Anyone able to edit a routing
+// or flow file still cannot grant themselves reach this file does not already
+// permit.
 
 // Decision is the verdict of an authorization check: allow or deny, plus a
-// machine-stable reason that is both logged and (on deny) surfaced to the model
-// as the tool result so it can self-correct.
+// machine-stable reason that is logged and, on deny, carried into the call
+// record so a refused destination is auditable.
 type Decision struct {
 	Allowed bool
 	// Reason is a short, stable explanation (e.g. "external dial not enabled for
@@ -49,8 +53,8 @@ type TenantPolicy struct {
 	// explicit empty non-nil slice to bar nothing.
 	BarredPrefixes []string
 
-	// SymbolicTargets maps model-emitted symbolic names (extension names, named
-	// forwards) to concrete dial targets. This is capability narrowing: the model
+	// SymbolicTargets maps symbolic names (extension names, named forwards) to
+	// concrete dial targets. This is capability narrowing: configuration
 	// dials "sales" or "front-desk", never a raw external number. A resolved
 	// target may itself be internal ("user/1001") or external ("+18005551212"),
 	// and external resolutions are still subject to the full COS below.
@@ -120,10 +124,10 @@ func NewPolicy(tenant string, cfg TenantPolicy, log *slog.Logger) *Policy {
 	}
 }
 
-// AuthorizeDial adjudicates a dial whose target is a SYMBOLIC name the model
+// AuthorizeDial adjudicates a dial whose target is a SYMBOLIC name the caller
 // emitted through the normal dial tool. It resolves the symbol deterministically
 // and runs the resolved target through the full COS. It returns the resolved
-// concrete target (empty on deny) and the Decision. The model can never express
+// concrete target (empty on deny) and the Decision. Configuration can never express
 // a raw external number here — an unrecognized symbol that is not an internal
 // "user/..." target is denied, which is what makes capability narrowing real.
 func (p *Policy) AuthorizeDial(symbolicTarget string) (resolvedTarget string, d Decision) {

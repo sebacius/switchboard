@@ -39,7 +39,7 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 
 	activeTab := r.URL.Query().Get("tab")
 	if activeTab == "" {
-		activeTab = "settings"
+		activeTab = "tenants"
 	}
 
 	data := ConfigPageData{
@@ -59,61 +59,6 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 	if err := s.templates.RenderConfig(w, data); err != nil {
 		slog.Error("[UI] Failed to render config page", "error", err)
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
-	}
-}
-
-// handleConfigSettingsPartial renders the settings editor partial
-func (s *Server) handleConfigSettingsPartial(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
-	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	content, err := c.GetSettings(r.Context())
-	data := ConfigSettingsData{Server: c.Name()}
-	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load settings: %v", err)
-	} else {
-		data.Content = content
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderConfigSettings(w, data); err != nil {
-		slog.Error("[UI] Failed to render config settings", "error", err)
-	}
-}
-
-// handleConfigSettingsSave saves the settings.md content
-func (s *Server) handleConfigSettingsSave(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	c := s.findClient(r.URL.Query().Get("server"))
-	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid form data", http.StatusBadRequest)
-		return
-	}
-
-	content := r.FormValue("content")
-	data := ConfigSettingsData{Server: c.Name(), Content: content}
-
-	if err := c.PutSettings(r.Context(), content); err != nil {
-		data.Error = fmt.Sprintf("Failed to save settings: %v", err)
-	} else {
-		data.Success = "Settings saved successfully"
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderConfigSettings(w, data); err != nil {
-		slog.Error("[UI] Failed to render config settings", "error", err)
 	}
 }
 

@@ -2,14 +2,11 @@ package config
 
 import (
 	"flag"
-	"fmt"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/sebas/switchboard/internal/signaling/llm"
 )
 
 // Config holds the signaling server configuration
@@ -23,42 +20,9 @@ type Config struct {
 	// API settings
 	APIPort int // HTTP API port (default 8080)
 
-	// Supervisor settings. Every call is supervised by the LLM agent; there is
-	// no dialplan.
-	// LLMProvider is the backend selected by the --llm-model prefix.
-	LLMProvider llm.Provider
-	// LLMModelRef is the raw --llm-model value, kept for logs and the banner.
-	LLMModelRef string
-	// LLMModel is the model id with any provider prefix stripped — what goes on
-	// the wire.
-	LLMModel string
-	// LLMServerURL is the resolved endpoint: the explicit --llm-server /
-	// LLM_SERVER if one was given, otherwise the provider's own default.
-	LLMServerURL string
-	TTSVoice     string // TTS voice used for the supervisor's speech
-
-	// The API key is deliberately NOT here. It is read from the environment at
-	// the one place the client is built. This struct is echoed by the startup
-	// banner and passed around freely; a secret that never enters it cannot leak
-	// from it.
-
-	// LLMKeepAlive is how long Ollama holds the model resident after a request.
-	// Ollama's own default is 5 minutes, which is shorter than the gap between
-	// calls on a quiet PBX — so without this the model unloads overnight and the
-	// first caller of the day pays a multi-gigabyte load inside their turn budget.
-	LLMKeepAlive string
-
-	// KeepAliveIgnoredWarning is non-empty when --llm-keep-alive was set
-	// explicitly for a provider that ignores it. The caller logs it once the
-	// logger exists.
-	KeepAliveIgnoredWarning string
-
-	// TurnTimeout bounds a mid-call turn; FirstTurnTimeout bounds the first one,
-	// which happens while the caller hears ringback and may have to load the
-	// model. They differ because they are bounded by different things — see
-	// agent.RunnerConfig.
-	TurnTimeout      time.Duration
-	FirstTurnTimeout time.Duration
+	// TTSVoice is the voice used for flow prompts (tts and ivr nodes) that do
+	// not name one of their own.
+	TTSVoice string
 
 	// PolicyPath points at the Class-of-Service / capacity JSON: per-tenant
 	// channel limits, external-dial allowlists, symbolic targets, and the spend
@@ -66,13 +30,11 @@ type Config struct {
 	PolicyPath string
 
 	// File management paths
-	SettingsPath string // Directory containing settings.md (default "resources/config")
-	TenantsPath  string // Directory containing tenant .md files (default "resources/tenants")
-	// RoutingPath is the directory holding per-tenant <tenant>.routing.json
-	// files. Empty means "the same directory as the tenant prompts", which is
-	// where they belong: default.md is a tenant's judgement, default.routing.json
-	// is the same tenant's routing data. The flag exists for deployments that
-	// mount the two separately.
+	TenantsPath string // Directory containing per-tenant configuration files (default "resources/tenants")
+	// RoutingPath is the directory holding per-tenant <tenant>.routing.json and
+	// <tenant>.flows.json files. Empty means the same directory as
+	// --tenants-path, which is where they belong; the flag exists for
+	// deployments that mount them separately.
 	RoutingPath string
 
 	// Trunk settings
@@ -95,8 +57,8 @@ type Config struct {
 
 // Load loads configuration from command line flags and environment variables.
 //
-// It returns an error rather than exiting so that a bad --llm-model is reported
-// before the startup banner prints resolved values it could not resolve.
+// It returns an error rather than exiting so that a bad value is reported before
+// the startup banner prints resolved values it could not resolve.
 func Load() (*Config, error) {
 	cfg := &Config{
 		GRPCConnectTimeout:    10 * time.Second,
@@ -110,20 +72,10 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.BindAddr, "bind", "0.0.0.0", "Bind address for SIP and API")
 	flag.StringVar(&cfg.AdvertiseAddr, "advertise", "", "Address to advertise in SIP headers (auto-detected if not set)")
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error)")
-	flag.StringVar(&cfg.LLMServerURL, "llm-server", llm.DefaultOllamaServer,
-		"LLM server URL. Defaults to "+llm.DefaultOllamaServer+" for ollama and "+llm.DefaultOpenAIServer+
-			" for openai; set it explicitly to use an OpenAI-compatible gateway")
-	flag.StringVar(&cfg.LLMModel, "llm-model", "qwen3:8b",
-		"Supervisor model as [provider/]model (providers: ollama, openai). No prefix means ollama")
-	flag.StringVar(&cfg.TTSVoice, "tts-voice", "alloy", "TTS voice for the supervisor")
-	flag.StringVar(&cfg.LLMKeepAlive, "llm-keep-alive", "30m",
-		"How long Ollama holds the model resident after a request (Ollama format; -1 for indefinitely). Ignored by openai")
-	flag.DurationVar(&cfg.TurnTimeout, "turn-timeout", 30*time.Second, "Deadline for a mid-call supervisor turn")
-	flag.DurationVar(&cfg.FirstTurnTimeout, "first-turn-timeout", 90*time.Second, "Deadline for the first supervisor turn, which may include loading the model while the caller hears ringback")
+	flag.StringVar(&cfg.TTSVoice, "tts-voice", "alloy", "Default TTS voice for flow prompts")
 	flag.StringVar(&cfg.PolicyPath, "policy-config", "resources/config/policy.json", "Path to tenant Class-of-Service and channel-limit configuration")
-	flag.StringVar(&cfg.SettingsPath, "settings-path", "resources/config", "Directory containing settings.md")
-	flag.StringVar(&cfg.TenantsPath, "tenants-path", "resources/tenants", "Directory containing tenant .md files")
-	flag.StringVar(&cfg.RoutingPath, "routing-path", "", "Directory containing per-tenant <tenant>.routing.json files (defaults to --tenants-path)")
+	flag.StringVar(&cfg.TenantsPath, "tenants-path", "resources/tenants", "Directory containing per-tenant configuration files")
+	flag.StringVar(&cfg.RoutingPath, "routing-path", "", "Directory containing per-tenant <tenant>.routing.json and <tenant>.flows.json files (defaults to --tenants-path)")
 	flag.StringVar(&cfg.TrunkConfigPath, "trunk-config", "resources/config/trunk_peers.json", "Path to trunk peers configuration")
 	flag.StringVar(&cfg.RoutesPath, "routes-path", "resources/config/routes.json", "Path to DID->tenant routes (routes.json)")
 
@@ -168,45 +120,11 @@ func Load() (*Config, error) {
 			cfg.RTPManagerAddrs = parseAddressList(rtpmanager)
 		}
 	}
-	// Whether the endpoint was chosen explicitly decides whether the provider's
-	// own default applies. flag.Visit reports only the flags actually present on
-	// the command line, which answers exactly that question — comparing the value
-	// against the default string would silently redirect an operator whose
-	// OpenAI-compatible gateway happens to listen on Ollama's port.
-	llmServerExplicit := false
-	llmKeepAliveExplicit := false
-	flag.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "llm-server":
-			llmServerExplicit = true
-		case "llm-keep-alive":
-			llmKeepAliveExplicit = true
-		}
-	})
-	if llmServer := os.Getenv("LLM_SERVER"); llmServer != "" {
-		cfg.LLMServerURL = llmServer
-		llmServerExplicit = true
-	}
-	if llmModel := os.Getenv("LLM_MODEL"); llmModel != "" {
-		cfg.LLMModel = llmModel
-	}
 	if voice := os.Getenv("TTS_VOICE"); voice != "" {
 		cfg.TTSVoice = voice
 	}
-	if keepAlive := os.Getenv("LLM_KEEP_ALIVE"); keepAlive != "" {
-		cfg.LLMKeepAlive = keepAlive
-	}
-	if d, err := time.ParseDuration(os.Getenv("TURN_TIMEOUT")); err == nil && d > 0 {
-		cfg.TurnTimeout = d
-	}
-	if d, err := time.ParseDuration(os.Getenv("FIRST_TURN_TIMEOUT")); err == nil && d > 0 {
-		cfg.FirstTurnTimeout = d
-	}
 	if policyPath := os.Getenv("POLICY_CONFIG"); policyPath != "" {
 		cfg.PolicyPath = policyPath
-	}
-	if settingsPath := os.Getenv("SETTINGS_PATH"); settingsPath != "" {
-		cfg.SettingsPath = settingsPath
 	}
 	if tenantsPath := os.Getenv("TENANTS_PATH"); tenantsPath != "" {
 		cfg.TenantsPath = tenantsPath
@@ -221,28 +139,10 @@ func Load() (*Config, error) {
 		cfg.RoutesPath = routesPath
 	}
 
-	// Routing tables live beside the tenant prompts unless pointed elsewhere.
+	// Routing and flow files live beside the other tenant configuration unless
+	// pointed elsewhere.
 	if cfg.RoutingPath == "" {
 		cfg.RoutingPath = cfg.TenantsPath
-	}
-
-	// Resolve the supervisor's provider last, so it sees the final --llm-model
-	// after every override has been applied.
-	cfg.LLMModelRef = cfg.LLMModel
-	provider, modelID, err := llm.ParseModelRef(cfg.LLMModel)
-	if err != nil {
-		return nil, err
-	}
-	cfg.LLMProvider, cfg.LLMModel = provider, modelID
-
-	if !llmServerExplicit {
-		cfg.LLMServerURL = llm.DefaultServerURL(provider)
-	}
-
-	// Discarding an explicitly-set flag in silence is a debugging tax; say so.
-	if llmKeepAliveExplicit && provider != llm.ProviderOllama {
-		cfg.KeepAliveIgnoredWarning = fmt.Sprintf(
-			"--llm-keep-alive is an Ollama setting and is ignored by provider %q", provider)
 	}
 
 	return cfg, nil

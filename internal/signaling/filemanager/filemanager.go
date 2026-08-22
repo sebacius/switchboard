@@ -9,23 +9,21 @@ import (
 	"time"
 )
 
-// SettingsReloader refreshes the cached prompts an edit through this API
-// affects. The agent's PromptStore implements it, so writing a tenant file or
-// settings.md takes effect on the NEXT call without a restart — calls already in
-// flight keep the prompt they were admitted with.
+// SettingsReloader refreshes the cached configuration an edit through this API
+// affects. The routing store implements it, so writing a tenant file takes
+// effect on the NEXT call without a restart — calls already in flight keep the
+// configuration they were admitted with.
 type SettingsReloader interface {
 	ReloadSettings() error
 }
 
 // MultiReloader fans one reload out to several reloaders, reporting every
-// failure rather than the first. A tenant is described by two files now — its
-// prompt (.md) and its routing table (.routing.json) — and both are edited
-// through this API, so one config reload has to refresh both stores or they
-// drift until the next restart.
+// failure rather than the first. It is kept for deployments that register more
+// than one store behind the config API.
 type MultiReloader []SettingsReloader
 
-// ReloadSettings reloads every member, accumulating errors so one bad routing
-// file does not hide a prompt problem behind it.
+// ReloadSettings reloads every member, accumulating errors so one failure does
+// not hide another behind it.
 func (m MultiReloader) ReloadSettings() error {
 	var errs []string
 	for _, r := range m {
@@ -42,7 +40,7 @@ func (m MultiReloader) ReloadSettings() error {
 	return nil
 }
 
-// TenantInfo describes a tenant markdown file.
+// TenantInfo describes a tenant's configuration files.
 type TenantInfo struct {
 	Name     string    `json:"name"`
 	Size     int64     `json:"size"`
@@ -51,14 +49,12 @@ type TenantInfo struct {
 
 // Config holds paths and dependencies for the FileManager.
 type Config struct {
-	SettingsDir      string           // directory containing settings.md
-	TenantsDir       string           // directory containing tenant .md files
-	SettingsReloader SettingsReloader // optional, for refreshing cached prompts
+	TenantsDir       string           // directory containing per-tenant configuration files
+	SettingsReloader SettingsReloader // optional, for refreshing cached configuration
 }
 
-// FileManager provides safe file operations for settings and tenant prompts.
+// FileManager provides safe file operations for tenant configuration.
 type FileManager struct {
-	settingsDir      string
 	tenantsDir       string
 	settingsReloader SettingsReloader
 }
@@ -68,28 +64,9 @@ var tenantNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_\-\.&]*$`)
 // New creates a new FileManager.
 func New(cfg Config) *FileManager {
 	return &FileManager{
-		settingsDir:      cfg.SettingsDir,
 		tenantsDir:       cfg.TenantsDir,
 		settingsReloader: cfg.SettingsReloader,
 	}
-}
-
-// GetSettings reads the settings.md file.
-func (fm *FileManager) GetSettings() (string, error) {
-	data, err := os.ReadFile(filepath.Join(fm.settingsDir, "settings.md"))
-	if err != nil {
-		return "", fmt.Errorf("read settings: %w", err)
-	}
-	return string(data), nil
-}
-
-// PutSettings writes the settings.md file.
-func (fm *FileManager) PutSettings(content string) error {
-	path := filepath.Join(fm.settingsDir, "settings.md")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write settings: %w", err)
-	}
-	return nil
 }
 
 // ListTenants returns info about all tenant markdown files.

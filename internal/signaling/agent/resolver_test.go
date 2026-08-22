@@ -128,7 +128,7 @@ func TestResolveExtensionToRingGroup(t *testing.T) {
 		t.Fatalf("expected the claims group, got %+v", dest)
 	}
 	// Defaults are applied at resolution, not left for the ring path to guess.
-	if dest.Group.MemberTimeoutMs != DefaultMemberTimeoutMs || dest.Group.NoAnswer != NoAnswerSupervisor {
+	if dest.Group.MemberTimeoutMs != DefaultMemberTimeoutMs {
 		t.Fatalf("group defaults were not applied: %+v", dest.Group)
 	}
 }

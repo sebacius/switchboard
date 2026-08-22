@@ -29,13 +29,8 @@ func groupTable() *RoutingTable {
 		Groups: map[string]RingGroup{
 			"seq": {Strategy: StrategySequential, Members: []string{"user/105", "user/106", "user/107"}},
 			"rr":  {Strategy: StrategyRoundRobin, Members: []string{"user/105", "user/106", "user/107"}},
-			"hangup": {
-				Strategy: StrategySequential, Members: []string{"user/105"},
-				NoAnswer: NoAnswerHangup,
-			},
 			"operator": {
 				Strategy: StrategySequential, Members: []string{"user/105"},
-				NoAnswer: NoAnswerOperator,
 			},
 		},
 	}
@@ -183,54 +178,44 @@ func TestRingGroupMembersAreAuthorizedIndividually(t *testing.T) {
 
 // --- No-answer outcomes ---
 
-// The default: nobody answered, the call is still pre-answer and intact, so the
-// supervisor picks it up and can offer voicemail or another person.
-func TestGroupNoAnswerHandsToSupervisor(t *testing.T) {
-	res := newResolution(t)
-	sess := newFakeSession()
-	sess.groupErr = ErrGroupNoAnswer
-
-	if res.Handle(context.Background(), sess, ptr(internalCall("200"))) {
-		t.Fatal("an unanswered group with no_answer=supervisor must hand off")
-	}
-	if sess.HasAnswered() {
-		t.Fatal("the call must be left pre-answer so the supervisor still has both options")
-	}
-}
-
+// A group no longer carries its own fallback. When nobody answers, resolution
+// sends the caller to the tenant operator — one place where that decision is
+// written down, rather than two that can disagree.
 func TestGroupNoAnswerForwardsToOperator(t *testing.T) {
 	res := newResolution(t)
 	sess := newFakeSession()
 	sess.groupErr = ErrGroupNoAnswer
 
 	if !res.Handle(context.Background(), sess, ptr(internalCall("203"))) {
-		t.Fatal("no_answer=operator is handled by resolution, not the supervisor")
+		t.Fatal("an unanswered group is handled by resolution, not declined")
 	}
 	if got := sess.forwards(); len(got) != 1 || got[0] != "user/150" {
 		t.Fatalf("expected a forward to the operator, got %v", got)
 	}
 }
 
-func TestGroupNoAnswerHangsUp(t *testing.T) {
+// Nobody answering must never become a hangup: the caller gets a destination or
+// an honest status, not silence.
+func TestGroupNoAnswerNeverHangsUp(t *testing.T) {
 	res := newResolution(t)
 	sess := newFakeSession()
 	sess.groupErr = ErrGroupNoAnswer
 
-	if !res.Handle(context.Background(), sess, ptr(internalCall("202"))) {
-		t.Fatal("no_answer=hangup ends the call deterministically")
-	}
-	if sess.hangupCalls.Load() != 1 {
-		t.Fatalf("expected exactly one hangup, got %d", sess.hangupCalls.Load())
+	res.Handle(context.Background(), sess, ptr(internalCall("203")))
+
+	if sess.hangupCalls.Load() != 0 {
+		t.Fatalf("expected no hangup, got %d", sess.hangupCalls.Load())
 	}
 }
 
-// A tenant that asks for the operator but has none must not drop the caller:
-// the floor is "hand it to the supervisor", never "hang up".
-func TestGroupNoAnswerWithoutOperatorHandsOff(t *testing.T) {
+// A tenant whose group goes unanswered and that has no operator must not drop
+// the caller: resolution declines so the caller is told something, never a
+// silent hangup.
+func TestGroupNoAnswerWithoutOperatorDeclines(t *testing.T) {
 	routing := StaticRouting{"acme": {
 		Extensions: map[string]string{"220": "group/nooperator"},
 		Groups: map[string]RingGroup{
-			"nooperator": {Strategy: StrategySequential, Members: []string{"user/105"}, NoAnswer: NoAnswerOperator},
+			"nooperator": {Strategy: StrategySequential, Members: []string{"user/105"}},
 		},
 	}}
 	res := NewCallResolution(CallResolutionConfig{
@@ -244,7 +229,7 @@ func TestGroupNoAnswerWithoutOperatorHandsOff(t *testing.T) {
 	sess.groupErr = ErrGroupNoAnswer
 
 	if res.Handle(context.Background(), sess, ptr(internalCall("220"))) {
-		t.Fatal("with no operator configured the call must reach the supervisor")
+		t.Fatal("with no operator configured resolution must decline the call")
 	}
 	if sess.hangupCalls.Load() != 0 {
 		t.Fatal("the caller must not be hung up on")

@@ -108,7 +108,6 @@ func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog
 	mux.HandleFunc("/api/v1/park/", s.handleParkSlot)
 
 	// Configuration management
-	mux.HandleFunc("/api/v1/config/settings", s.handleConfigSettings)
 	mux.HandleFunc("/api/v1/config/tenants", s.handleConfigTenantList)
 	mux.HandleFunc("/api/v1/config/tenants/", s.handleConfigTenant)
 	mux.HandleFunc("/api/v1/config/reload", s.handleConfigReload)

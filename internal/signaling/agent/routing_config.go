@@ -23,20 +23,18 @@ import (
 // targets read the SAME table so a name cannot mean two things.
 //
 // The table is data, never authority: every destination it produces still goes
-// through Policy.AuthorizeDial exactly as a model-issued dial does.
-
-// RoutingTargetAssistant is the sentinel destination meaning "this call is for
-// the AI receptionist" — the resolver hands off to the supervisor rather than
-// dialing anything.
-const RoutingTargetAssistant = "assistant"
+// through Policy.AuthorizeDial.
 
 // routingGroupPrefix marks a destination as a named ring group in this tenant's
 // table ("group/claims"), as opposed to a concrete endpoint ("user/130").
 const routingGroupPrefix = "group/"
 
-// routingFileSuffix is the per-tenant routing file's extension. It sits beside
-// the tenant's .md in the same tenants directory, so "default" is described by
-// default.md (judgement) and default.routing.json (data).
+// retiredAssistantTarget is the sentinel that used to mean "hand this call to
+// the LLM supervisor". It is kept only so the loader can reject it by name.
+const retiredAssistantTarget = "assistant"
+
+// routingFileSuffix is the per-tenant routing file's extension, so "default" is
+// described by default.routing.json.
 const routingFileSuffix = ".routing.json"
 
 // DefaultRetrievalPrefix is the call-retrieval dial prefix when a tenant does
@@ -64,20 +62,6 @@ const (
 	StrategyRoundRobin RingStrategy = "round-robin"
 )
 
-// NoAnswerAction is what happens when no ring group member answers within the
-// group's budget.
-type NoAnswerAction string
-
-const (
-	// NoAnswerSupervisor hands the call to the LLM supervisor, which answers and
-	// takes it from there.
-	NoAnswerSupervisor NoAnswerAction = "supervisor"
-	// NoAnswerOperator forwards to the tenant's configured operator.
-	NoAnswerOperator NoAnswerAction = "operator"
-	// NoAnswerHangup ends the call deterministically.
-	NoAnswerHangup NoAnswerAction = "hangup"
-)
-
 // RingGroup is one named group of endpoints rung together under a strategy.
 type RingGroup struct {
 	// Strategy is "sequential" or "round-robin". Required.
@@ -88,9 +72,6 @@ type RingGroup struct {
 	// MemberTimeoutMs bounds one member's ring. Zero inherits
 	// DefaultMemberTimeoutMs.
 	MemberTimeoutMs int `json:"member_timeout_ms"`
-	// NoAnswer is the outcome when the group's budget expires with no answer.
-	// Empty inherits NoAnswerSupervisor.
-	NoAnswer NoAnswerAction `json:"no_answer"`
 }
 
 // RoutingTable is one tenant's structured routing data.
@@ -142,9 +123,6 @@ func (t *RoutingTable) Group(name string) (RingGroup, bool) {
 	if g.MemberTimeoutMs <= 0 {
 		g.MemberTimeoutMs = DefaultMemberTimeoutMs
 	}
-	if g.NoAnswer == "" {
-		g.NoAnswer = NoAnswerSupervisor
-	}
 	return g, true
 }
 
@@ -161,7 +139,7 @@ func IsGroupTarget(target string) (string, bool) {
 // The load path is the right place to be strict: a malformed group discovered
 // mid-call is an unanswered phone, while a malformed group discovered at load
 // is a log line an operator can act on.
-func (t *RoutingTable) validate(tenant string) error {
+func (t *RoutingTable) validate(tenant string, raw []byte) error {
 	for name, g := range t.Groups {
 		switch g.Strategy {
 		case StrategySequential, StrategyRoundRobin:
@@ -172,14 +150,14 @@ func (t *RoutingTable) validate(tenant string) error {
 		if len(g.Members) == 0 {
 			return fmt.Errorf("tenant %s: ring group %q has no members", tenant, name)
 		}
-		switch g.NoAnswer {
-		case "", NoAnswerSupervisor, NoAnswerOperator, NoAnswerHangup:
-		default:
-			return fmt.Errorf("tenant %s: ring group %q has unknown no_answer %q", tenant, name, g.NoAnswer)
-		}
-		if g.NoAnswer == NoAnswerOperator && strings.TrimSpace(t.Operator) == "" {
-			return fmt.Errorf("tenant %s: ring group %q sets no_answer=operator but the tenant has no operator", tenant, name)
-		}
+	}
+
+	// Configuration written for the LLM supervisor must fail loudly and by name.
+	// "unknown destination" would send an operator hunting through a diff for a
+	// value that used to be correct; saying what was removed, and what replaced
+	// it, is the difference between a five-minute fix and an afternoon.
+	if err := t.rejectRetiredVocabulary(tenant, raw); err != nil {
+		return err
 	}
 
 	// A destination naming a group that does not exist is a routing dead end;
@@ -201,6 +179,48 @@ func (t *RoutingTable) validate(tenant string) error {
 		return err
 	}
 	return check("DID", t.DIDs)
+}
+
+// rejectRetiredVocabulary fails a table that still speaks the LLM supervisor's
+// language. Both values below were valid configuration one release ago, so the
+// error has to say what happened rather than merely that the value is unknown.
+//
+// It reads the raw bytes because these keys no longer exist on the structs —
+// encoding/json discards unknown fields silently, which is precisely how a
+// tenant would keep "working" while routing calls somewhere the operator never
+// intended.
+func (t *RoutingTable) rejectRetiredVocabulary(tenant string, raw []byte) error {
+	for _, m := range []map[string]string{t.Extensions, t.SymbolicTargets, t.DIDs} {
+		for key, dest := range m {
+			if strings.TrimSpace(dest) == retiredAssistantTarget {
+				return fmt.Errorf(
+					"tenant %s: %q routes to %q, which is no longer a valid destination — "+
+						"the LLM supervisor was removed; route it to an extension, a ring group, or a flow",
+					tenant, key, retiredAssistantTarget)
+			}
+		}
+	}
+
+	var probe struct {
+		Groups map[string]struct {
+			NoAnswer string `json:"no_answer"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		// The table already parsed once; a probe failure means nothing to report.
+		return nil
+	}
+	for name, g := range probe.Groups {
+		if strings.TrimSpace(g.NoAnswer) == "" {
+			continue
+		}
+		return fmt.Errorf(
+			"tenant %s: ring group %q sets no_answer=%q, which is no longer configured on the group — "+
+				"a group's fallback now belongs to whatever rang it, so put it on the dial_user node's "+
+				"no_answer exit (or the tenant operator)",
+			tenant, name, g.NoAnswer)
+	}
+	return nil
 }
 
 // RoutingSource resolves a tenant's routing table. It is the seam the resolver
@@ -267,7 +287,7 @@ func (s *RoutingStore) Reload() error {
 		if err := json.Unmarshal(data, &table); err != nil {
 			return fmt.Errorf("parse routing file %s: %w", path, err)
 		}
-		if err := table.validate(tenant); err != nil {
+		if err := table.validate(tenant, data); err != nil {
 			return fmt.Errorf("invalid routing file %s: %w", path, err)
 		}
 		tables[tenant] = &table
@@ -279,8 +299,8 @@ func (s *RoutingStore) Reload() error {
 	return nil
 }
 
-// ReloadSettings satisfies the file manager's reloader seam, matching
-// PromptStore so prompts and routing tables refresh through one config path.
+// ReloadSettings satisfies the file manager's reloader seam, so an edit made
+// through the config API takes effect on the next call without a restart.
 func (s *RoutingStore) ReloadSettings() error { return s.Reload() }
 
 // TenantRouting implements RoutingSource.

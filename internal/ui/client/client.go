@@ -313,33 +313,6 @@ func (c *Client) postWithBody(ctx context.Context, path string, body io.Reader) 
 
 // --- Configuration Management ---
 
-// GetSettings fetches the settings.md content
-func (c *Client) GetSettings(ctx context.Context) (string, error) {
-	resp, err := c.get(ctx, "/api/v1/config/settings")
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var result types.FileContent
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode settings: %w", err)
-	}
-	return result.Content, nil
-}
-
-// PutSettings updates the settings.md content
-func (c *Client) PutSettings(ctx context.Context, content string) error {
-	body, _ := json.Marshal(types.FileContent{Content: content})
-	resp, err := c.put(ctx, "/api/v1/config/settings", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	return nil
-}
-
-// ListTenants returns all tenant markdown files
 func (c *Client) ListTenants(ctx context.Context) ([]types.TenantFile, error) {
 	resp, err := c.get(ctx, "/api/v1/config/tenants")
 	if err != nil {

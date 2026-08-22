@@ -73,16 +73,12 @@ func (c *CallResolution) Handle(ctx context.Context, sess CallSession, cc *CallC
 	dest, ok := c.cfg.Resolver.Resolve(*cc)
 	c.cfg.Resolver.LogDecision(*cc, dest, ok)
 	if !ok {
-		// Carry the one fact the model cannot work out for itself: whether this
-		// caller asked for the assistant, or merely ended up with it because
-		// nothing else matched. The two need opposite first moves.
-		cc.ForAssistant = dest.Assistant
 		return false
 	}
 
 	if c.cfg.BuildPolicy == nil {
 		// No policy means nothing can be adjudicated, and an unadjudicated
-		// forward is exactly what this design refuses to do. Supervise instead.
+		// forward is exactly what this design refuses to do. Decline instead.
 		c.log.Warn("resolution declined: no policy builder configured", "tenant", cc.Tenant)
 		return false
 	}
@@ -101,12 +97,12 @@ func (c *CallResolution) Handle(ctx context.Context, sess CallSession, cc *CallC
 }
 
 // forwardEndpoint authorizes and forwards to a single resolved endpoint. A
-// policy deny hands the call to the supervisor rather than dropping it: the
-// caller deserves to be told something, and the deny is already logged by the
-// policy's own decision logging.
+// policy deny declines the call rather than dropping it: the caller deserves to
+// be told something, and the deny is already logged by the policy's own decision
+// logging.
 func (c *CallResolution) forwardEndpoint(ctx context.Context, sess CallSession, cc CallContext, dest Destination, policy *Policy) bool {
 	if d := policy.AuthorizeTarget("resolve_dial", dest.Target); !d.Allowed {
-		c.log.Warn("resolved destination denied by policy; handing to supervisor",
+		c.log.Warn("resolved destination denied by policy; declining resolution",
 			"tenant", cc.Tenant, "target", dest.Target, "reason", d.Reason)
 		return false
 	}
@@ -147,22 +143,13 @@ func (c *CallResolution) ringGroup(ctx context.Context, sess CallSession, cc Cal
 		return true
 	}
 
-	c.log.Info("ring group unanswered", "tenant", cc.Tenant, "group", dest.GroupName,
-		"no_answer", string(dest.Group.NoAnswer))
+	c.log.Info("ring group unanswered", "tenant", cc.Tenant, "group", dest.GroupName)
 
-	switch dest.Group.NoAnswer {
-	case NoAnswerOperator:
-		return c.forwardOperator(ctx, sess, cc, policy)
-	case NoAnswerHangup:
-		if err := sess.Hangup("ring group " + dest.GroupName + " unanswered"); err != nil {
-			c.log.Warn("hangup after unanswered group failed", "error", err)
-		}
-		return true
-	default:
-		// NoAnswerSupervisor: the call is still pre-answer and intact, so the
-		// supervisor can pick it up and offer voicemail or another person.
-		return false
-	}
+	// The group no longer carries its own fallback: what to do when nobody
+	// answers belongs to whatever rang the group. Resolution's answer is the
+	// tenant operator, and a tenant without one declines so the caller is told
+	// something rather than left on 180.
+	return c.forwardOperator(ctx, sess, cc, policy)
 }
 
 // forwardOperator sends the caller to the tenant's operator. A tenant with no

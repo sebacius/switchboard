@@ -2,10 +2,10 @@ package routing
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/emiago/sipgo/sip"
 	psdp "github.com/pion/sdp/v3"
@@ -32,7 +32,7 @@ type InviteHandler struct {
 	router          *agent.Router
 	admission       *agent.Admission
 	resolution      *agent.CallResolution
-	runner          *agent.Runner
+	operatorFor     func(agent.CallContext) string
 	locStore        location.LocationStore
 	callService     b2bua.CallService
 	trunk           trunk.Trunk
@@ -49,7 +49,7 @@ func NewInviteHandler(
 	callRouter *agent.Router,
 	admission *agent.Admission,
 	resolution *agent.CallResolution,
-	runner *agent.Runner,
+	operatorFor func(agent.CallContext) string,
 	locStore location.LocationStore,
 	callService b2bua.CallService,
 	sipTrunk trunk.Trunk,
@@ -64,7 +64,7 @@ func NewInviteHandler(
 		router:          callRouter,
 		admission:       admission,
 		resolution:      resolution,
-		runner:          runner,
+		operatorFor:     operatorFor,
 		locStore:        locStore,
 		callService:     callService,
 		trunk:           sipTrunk,
@@ -112,17 +112,21 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 		return
 	}
 
-	// Preflight, pre-answer and without any LLM call: we must know this tenant at
-	// all. The channel limit is NOT charged here — it bounds concurrent
-	// supervised calls, and this call may yet be routed deterministically without
-	// engaging the model. It is applied at the hand-off instead.
-	if pre := h.admission.Preflight(cc); !pre.Admitted {
-		code, reason := admissionStatus(pre.Reason)
-		slog.Warn("Rejecting INVITE at preflight",
-			"tenant", cc.Tenant, "direction", cc.Direction, "reason", pre.Reason, "code", int(code))
+	// Admission, pre-answer and before any media is allocated: we must know this
+	// tenant, and it must be under its channel limit. The slot is taken here
+	// rather than later because what it bounds is physical — an RTP port, a media
+	// session, and a handler goroutine blocked for the life of the call — so a
+	// tenant over its limit must be turned away before it consumes any of them.
+	admitted := h.admission.Admit(cc)
+	if !admitted.Admitted {
+		code, reason := admissionStatus(admitted.Reason)
+		slog.Warn("Rejecting INVITE at admission",
+			"tenant", cc.Tenant, "direction", cc.Direction, "reason", admitted.Reason, "code", int(code))
 		_ = tx.Respond(sip.NewResponseFromRequest(req, code, reason, nil))
 		return
 	}
+	// From here the call owns a channel slot, and every exit path must free it.
+	defer admitted.Release()
 
 	// Create dialog via manager
 	dlg, err := h.dialogMgr.CreateFromInvite(req, tx)
@@ -229,12 +233,17 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	h.routeCall(dlg, session, cc)
 }
 
-// routeCall gives the call to deterministic resolution first and to the
-// supervisor only if resolution declines it. It runs off the SIP transaction
-// goroutine because both paths block for the life of the call.
+// operatorDialTimeout bounds the fallback forward to the tenant operator. A
+// zero timeout would let Forward apply its own default; naming it here keeps the
+// fallback's budget visible at the place the decision is made.
+const operatorDialTimeout = 45 * time.Second
+
+// routeCall gives the call to deterministic resolution, and falls back to the
+// tenant operator when nothing claims it. It runs on the SIP transaction
+// goroutine because every path blocks for the life of the call.
 func (h *InviteHandler) routeCall(dlg *dialog.Dialog, session agent.CallSession, cc agent.CallContext) {
 	if h.resolution != nil && h.resolution.Handle(dlg.Context(), session, &cc) {
-		// Resolution took the call and it is over. No LLM request was made.
+		// Resolution took the call and it is over.
 		if !dlg.IsTerminated() {
 			slog.Info("[Routing] Resolved call complete, terminating dialog", "call_id", dlg.CallID)
 			_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
@@ -242,51 +251,40 @@ func (h *InviteHandler) routeCall(dlg *dialog.Dialog, session agent.CallSession,
 		return
 	}
 
-	// Nothing resolved: this call needs the model, so now it costs a channel.
-	decision := h.admission.Admit(cc)
-	if !decision.Admitted {
-		code, reason := admissionStatus(decision.Reason)
-		slog.Warn("Rejecting INVITE at admission",
-			"tenant", cc.Tenant, "direction", cc.Direction, "reason", decision.Reason, "code", int(code))
-		// We have sent a 180 but never a 200, so a final failure response is still
-		// the correct way to end this call.
-		if err := h.dialogMgr.RespondStatus(dlg, code, reason); err != nil {
-			slog.Warn("[Routing] Failed to reject at admission", "call_id", dlg.CallID, "error", err)
+	h.fallbackToOperator(dlg, session, cc)
+}
+
+// fallbackToOperator is what happens when nothing claims a call. Until the flow
+// engine lands this is the whole of the former supervisor's job: send the caller
+// to a human if the tenant named one, and otherwise decline honestly rather than
+// leaving them on 180 forever.
+func (h *InviteHandler) fallbackToOperator(dlg *dialog.Dialog, session agent.CallSession, cc agent.CallContext) {
+	operator := ""
+	if h.operatorFor != nil {
+		operator = h.operatorFor(cc)
+	}
+
+	if operator == "" {
+		slog.Info("[Routing] Nothing resolved and no operator configured",
+			"call_id", dlg.CallID, "tenant", cc.Tenant, "callee", cc.Callee)
+		if err := h.dialogMgr.RespondStatus(dlg, sip.StatusTemporarilyUnavailable,
+			"Temporarily Unavailable - no destination for this call"); err != nil {
+			slog.Warn("[Routing] Failed to decline unresolved call", "call_id", dlg.CallID, "error", err)
 		}
 		_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonError)
 		return
 	}
 
-	h.superviseCall(dlg, session, cc, decision.Release)
-}
+	slog.Info("[Routing] Nothing resolved, forwarding to operator",
+		"call_id", dlg.CallID, "tenant", cc.Tenant, "callee", cc.Callee, "operator", operator)
 
-// superviseCall runs the agent runner for one call and guarantees the dialog is
-// torn down afterwards. The admission slot is released through the runner's
-// teardown funnel, so it is freed exactly once no matter which initiator ends
-// the call (caller BYE, the hangup tool, or a timeout).
-func (h *InviteHandler) superviseCall(dlg *dialog.Dialog, session agent.CallSession, cc agent.CallContext, release func()) {
-	releaseHook := func(reason string) {
-		slog.Debug("[Routing] Releasing admission slot",
-			"call_id", dlg.CallID, "tenant", cc.Tenant, "reason", reason)
-		release()
+	// Forward relays the operator's own status upstream on failure, which is the
+	// honest thing to send a caller we could not place.
+	if err := session.Forward(dlg.Context(), operator, operatorDialTimeout); err != nil {
+		slog.Info("[Routing] Operator forward ended", "call_id", dlg.CallID, "error", err)
 	}
 
-	if err := h.runner.HandleCall(dlg.Context(), session, cc, releaseHook); err != nil {
-		if !errors.Is(err, context.Canceled) {
-			slog.Error("[Routing] Supervisor failed",
-				"call_id", dlg.CallID,
-				"tenant", cc.Tenant,
-				"direction", cc.Direction,
-				"error", err,
-			)
-		}
-	}
-
-	// Belt and braces: the runner's teardown funnel already hung the session up,
-	// but a supervisor that returned before answering (or an early error) can
-	// leave the dialog alive.
 	if !dlg.IsTerminated() {
-		slog.Info("[Routing] Supervisor complete, terminating dialog", "call_id", dlg.CallID)
 		_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
 	}
 }

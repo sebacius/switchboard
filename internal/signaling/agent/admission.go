@@ -4,31 +4,24 @@ import (
 	"sync"
 )
 
-// Admission is the deterministic gate around the supervisor (spec:
+// Admission is the deterministic gate in front of every call (spec:
 // call-admission). It performs NO SIP and no I/O — pure decision plus slot
-// acquisition — and it now runs in TWO places, because deterministic resolution
-// sits between them:
+// acquisition — and runs exactly once, before any media is allocated:
 //
-//  1. Preflight, before resolution — the call's tenant must be loaded at all.
-//     An unattributable call is a hard reject (there is no default tenant).
-//  2. Admit, at the hand-off to the supervisor — the tenant's prompt must be
-//     non-empty, and a per-tenant counting semaphore must have a free channel.
+//  1. The call's tenant must be loaded. An unattributable call is a hard reject
+//     (there is no default tenant).
+//  2. A per-tenant counting semaphore must have a free channel.
 //
-// Splitting them matters. The channel limit bounds concurrent SUPERVISED calls:
-// it exists to stop the first-turn LLM call from queueing past SIP Timer B, and
-// to cap spend. A deterministically resolved call makes no LLM request, so
-// charging it a channel would mean a tenant at its LLM limit gets 486 Busy on a
-// plain extension dial that costs nothing — a capacity regression caused by a
-// latency control. For the same reason a tenant with a routing table but no
-// prompt can still route: it simply cannot be supervised.
-
-// PromptSource resolves a tenant's combined prompt (settings.md + tenant.md).
-// It is the seam admission uses for preflight; real loading from disk/config is
-// group 7's concern. TenantPrompt returns the combined prompt and whether it
-// exists and is non-empty — a tenant with no prompt is "not loaded".
-type PromptSource interface {
-	TenantPrompt(tenant string) (string, bool)
-}
+// The channel limit is CAPACITY control. It used to be justified by first-turn
+// LLM latency — bounding concurrent model calls so they could not queue past SIP
+// Timer B — and that justification died with the supervisor. What remains is
+// physical: every call holds an RTP port, a media session, and a handler
+// goroutine blocked for the life of the call, and something has to bound how
+// many of those one tenant can take.
+//
+// Because the scarce resource is now a port rather than a model, the slot is
+// taken BEFORE the media session is created, and it is taken for every call
+// rather than only for the ones that reached a particular subsystem.
 
 // AdmissionResult is the verdict of Admit. When Admitted is true, Release frees
 // the acquired channel slot and MUST be called exactly once by the teardown
@@ -43,10 +36,9 @@ type AdmissionResult struct {
 }
 
 // Stable rejection reasons. The INVITE handler maps these to SIP responses:
-// the two tenant reasons → 4xx, reasonChannelLimit → 486 Busy.
+// reasonTenantNotLoaded → 4xx, reasonChannelLimit → 486 Busy.
 const (
 	reasonTenantNotLoaded = "tenant not loaded"
-	reasonNoPrompt        = "tenant has no prompt to supervise with"
 	reasonChannelLimit    = "tenant at channel limit"
 )
 
@@ -60,9 +52,8 @@ func noopRelease() {}
 // per-tenant and discovered dynamically). One Admission instance serves all
 // tenants for the lifetime of the process.
 type Admission struct {
-	prompts PromptSource
-	// routing lets a tenant count as "loaded" on the strength of its routing
-	// table alone. Optional: nil means only a prompt makes a tenant loaded.
+	// routing is what makes a tenant "loaded": having somewhere for its calls to
+	// go is now the whole definition.
 	routing RoutingSource
 
 	// defaultLimit is the per-tenant concurrency cap when no override applies.
@@ -75,17 +66,15 @@ type Admission struct {
 	active map[string]int // tenant → in-flight admitted calls
 }
 
-// NewAdmission builds an Admission. prompts is required (preflight needs it).
-// defaultLimit is the fallback per-tenant concurrency cap; a value <= 0 is
-// clamped to 1 so a misconfiguration never silently admits unbounded calls.
-// overrides may be nil; a per-tenant override <= 0 is ignored (the default
-// applies) for the same reason.
-func NewAdmission(prompts PromptSource, routing RoutingSource, defaultLimit int, overrides map[string]int) *Admission {
+// NewAdmission builds an Admission. defaultLimit is the fallback per-tenant
+// concurrency cap; a value <= 0 is clamped to 1 so a misconfiguration never
+// silently admits unbounded calls. overrides may be nil; a per-tenant override
+// <= 0 is ignored (the default applies) for the same reason.
+func NewAdmission(routing RoutingSource, defaultLimit int, overrides map[string]int) *Admission {
 	if defaultLimit <= 0 {
 		defaultLimit = 1
 	}
 	return &Admission{
-		prompts:      prompts,
 		routing:      routing,
 		defaultLimit: defaultLimit,
 		overrides:    overrides,
@@ -102,45 +91,15 @@ func (a *Admission) limitFor(tenant string) int {
 	return a.defaultLimit
 }
 
-// Preflight is the check that runs BEFORE deterministic resolution: is this call
-// attributable to a tenant this system knows at all? A tenant is loaded if it
-// has a prompt, a routing table, or both — a tenant with only a routing table
-// can be routed but not supervised, and that is a legitimate configuration.
+// Admit is the single gate every call passes through, before the media session
+// is created: the tenant must be known, and a channel slot must be free.
 //
-// It takes no slot: nothing has been committed yet.
-func (a *Admission) Preflight(cc CallContext) AdmissionResult {
-	if a.tenantLoaded(cc.Tenant) {
-		return AdmissionResult{Admitted: true, Release: noopRelease}
-	}
-	return AdmissionResult{Admitted: false, Reason: reasonTenantNotLoaded, Release: noopRelease}
-}
-
-// tenantLoaded reports whether the system knows this tenant by either half of
-// its configuration.
-func (a *Admission) tenantLoaded(tenant string) bool {
-	if tenant == "" {
-		return false
-	}
-	if _, ok := a.prompts.TenantPrompt(tenant); ok {
-		return true
-	}
-	if a.routing != nil {
-		if _, ok := a.routing.TenantRouting(tenant); ok {
-			return true
-		}
-	}
-	return false
-}
-
-// Admit is the gate at the hand-off to the supervisor: the tenant must have a
-// prompt to supervise with, and a channel slot must be free. It is reached only
-// after deterministic resolution declined the call, so everything it rejects is
-// a call that genuinely needed the model.
+// A tenant is loaded if it has a routing table. That is the whole definition
+// now — a tenant with nowhere to send calls is not a tenant this system can
+// serve.
 func (a *Admission) Admit(cc CallContext) AdmissionResult {
-	// A tenant with no prompt cannot be supervised. Resolution has already had
-	// its chance, so this is the end of the road for the call.
-	if _, ok := a.prompts.TenantPrompt(cc.Tenant); !ok {
-		return AdmissionResult{Admitted: false, Reason: reasonNoPrompt, Release: noopRelease}
+	if !a.tenantLoaded(cc.Tenant) {
+		return AdmissionResult{Admitted: false, Reason: reasonTenantNotLoaded, Release: noopRelease}
 	}
 
 	// Channel limit: acquire a slot under the lock so the check-and-increment is
@@ -159,10 +118,20 @@ func (a *Admission) Admit(cc CallContext) AdmissionResult {
 	}
 }
 
+// tenantLoaded reports whether the system has routing configuration for this
+// tenant.
+func (a *Admission) tenantLoaded(tenant string) bool {
+	if tenant == "" || a.routing == nil {
+		return false
+	}
+	_, ok := a.routing.TenantRouting(tenant)
+	return ok
+}
+
 // releaseFor returns an idempotent Release closure that frees exactly one slot
 // for the tenant on its first invocation and does nothing thereafter. sync.Once
-// guards against the teardown funnel calling it more than once (BYE + ctx
-// timeout can both converge on teardown) so the counter never under-counts.
+// guards against teardown running more than once (BYE + ctx timeout can both
+// converge on it) so the counter never under-counts.
 func (a *Admission) releaseFor(tenant string) func() {
 	var once sync.Once
 	return func() {
