@@ -72,6 +72,16 @@ func (ps Problems) Err() error {
 	return fmt.Errorf("%d problems: %s", len(msgs), strings.Join(msgs, "; "))
 }
 
+// TargetClassifier adjudicates a resolved destination without side effects. It
+// is the seam the Class-of-Service check uses, kept as an interface so this
+// package does not depend on the policy engine — and so validation can never
+// accidentally consume a tenant's spend budget, which is the whole reason the
+// policy layer separates classification from consumption.
+type TargetClassifier interface {
+	// Classify reports whether a resolved target may be dialed, and why not.
+	Classify(resolved string) (allowed bool, reason string)
+}
+
 // ValidateFlows checks a tenant's flows against its routing table and returns
 // the first error as a Go error, for load paths that want fail-closed behaviour.
 func ValidateFlows(tenant string, table *RoutingTable, set *FlowSet) error {
@@ -80,6 +90,95 @@ func ValidateFlows(tenant string, table *RoutingTable, set *FlowSet) error {
 
 // CheckFlows returns every problem in a tenant's flows.
 func CheckFlows(tenant string, table *RoutingTable, set *FlowSet) Problems {
+	return CheckFlowsWithPolicy(tenant, table, set, nil)
+}
+
+// CheckFlowsWithPolicy additionally runs every dial destination through the
+// tenant's Class of Service, so a flow that could never place its call is caught
+// at load rather than at 2am.
+func CheckFlowsWithPolicy(tenant string, table *RoutingTable, set *FlowSet, cos TargetClassifier) Problems {
+	ps := checkFlowsStructure(tenant, table, set)
+	if cos != nil {
+		ps = append(ps, checkFlowPolicy(tenant, table, set, cos)...)
+	}
+	return ps
+}
+
+// checkFlowPolicy runs each flow's dial destinations through Class of Service.
+func checkFlowPolicy(tenant string, table *RoutingTable, set *FlowSet, cos TargetClassifier) Problems {
+	var ps Problems
+	if set == nil {
+		return ps
+	}
+
+	for _, flowName := range set.Names() {
+		flow := set.Flows[flowName]
+		if flow == nil {
+			continue
+		}
+		for _, id := range sortedNodeIDs(flow) {
+			node := flow.Nodes[id]
+			if node == nil {
+				continue
+			}
+			path := "flows." + flowName + ".nodes." + id + ".entry.target"
+
+			for _, resolved := range resolvedTargetsOf(table, node) {
+				if allowed, reason := cos.Classify(resolved); !allowed {
+					ps = append(ps, Problem{tenant, path, fmt.Sprintf(
+						"destination %q is denied by this tenant's class of service (%s), so this "+
+							"node could never place its call", resolved, reason), SeverityError})
+				}
+			}
+		}
+	}
+	return ps
+}
+
+// resolvedTargetsOf returns the concrete destinations a node would dial. A ring
+// group yields each member separately, because a member is adjudicated on its
+// own merits rather than inheriting the group's verdict.
+func resolvedTargetsOf(table *RoutingTable, node *Node) []string {
+	var raw string
+	switch e := node.DecodedEntry().(type) {
+	case *DialUserEntry:
+		raw = e.Target
+	case *DialExternalEntry:
+		raw = e.Target
+	case *TransferEntry:
+		raw = e.Target
+	default:
+		return nil
+	}
+
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	if name, isGroup := IsGroupTarget(raw); isGroup {
+		if table == nil {
+			return nil
+		}
+		group, ok := table.Groups[name]
+		if !ok {
+			return nil
+		}
+		return append([]string(nil), group.Members...)
+	}
+
+	// A symbolic name resolves through the tenant's own table, exactly as it
+	// would at call time.
+	if table != nil {
+		if resolved, ok := table.SymbolicTargets[raw]; ok && resolved != "" {
+			return []string{resolved}
+		}
+	}
+	return []string{raw}
+}
+
+// checkFlowsStructure returns every structural problem in a tenant's flows.
+func checkFlowsStructure(tenant string, table *RoutingTable, set *FlowSet) Problems {
 	var ps Problems
 	if set == nil {
 		return ps

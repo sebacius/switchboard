@@ -47,9 +47,9 @@
 
 ## 6. Policy: side-effect-free classification
 
-- [ ] 6.1 Split `Policy.Classify` (pure verdict) from `Policy.Consume` (the breaker); `authorizeResolved` becomes `Classify` + `Consume`
-- [ ] 6.2 Hoist `externalUnits` out of the per-call `Policy` instance into a process-lifetime, per-tenant, day-bucketed counter, fixing the shipped bug where `max_external_units_per_day` resets every INVITE
-- [ ] 6.3 Tests: the counter accumulates across calls and trips at the configured limit; validating N external targets consumes zero units
+- [x] 6.1 Split `Policy.Classify` (pure verdict) from `Policy.Consume` (the breaker); `authorizeResolved` becomes `Classify` + `Consume`
+- [x] 6.2 Hoist `externalUnits` out of the per-call `Policy` instance into a process-lifetime, per-tenant, day-bucketed counter, fixing the shipped bug where `max_external_units_per_day` resets every INVITE
+- [x] 6.3 Tests: the counter accumulates across calls and trips at the configured limit; validating N external targets consumes zero units
 
 ## 7. Typed dial outcomes
 
@@ -101,7 +101,7 @@
 - [x] 11.4 `start` exists; BFS reachability; unreachable nodes are an error
 - [x] 11.5 Acyclicity by three-colour DFS, reporting the actual cycle path
 - [x] 11.6 Every sink node is terminal-typed
-- [ ] 11.7 Target and COS checks via `Policy.Classify` — syntax, group existence, symbolic membership. **No registration check** (runtime state; would fail every boot)
+- [x] 11.7 Target and COS checks via `Policy.Classify` — syntax, group existence, symbolic membership. **No registration check** (runtime state; would fail every boot)
 - [x] 11.8 Digit-map checks per group 5
 - [ ] 11.9 E911 **warning-only**: a pattern that shadows an emergency number; a PSTN-capable tenant with no emergency route
 - [ ] 11.10 `Store.Reload` fails on any Error and keeps the previous config; the config API returns `[]Problem` so the UI can say why

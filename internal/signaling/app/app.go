@@ -235,10 +235,15 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// is adjudicated identically however it was chosen. The symbolic
 	// targets come from the tenant's routing table — policy.json no longer
 	// carries them, and refuses to start if it still does.
+	// The spend ledger is process-wide on purpose. A Policy is built per call, so
+	// a counter living on it reset every INVITE and the daily cap could never be
+	// reached; sharing the ledger is what makes max_external_units_per_day mean
+	// what it says.
+	spendLedger := agent.NewSpendLedger()
 	buildPolicy := func(cc agent.CallContext) *agent.Policy {
-		return agent.NewPolicy(cc.Tenant,
+		return agent.NewPolicyWithLedger(cc.Tenant,
 			policyCfg.TenantPolicyFor(cc.Tenant, dialplan.SymbolicTargetsFor(routingStore, cc.Tenant)),
-			slog.Default())
+			spendLedger, slog.Default())
 	}
 
 	// operatorFor is the tenant's fallback human, read from the same routing

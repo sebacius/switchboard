@@ -346,3 +346,78 @@ func TestEveryPathTerminates(t *testing.T) {
 		}
 	}
 }
+
+// denyExternal is a Class of Service that permits internal targets only — the
+// shipped default posture.
+type denyExternal struct{ calls int }
+
+func (d *denyExternal) Classify(resolved string) (bool, string) {
+	d.calls++
+	if strings.HasPrefix(resolved, "user/") {
+		return true, ""
+	}
+	return false, "external dial not enabled for tenant"
+}
+
+// A flow that could never place its call should say so at load, not at 2am.
+func TestClassOfServiceIsCheckedAtLoad(t *testing.T) {
+	set := flowsFrom(t, `{"flows":{"main":{
+		"start":"d",
+		"nodes":{
+			"d":{"type":"dial_external","entry":{"target":"answering-service"},
+				"exits":{"no_answer":"bye","busy":"bye","denied":"bye","failed":"bye"}},
+			"bye":{"type":"hangup","entry":{}}
+		}}}}`)
+
+	cos := &denyExternal{}
+	ps := CheckFlowsWithPolicy("acme", testTable(), set, cos)
+
+	if !ps.HasErrors() {
+		t.Fatal("a destination the tenant may not dial must fail validation")
+	}
+	// The symbolic name resolves through the table before being adjudicated, so
+	// the operator sees the number their policy actually refused.
+	if !strings.Contains(ps.Err().Error(), "+15558001234") {
+		t.Errorf("error should name the resolved destination: %v", ps.Err())
+	}
+}
+
+// Each ring group member is adjudicated on its own merits rather than
+// inheriting the group's verdict.
+func TestGroupMembersAreClassifiedIndividually(t *testing.T) {
+	table := testTable()
+	table.Groups["mixed"] = RingGroup{
+		Strategy: StrategySequential,
+		Members:  []string{"user/130", "+15559990000"},
+	}
+	set := flowsFrom(t, `{"flows":{"main":{
+		"start":"d",
+		"nodes":{
+			"d":{"type":"dial_user","entry":{"target":"group/mixed"},
+				"exits":{"no_answer":"bye","busy":"bye","rejected":"bye","unavailable":"bye"}},
+			"bye":{"type":"hangup","entry":{}}
+		}}}}`)
+
+	cos := &denyExternal{}
+	ps := CheckFlowsWithPolicy("acme", table, set, cos)
+
+	if !ps.HasErrors() {
+		t.Fatal("the external group member must be refused")
+	}
+	if cos.calls != 2 {
+		t.Errorf("expected both members to be classified individually, got %d calls", cos.calls)
+	}
+}
+
+// Structural validation without a policy must not silently skip the dial checks
+// it can still do.
+func TestValidationWithoutPolicyStillChecksStructure(t *testing.T) {
+	set := flowsFrom(t, `{"flows":{"main":{
+		"start":"d",
+		"nodes":{"d":{"type":"tts","entry":{"text":"hi"},"exits":{"done":"ghost"}}}
+	}}}`)
+
+	if ps := CheckFlowsWithPolicy("acme", testTable(), set, nil); !ps.HasErrors() {
+		t.Fatal("a dangling exit must fail even with no policy configured")
+	}
+}
