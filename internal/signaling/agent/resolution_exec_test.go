@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"testing"
 	"time"
 )
@@ -15,8 +16,8 @@ func ptr(cc CallContext) *CallContext { return &cc }
 // group's no-answer outcome actually runs.
 
 // groupTable is a routing table with both ring strategies and an operator.
-func groupTable() *RoutingTable {
-	return &RoutingTable{
+func groupTable() *dialplan.RoutingTable {
+	return &dialplan.RoutingTable{
 		Operator: "user/150",
 		Extensions: map[string]string{
 			"200": "group/seq",
@@ -26,11 +27,11 @@ func groupTable() *RoutingTable {
 			"300": "user/105",
 			"400": "+18005551212", // an external destination in the table
 		},
-		Groups: map[string]RingGroup{
-			"seq": {Strategy: StrategySequential, Members: []string{"user/105", "user/106", "user/107"}},
-			"rr":  {Strategy: StrategyRoundRobin, Members: []string{"user/105", "user/106", "user/107"}},
+		Groups: map[string]dialplan.RingGroup{
+			"seq": {Strategy: dialplan.StrategySequential, Members: []string{"user/105", "user/106", "user/107"}},
+			"rr":  {Strategy: dialplan.StrategyRoundRobin, Members: []string{"user/105", "user/106", "user/107"}},
 			"operator": {
-				Strategy: StrategySequential, Members: []string{"user/105"},
+				Strategy: dialplan.StrategySequential, Members: []string{"user/105"},
 			},
 		},
 	}
@@ -41,7 +42,7 @@ func groupTable() *RoutingTable {
 // authorization and ring behavior rather than registration.
 func newResolution(t *testing.T) *CallResolution {
 	t.Helper()
-	routing := StaticRouting{"acme": groupTable()}
+	routing := dialplan.StaticRouting{"acme": groupTable()}
 	return NewCallResolution(CallResolutionConfig{
 		Resolver: NewResolver(routing,
 			resolverDirectory{"105": true, "106": true, "107": true, "150": true},
@@ -149,10 +150,10 @@ func TestRoundRobinAdvancesAcrossCalls(t *testing.T) {
 // Every member is authorized individually. A group cannot smuggle reach past the
 // tenant's Class of Service by listing an external number among internal ones.
 func TestRingGroupMembersAreAuthorizedIndividually(t *testing.T) {
-	routing := StaticRouting{"acme": {
+	routing := dialplan.StaticRouting{"acme": {
 		Extensions: map[string]string{"210": "group/mixed"},
-		Groups: map[string]RingGroup{
-			"mixed": {Strategy: StrategySequential, Members: []string{"user/105", "+18005551212"}},
+		Groups: map[string]dialplan.RingGroup{
+			"mixed": {Strategy: dialplan.StrategySequential, Members: []string{"user/105", "+18005551212"}},
 		},
 	}}
 	res := NewCallResolution(CallResolutionConfig{
@@ -212,10 +213,10 @@ func TestGroupNoAnswerNeverHangsUp(t *testing.T) {
 // the caller: resolution declines so the caller is told something, never a
 // silent hangup.
 func TestGroupNoAnswerWithoutOperatorDeclines(t *testing.T) {
-	routing := StaticRouting{"acme": {
+	routing := dialplan.StaticRouting{"acme": {
 		Extensions: map[string]string{"220": "group/nooperator"},
-		Groups: map[string]RingGroup{
-			"nooperator": {Strategy: StrategySequential, Members: []string{"user/105"}},
+		Groups: map[string]dialplan.RingGroup{
+			"nooperator": {Strategy: dialplan.StrategySequential, Members: []string{"user/105"}},
 		},
 	}}
 	res := NewCallResolution(CallResolutionConfig{
@@ -256,7 +257,7 @@ func TestResolutionNeedsNoLLM(t *testing.T) {
 
 // Resolution refuses to act without a policy rather than forwarding unadjudicated.
 func TestResolutionWithoutPolicyHandsOff(t *testing.T) {
-	routing := StaticRouting{"acme": groupTable()}
+	routing := dialplan.StaticRouting{"acme": groupTable()}
 	res := NewCallResolution(CallResolutionConfig{
 		Resolver: NewResolver(routing, resolverDirectory{"105": true}, nil, quietLogger()),
 		Logger:   quietLogger(),

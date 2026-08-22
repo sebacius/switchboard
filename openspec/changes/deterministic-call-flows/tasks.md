@@ -29,7 +29,7 @@
 
 ## 4. The `dialplan` package
 
-- [ ] 4.1 Create `internal/signaling/dialplan/`; move `routing_config.go` and its tests from `agent/` as a pure rename commit (~15 files of import churn, reviewed separately)
+- [x] 4.1 Create `internal/signaling/dialplan/`; move `routing_config.go` and its tests from `agent/` as a pure rename commit (~15 files of import churn, reviewed separately)
 - [ ] 4.2 `flowdef.go`: `FlowDef`, `Node`, `NodeType`, the shared `PromptSpec`, and per-type entry structs decoded at load with `DisallowUnknownFields`
 - [ ] 4.3 `var nodeExits map[NodeType][]string` and `terminalExits` — exit names fixed in Go
 - [ ] 4.4 Load `<tenant>.routing.json` and `<tenant>.flows.json` as one atomic unit in a single fail-closed `Reload` pass

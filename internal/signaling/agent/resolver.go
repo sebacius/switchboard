@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/parking"
 )
 
@@ -68,7 +69,7 @@ type Destination struct {
 
 	// GroupName and Group describe a DestinationGroup, defaults already applied.
 	GroupName string
-	Group     RingGroup
+	Group     dialplan.RingGroup
 
 	// Slot is the parking slot for DestinationRetrieve, digits only.
 	Slot string
@@ -92,7 +93,7 @@ type ParkingLookup interface {
 // Resolver answers the deterministic routing question for one call. It holds no
 // per-call state and is safe for concurrent use.
 type Resolver struct {
-	routing RoutingSource
+	routing dialplan.RoutingSource
 	dir     Directory
 	parking ParkingLookup
 	log     *slog.Logger
@@ -101,7 +102,7 @@ type Resolver struct {
 // NewResolver builds a Resolver. A nil routing source or directory disables
 // deterministic resolution entirely (everything hands off), which is the correct
 // degradation: the supervisor still works, calls are just slower.
-func NewResolver(routing RoutingSource, dir Directory, park ParkingLookup, log *slog.Logger) *Resolver {
+func NewResolver(routing dialplan.RoutingSource, dir Directory, park ParkingLookup, log *slog.Logger) *Resolver {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -138,7 +139,7 @@ func (r *Resolver) Resolve(cc CallContext) (Destination, bool) {
 
 	// 1. Call retrieval (*7XX). Internal callers only: an outside caller who
 	//    guessed a slot number must not be able to pick up a held call.
-	if prefix := table.retrievalPrefix(); strings.HasPrefix(callee, prefix) {
+	if prefix := table.RetrievalPrefixOrDefault(); strings.HasPrefix(callee, prefix) {
 		if cc.Direction != DirectionInternal {
 			return handOff("call retrieval is internal-only"), false
 		}
@@ -177,10 +178,10 @@ func (r *Resolver) resolveRetrieval(callee, prefix string) (Destination, bool) {
 
 // resolveDestination interprets a routing-table value: a ring group or a
 // concrete endpoint.
-func (r *Resolver) resolveDestination(table *RoutingTable, dest string) (Destination, bool) {
+func (r *Resolver) resolveDestination(table *dialplan.RoutingTable, dest string) (Destination, bool) {
 	dest = strings.TrimSpace(dest)
 
-	if name, isGroup := IsGroupTarget(dest); isGroup {
+	if name, isGroup := dialplan.IsGroupTarget(dest); isGroup {
 		group, ok := table.Group(name)
 		if !ok {
 			// The loader validates group references, so reaching here means the
@@ -227,7 +228,7 @@ func (r *Resolver) isRegistered(target string) bool {
 // lookupDestination reads the right table for the call's direction, matching a
 // DID both literally and by its digits so "+15558001200" and "15558001200" are
 // the same number.
-func lookupDestination(table *RoutingTable, dir Direction, callee string) (string, bool) {
+func lookupDestination(table *dialplan.RoutingTable, dir Direction, callee string) (string, bool) {
 	if dir == DirectionInbound {
 		if dest, ok := table.DIDs[callee]; ok {
 			return dest, true

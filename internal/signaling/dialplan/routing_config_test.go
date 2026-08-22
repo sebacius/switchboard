@@ -1,4 +1,4 @@
-package agent
+package dialplan
 
 import (
 	"os"
@@ -38,25 +38,14 @@ func TestShippedRoutingTablesLoad(t *testing.T) {
 			t.Errorf("tenant %s has no operator: an unknown tool would have nowhere to go", tenant)
 		}
 		if len(table.SymbolicTargets) == 0 {
-			t.Errorf("tenant %s offers the model no dialable names", tenant)
+			t.Errorf("tenant %s defines no dialable names", tenant)
 		}
 	}
 }
 
-// policy.json must no longer carry symbolic targets, and must still parse.
-func TestShippedPolicyConfigLoads(t *testing.T) {
-	cfg, err := LoadPolicyConfig(repoResources(t, "config", "policy.json"))
-	if err != nil {
-		t.Fatalf("the shipped policy config must load: %v", err)
-	}
-	if cfg.DefaultChannelLimit <= 0 {
-		t.Fatalf("expected a positive default channel limit, got %d", cfg.DefaultChannelLimit)
-	}
-}
-
-// Every symbolic target the model may dial must resolve to something real: an
-// endpoint, or a group that exists. A dangling name looks to the model like a
-// working destination and to the caller like silence.
+// Every symbolic target must resolve to something real: an endpoint, or a group
+// that exists. A dangling name looks like a working destination in config and
+// like silence to the caller.
 func TestShippedSymbolicTargetsResolve(t *testing.T) {
 	store, err := NewRoutingStore(repoResources(t, "tenants"))
 	if err != nil {

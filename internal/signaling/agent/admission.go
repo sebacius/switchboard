@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"sync"
 )
 
@@ -54,7 +55,7 @@ func noopRelease() {}
 type Admission struct {
 	// routing is what makes a tenant "loaded": having somewhere for its calls to
 	// go is now the whole definition.
-	routing RoutingSource
+	routing dialplan.RoutingSource
 
 	// defaultLimit is the per-tenant concurrency cap when no override applies.
 	defaultLimit int
@@ -70,7 +71,7 @@ type Admission struct {
 // concurrency cap; a value <= 0 is clamped to 1 so a misconfiguration never
 // silently admits unbounded calls. overrides may be nil; a per-tenant override
 // <= 0 is ignored (the default applies) for the same reason.
-func NewAdmission(routing RoutingSource, defaultLimit int, overrides map[string]int) *Admission {
+func NewAdmission(routing dialplan.RoutingSource, defaultLimit int, overrides map[string]int) *Admission {
 	if defaultLimit <= 0 {
 		defaultLimit = 1
 	}

@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 )
 
 // CONFIG IS NOT AUTHORITY. Everything in this file is the deterministic
@@ -258,7 +260,10 @@ func (p *Policy) authorizeResolved(resolved string) Decision {
 // AuthorizeTarget before dialing it, so a member that IS external is adjudicated
 // on its own merits rather than inheriting the group's verdict.
 func isInternalTarget(target string) bool {
-	return strings.HasPrefix(target, "user/") || strings.HasPrefix(target, routingGroupPrefix)
+	if _, isGroup := dialplan.IsGroupTarget(target); isGroup {
+		return true
+	}
+	return strings.HasPrefix(target, "user/")
 }
 
 // normalizeDigits strips formatting from a dial string so prefix matching is

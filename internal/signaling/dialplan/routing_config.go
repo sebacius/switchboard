@@ -1,4 +1,4 @@
-package agent
+package dialplan
 
 import (
 	"encoding/json"
@@ -103,8 +103,8 @@ type RoutingTable struct {
 	Groups map[string]RingGroup `json:"groups"`
 }
 
-// retrievalPrefix returns the tenant's call-retrieval prefix, defaulted.
-func (t *RoutingTable) retrievalPrefix() string {
+// RetrievalPrefixOrDefault returns the tenant's call-retrieval prefix, defaulted.
+func (t *RoutingTable) RetrievalPrefixOrDefault() string {
 	if t == nil || strings.TrimSpace(t.RetrievalPrefix) == "" {
 		return DefaultRetrievalPrefix
 	}

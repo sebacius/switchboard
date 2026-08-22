@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"log/slog"
 	"sync"
 	"time"
@@ -225,7 +226,7 @@ func (c *CallResolution) authorizedMembers(cc CallContext, dest Destination, pol
 // needs durable state this system does not have yet.
 func (c *CallResolution) rounds(cc CallContext, dest Destination, members []string) [][]string {
 	start := 0
-	if dest.Group.Strategy == StrategyRoundRobin {
+	if dest.Group.Strategy == dialplan.StrategyRoundRobin {
 		start = c.nextCursor(cc.Tenant, dest.GroupName, len(members))
 	}
 

@@ -13,6 +13,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/b2bua"
 	"github.com/sebas/switchboard/internal/signaling/config"
 	"github.com/sebas/switchboard/internal/signaling/dialog"
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/drain"
 	"github.com/sebas/switchboard/internal/signaling/filemanager"
 	"github.com/sebas/switchboard/internal/signaling/location"
@@ -144,7 +145,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// one file so the two cannot disagree. A malformed table IS fatal: it is the
 	// only thing that knows where a call should go, so starting without it would
 	// mean answering calls we cannot route.
-	routingStore, err := agent.NewRoutingStore(cfg.RoutingPath)
+	routingStore, err := dialplan.NewRoutingStore(cfg.RoutingPath)
 	if err != nil {
 		_ = ua.Close()
 		locStore.Close()
@@ -227,7 +228,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	// carries them, and refuses to start if it still does.
 	buildPolicy := func(cc agent.CallContext) *agent.Policy {
 		return agent.NewPolicy(cc.Tenant,
-			policyCfg.TenantPolicyFor(cc.Tenant, agent.SymbolicTargetsFor(routingStore, cc.Tenant)),
+			policyCfg.TenantPolicyFor(cc.Tenant, dialplan.SymbolicTargetsFor(routingStore, cc.Tenant)),
 			slog.Default())
 	}
 

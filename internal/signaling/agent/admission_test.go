@@ -1,16 +1,17 @@
 package agent
 
 import (
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"sync"
 	"testing"
 )
 
-// loaded builds a RoutingSource in which each named tenant has a routing table.
+// loaded builds a dialplan.RoutingSource in which each named tenant has a routing table.
 // Having somewhere to send calls is the whole definition of a loaded tenant.
-func loaded(tenants ...string) StaticRouting {
-	r := StaticRouting{}
+func loaded(tenants ...string) dialplan.StaticRouting {
+	r := dialplan.StaticRouting{}
 	for _, name := range tenants {
-		r[name] = &RoutingTable{Operator: "user/100"}
+		r[name] = &dialplan.RoutingTable{Operator: "user/100"}
 	}
 	return r
 }

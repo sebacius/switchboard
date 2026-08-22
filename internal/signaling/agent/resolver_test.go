@@ -3,6 +3,7 @@ package agent
 import (
 	"testing"
 
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/parking"
 )
 
@@ -27,8 +28,8 @@ func (p resolverParking) Get(slotID string) (*parking.ParkSlot, bool) {
 }
 
 // testTable is the routing table these tests resolve against.
-func testTable() *RoutingTable {
-	return &RoutingTable{
+func testTable() *dialplan.RoutingTable {
+	return &dialplan.RoutingTable{
 		Operator:        "user/150",
 		RetrievalPrefix: "*",
 		Extensions: map[string]string{
@@ -43,15 +44,15 @@ func testTable() *RoutingTable {
 			"+15558001250": "group/claims",
 			"+15558001210": "user/105",
 		},
-		Groups: map[string]RingGroup{
-			"claims": {Strategy: StrategySequential, Members: []string{"user/105"}},
+		Groups: map[string]dialplan.RingGroup{
+			"claims": {Strategy: dialplan.StrategySequential, Members: []string{"user/105"}},
 		},
 	}
 }
 
 func testResolver(park resolverParking) *Resolver {
 	return NewResolver(
-		StaticRouting{"acme": testTable()},
+		dialplan.StaticRouting{"acme": testTable()},
 		resolverDirectory{"105": true, "150": true},
 		park,
 		quietLogger(),
@@ -101,7 +102,7 @@ func TestResolveUnknownTargetHandsOff(t *testing.T) {
 // A tenant with no routing table resolves nothing — the correct degradation, and
 // the reason a fresh deployment still works before anyone writes one.
 func TestResolveTenantWithoutTableHandsOff(t *testing.T) {
-	r := NewResolver(StaticRouting{}, resolverDirectory{"105": true}, nil, quietLogger())
+	r := NewResolver(dialplan.StaticRouting{}, resolverDirectory{"105": true}, nil, quietLogger())
 	if _, ok := r.Resolve(internalCall("105")); ok {
 		t.Fatal("a tenant with no routing table must resolve nothing")
 	}
@@ -128,7 +129,7 @@ func TestResolveExtensionToRingGroup(t *testing.T) {
 		t.Fatalf("expected the claims group, got %+v", dest)
 	}
 	// Defaults are applied at resolution, not left for the ring path to guess.
-	if dest.Group.MemberTimeoutMs != DefaultMemberTimeoutMs {
+	if dest.Group.MemberTimeoutMs != dialplan.DefaultMemberTimeoutMs {
 		t.Fatalf("group defaults were not applied: %+v", dest.Group)
 	}
 }
