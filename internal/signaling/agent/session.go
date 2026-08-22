@@ -32,6 +32,10 @@ type CallSession interface {
 	PlayTTS(ctx context.Context, text, voice string) error
 	StopAudio() error
 
+	// CollectDigits plays a prompt and collects DTMF digits in one operation, so
+	// a digit pressed during the prompt is not lost between two calls.
+	CollectDigits(ctx context.Context, req CollectRequest) (CollectResult, error)
+
 	// Answer model. The INVITE handler never answers in order to route; a call
 	// is answered only when something needs to own its media.
 

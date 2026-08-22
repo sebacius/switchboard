@@ -71,14 +71,14 @@
 
 ## 9. DTMF detection and collection
 
-- [ ] 9.1 RFC 4733 decoder over `pion/rtp` — end-bit and duration handling, no duplicate digits from retransmitted end packets
-- [ ] 9.2 Per-session digit buffer, filled continuously from session creation so type-ahead survives between nodes
-- [ ] 9.3 `CollectDigits` RPC: `PromptSpec`, `interruptible`, `max_digits`, `terminators`, first-digit / inter-digit / overall timeouts, `flush_buffer`; returns digits, a `CollectReason`, and `prompt_interrupted`
-- [ ] 9.4 Server-side implementation owns the socket for the whole operation — transmits prompt frames and parses inbound RTP in one loop; drains the buffer before waiting; stops playback on the first digit when interruptible
-- [ ] 9.5 Return `NO_DTMF_TRANSPORT` when the leg negotiated no telephone-event, and warn at load when a flow containing `ivr` nodes is reachable for such legs
-- [ ] 9.6 Plumb through all six layers: proto → `mediaclient.Transport` → `GRPCTransport` → `Pool` (session affinity) → `CallSession` → the fake
-- [ ] 9.7 SIP INFO handler for `application/dtmf-relay` feeding the same buffer; register `sip.INFO` in `app.go`
-- [ ] 9.8 Tests: decode from captured packets; a digit during the prompt is not lost; dial-ahead through two menus; terminator vs max-digits vs each timeout are distinguishable
+- [x] 9.1 RFC 4733 decoder over `pion/rtp` — end-bit and duration handling, no duplicate digits from retransmitted end packets
+- [x] 9.2 Per-session digit buffer, filled continuously from session creation so type-ahead survives between nodes
+- [x] 9.3 `CollectDigits` RPC: `PromptSpec`, `interruptible`, `max_digits`, `terminators`, first-digit / inter-digit / overall timeouts, `flush_buffer`; returns digits, a `CollectReason`, and `prompt_interrupted`
+- [x] 9.4 Server-side implementation owns the socket for the whole operation — transmits prompt frames and parses inbound RTP in one loop; drains the buffer before waiting; stops playback on the first digit when interruptible
+- [x] 9.5 Return `NO_DTMF_TRANSPORT` when the leg negotiated no telephone-event, and warn at load when a flow containing `ivr` nodes is reachable for such legs
+- [x] 9.6 Plumb through all six layers: proto → `mediaclient.Transport` → `GRPCTransport` → `Pool` (session affinity) → `CallSession` → the fake
+- [x] 9.7 SIP INFO handler for `application/dtmf-relay` feeding the same buffer; register `sip.INFO` in `app.go`
+- [x] 9.8 Tests: decode from captured packets; a digit during the prompt is not lost; dial-ahead through two menus; terminator vs max-digits vs each timeout are distinguishable
 
 ## 10. The flow engine
 

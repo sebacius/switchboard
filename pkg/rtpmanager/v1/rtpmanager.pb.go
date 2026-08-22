@@ -141,6 +141,84 @@ func (TerminateReason) EnumDescriptor() ([]byte, []int) {
 	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{1}
 }
 
+// CollectReason says why collection ended. A flow routes timeout separately
+// from invalid input, so "nothing was pressed" and "something was, but not
+// enough" must be distinguishable.
+type CollectReason int32
+
+const (
+	CollectReason_COLLECT_REASON_UNSPECIFIED CollectReason = 0
+	// A terminator digit was pressed.
+	CollectReason_COLLECT_REASON_TERMINATOR CollectReason = 1
+	// max_digits was reached.
+	CollectReason_COLLECT_REASON_MAX_DIGITS CollectReason = 2
+	// The gap after at least one digit expired.
+	CollectReason_COLLECT_REASON_INTER_DIGIT_TIMEOUT CollectReason = 3
+	// The wait for the first digit expired, with nothing pressed.
+	CollectReason_COLLECT_REASON_FIRST_DIGIT_TIMEOUT CollectReason = 4
+	// Nothing was pressed and no prompt was configured to wait after.
+	CollectReason_COLLECT_REASON_NO_INPUT CollectReason = 5
+	// The call ended or the context was cancelled.
+	CollectReason_COLLECT_REASON_CANCELED CollectReason = 6
+	// This leg negotiated no telephone-event, so no digit could ever arrive.
+	// Distinct from silence, because the flow must degrade rather than wait.
+	CollectReason_COLLECT_REASON_NO_DTMF_TRANSPORT CollectReason = 7
+	CollectReason_COLLECT_REASON_ERROR             CollectReason = 8
+)
+
+// Enum value maps for CollectReason.
+var (
+	CollectReason_name = map[int32]string{
+		0: "COLLECT_REASON_UNSPECIFIED",
+		1: "COLLECT_REASON_TERMINATOR",
+		2: "COLLECT_REASON_MAX_DIGITS",
+		3: "COLLECT_REASON_INTER_DIGIT_TIMEOUT",
+		4: "COLLECT_REASON_FIRST_DIGIT_TIMEOUT",
+		5: "COLLECT_REASON_NO_INPUT",
+		6: "COLLECT_REASON_CANCELED",
+		7: "COLLECT_REASON_NO_DTMF_TRANSPORT",
+		8: "COLLECT_REASON_ERROR",
+	}
+	CollectReason_value = map[string]int32{
+		"COLLECT_REASON_UNSPECIFIED":         0,
+		"COLLECT_REASON_TERMINATOR":          1,
+		"COLLECT_REASON_MAX_DIGITS":          2,
+		"COLLECT_REASON_INTER_DIGIT_TIMEOUT": 3,
+		"COLLECT_REASON_FIRST_DIGIT_TIMEOUT": 4,
+		"COLLECT_REASON_NO_INPUT":            5,
+		"COLLECT_REASON_CANCELED":            6,
+		"COLLECT_REASON_NO_DTMF_TRANSPORT":   7,
+		"COLLECT_REASON_ERROR":               8,
+	}
+)
+
+func (x CollectReason) Enum() *CollectReason {
+	p := new(CollectReason)
+	*p = x
+	return p
+}
+
+func (x CollectReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CollectReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_enumTypes[2].Descriptor()
+}
+
+func (CollectReason) Type() protoreflect.EnumType {
+	return &file_api_proto_rtpmanager_v1_rtpmanager_proto_enumTypes[2]
+}
+
+func (x CollectReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CollectReason.Descriptor instead.
+func (CollectReason) EnumDescriptor() ([]byte, []int) {
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{2}
+}
+
 type CreateSessionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Call-ID from SIP for correlation
@@ -1678,6 +1756,276 @@ func (x *ListenRequest) GetSilenceThreshold() int32 {
 	return 0
 }
 
+// PromptSpec is what the caller hears. One shared shape so a menu needs no
+// separate node in front of it just to say something.
+type PromptSpec struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Text to synthesise via TTS.
+	Text string `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	// Voice for synthesis; empty uses the server default.
+	Voice string `protobuf:"bytes,2,opt,name=voice,proto3" json:"voice,omitempty"`
+	// Single audio file, relative to the audio directory.
+	File string `protobuf:"bytes,3,opt,name=file,proto3" json:"file,omitempty"`
+	// Playlist of audio files, played in order.
+	Files         []string `protobuf:"bytes,4,rep,name=files,proto3" json:"files,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PromptSpec) Reset() {
+	*x = PromptSpec{}
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PromptSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PromptSpec) ProtoMessage() {}
+
+func (x *PromptSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PromptSpec.ProtoReflect.Descriptor instead.
+func (*PromptSpec) Descriptor() ([]byte, []int) {
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *PromptSpec) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *PromptSpec) GetVoice() string {
+	if x != nil {
+		return x.Voice
+	}
+	return ""
+}
+
+func (x *PromptSpec) GetFile() string {
+	if x != nil {
+		return x.File
+	}
+	return ""
+}
+
+func (x *PromptSpec) GetFiles() []string {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
+type CollectDigitsRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// Prompt to play while collecting. Omit to collect without speaking.
+	Prompt *PromptSpec `protobuf:"bytes,2,opt,name=prompt,proto3" json:"prompt,omitempty"`
+	// Interruptible lets the first digit stop the prompt (barge-in).
+	Interruptible bool `protobuf:"varint,3,opt,name=interruptible,proto3" json:"interruptible,omitempty"`
+	// MaxDigits ends collection once this many are gathered. Zero means one.
+	MaxDigits int32 `protobuf:"varint,4,opt,name=max_digits,json=maxDigits,proto3" json:"max_digits,omitempty"`
+	// Terminators end collection early, e.g. "#".
+	Terminators string `protobuf:"bytes,5,opt,name=terminators,proto3" json:"terminators,omitempty"`
+	// FirstDigitTimeoutMs bounds the wait for the first digit, measured from the
+	// END of the prompt. InterDigitTimeoutMs bounds each subsequent gap, and
+	// OverallTimeoutMs bounds the whole operation.
+	FirstDigitTimeoutMs int32 `protobuf:"varint,6,opt,name=first_digit_timeout_ms,json=firstDigitTimeoutMs,proto3" json:"first_digit_timeout_ms,omitempty"`
+	InterDigitTimeoutMs int32 `protobuf:"varint,7,opt,name=inter_digit_timeout_ms,json=interDigitTimeoutMs,proto3" json:"inter_digit_timeout_ms,omitempty"`
+	OverallTimeoutMs    int32 `protobuf:"varint,8,opt,name=overall_timeout_ms,json=overallTimeoutMs,proto3" json:"overall_timeout_ms,omitempty"`
+	// FlushBuffer discards digits pressed before this collection started. A node
+	// re-prompting after invalid input sets it: the caller's earlier digits
+	// answered a question that has since changed.
+	FlushBuffer   bool `protobuf:"varint,9,opt,name=flush_buffer,json=flushBuffer,proto3" json:"flush_buffer,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CollectDigitsRequest) Reset() {
+	*x = CollectDigitsRequest{}
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CollectDigitsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CollectDigitsRequest) ProtoMessage() {}
+
+func (x *CollectDigitsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CollectDigitsRequest.ProtoReflect.Descriptor instead.
+func (*CollectDigitsRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *CollectDigitsRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CollectDigitsRequest) GetPrompt() *PromptSpec {
+	if x != nil {
+		return x.Prompt
+	}
+	return nil
+}
+
+func (x *CollectDigitsRequest) GetInterruptible() bool {
+	if x != nil {
+		return x.Interruptible
+	}
+	return false
+}
+
+func (x *CollectDigitsRequest) GetMaxDigits() int32 {
+	if x != nil {
+		return x.MaxDigits
+	}
+	return 0
+}
+
+func (x *CollectDigitsRequest) GetTerminators() string {
+	if x != nil {
+		return x.Terminators
+	}
+	return ""
+}
+
+func (x *CollectDigitsRequest) GetFirstDigitTimeoutMs() int32 {
+	if x != nil {
+		return x.FirstDigitTimeoutMs
+	}
+	return 0
+}
+
+func (x *CollectDigitsRequest) GetInterDigitTimeoutMs() int32 {
+	if x != nil {
+		return x.InterDigitTimeoutMs
+	}
+	return 0
+}
+
+func (x *CollectDigitsRequest) GetOverallTimeoutMs() int32 {
+	if x != nil {
+		return x.OverallTimeoutMs
+	}
+	return 0
+}
+
+func (x *CollectDigitsRequest) GetFlushBuffer() bool {
+	if x != nil {
+		return x.FlushBuffer
+	}
+	return false
+}
+
+type CollectDigitsResponse struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// Digits collected, excluding any terminator.
+	Digits string        `protobuf:"bytes,2,opt,name=digits,proto3" json:"digits,omitempty"`
+	Reason CollectReason `protobuf:"varint,3,opt,name=reason,proto3,enum=rtpmanager.v1.CollectReason" json:"reason,omitempty"`
+	// PromptInterrupted reports whether a digit cut the prompt short.
+	PromptInterrupted bool   `protobuf:"varint,4,opt,name=prompt_interrupted,json=promptInterrupted,proto3" json:"prompt_interrupted,omitempty"`
+	ErrorMessage      string `protobuf:"bytes,5,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *CollectDigitsResponse) Reset() {
+	*x = CollectDigitsResponse{}
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CollectDigitsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CollectDigitsResponse) ProtoMessage() {}
+
+func (x *CollectDigitsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CollectDigitsResponse.ProtoReflect.Descriptor instead.
+func (*CollectDigitsResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *CollectDigitsResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CollectDigitsResponse) GetDigits() string {
+	if x != nil {
+		return x.Digits
+	}
+	return ""
+}
+
+func (x *CollectDigitsResponse) GetReason() CollectReason {
+	if x != nil {
+		return x.Reason
+	}
+	return CollectReason_COLLECT_REASON_UNSPECIFIED
+}
+
+func (x *CollectDigitsResponse) GetPromptInterrupted() bool {
+	if x != nil {
+		return x.PromptInterrupted
+	}
+	return false
+}
+
+func (x *CollectDigitsResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
 type ListenResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -1690,7 +2038,7 @@ type ListenResponse struct {
 
 func (x *ListenResponse) Reset() {
 	*x = ListenResponse{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[25]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1702,7 +2050,7 @@ func (x *ListenResponse) String() string {
 func (*ListenResponse) ProtoMessage() {}
 
 func (x *ListenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[25]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1715,7 +2063,7 @@ func (x *ListenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListenResponse.ProtoReflect.Descriptor instead.
 func (*ListenResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{25}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListenResponse) GetSessionId() string {
@@ -1872,7 +2220,32 @@ const file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12&\n" +
 	"\x0fmax_duration_ms\x18\x02 \x01(\x05R\rmaxDurationMs\x12,\n" +
 	"\x12silence_timeout_ms\x18\x03 \x01(\x05R\x10silenceTimeoutMs\x12+\n" +
-	"\x11silence_threshold\x18\x04 \x01(\x05R\x10silenceThreshold\"~\n" +
+	"\x11silence_threshold\x18\x04 \x01(\x05R\x10silenceThreshold\"`\n" +
+	"\n" +
+	"PromptSpec\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x14\n" +
+	"\x05voice\x18\x02 \x01(\tR\x05voice\x12\x12\n" +
+	"\x04file\x18\x03 \x01(\tR\x04file\x12\x14\n" +
+	"\x05files\x18\x04 \x03(\tR\x05files\"\x8a\x03\n" +
+	"\x14CollectDigitsRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x121\n" +
+	"\x06prompt\x18\x02 \x01(\v2\x19.rtpmanager.v1.PromptSpecR\x06prompt\x12$\n" +
+	"\rinterruptible\x18\x03 \x01(\bR\rinterruptible\x12\x1d\n" +
+	"\n" +
+	"max_digits\x18\x04 \x01(\x05R\tmaxDigits\x12 \n" +
+	"\vterminators\x18\x05 \x01(\tR\vterminators\x123\n" +
+	"\x16first_digit_timeout_ms\x18\x06 \x01(\x05R\x13firstDigitTimeoutMs\x123\n" +
+	"\x16inter_digit_timeout_ms\x18\a \x01(\x05R\x13interDigitTimeoutMs\x12,\n" +
+	"\x12overall_timeout_ms\x18\b \x01(\x05R\x10overallTimeoutMs\x12!\n" +
+	"\fflush_buffer\x18\t \x01(\bR\vflushBuffer\"\xd8\x01\n" +
+	"\x15CollectDigitsResponse\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
+	"\x06digits\x18\x02 \x01(\tR\x06digits\x124\n" +
+	"\x06reason\x18\x03 \x01(\x0e2\x1c.rtpmanager.v1.CollectReasonR\x06reason\x12-\n" +
+	"\x12prompt_interrupted\x18\x04 \x01(\bR\x11promptInterrupted\x12#\n" +
+	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\"~\n" +
 	"\x0eListenResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
@@ -1894,7 +2267,17 @@ const file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc = "" +
 	"\x14TERMINATE_REASON_BYE\x10\x02\x12\x1b\n" +
 	"\x17TERMINATE_REASON_CANCEL\x10\x03\x12\x1a\n" +
 	"\x16TERMINATE_REASON_ERROR\x10\x04\x12\x1c\n" +
-	"\x18TERMINATE_REASON_TIMEOUT\x10\x052\xe4\x06\n" +
+	"\x18TERMINATE_REASON_TIMEOUT\x10\x05*\xb7\x02\n" +
+	"\rCollectReason\x12\x1e\n" +
+	"\x1aCOLLECT_REASON_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19COLLECT_REASON_TERMINATOR\x10\x01\x12\x1d\n" +
+	"\x19COLLECT_REASON_MAX_DIGITS\x10\x02\x12&\n" +
+	"\"COLLECT_REASON_INTER_DIGIT_TIMEOUT\x10\x03\x12&\n" +
+	"\"COLLECT_REASON_FIRST_DIGIT_TIMEOUT\x10\x04\x12\x1b\n" +
+	"\x17COLLECT_REASON_NO_INPUT\x10\x05\x12\x1b\n" +
+	"\x17COLLECT_REASON_CANCELED\x10\x06\x12$\n" +
+	" COLLECT_REASON_NO_DTMF_TRANSPORT\x10\a\x12\x18\n" +
+	"\x14COLLECT_REASON_ERROR\x10\b2\xc0\a\n" +
 	"\x11RTPManagerService\x12Z\n" +
 	"\rCreateSession\x12#.rtpmanager.v1.CreateSessionRequest\x1a$.rtpmanager.v1.CreateSessionResponse\x12]\n" +
 	"\x0eDestroySession\x12$.rtpmanager.v1.DestroySessionRequest\x1a%.rtpmanager.v1.DestroySessionResponse\x12L\n" +
@@ -1905,7 +2288,8 @@ const file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc = "" +
 	"\vBridgeMedia\x12!.rtpmanager.v1.BridgeMediaRequest\x1a\".rtpmanager.v1.BridgeMediaResponse\x12Z\n" +
 	"\rUnbridgeMedia\x12#.rtpmanager.v1.UnbridgeMediaRequest\x1a$.rtpmanager.v1.UnbridgeMediaResponse\x12H\n" +
 	"\aPlayTTS\x12\x1d.rtpmanager.v1.PlayTTSRequest\x1a\x1c.rtpmanager.v1.PlaybackEvent0\x01\x12E\n" +
-	"\x06Listen\x12\x1c.rtpmanager.v1.ListenRequest\x1a\x1d.rtpmanager.v1.ListenResponseB=Z;github.com/sebas/switchboard/pkg/rtpmanager/v1;rtpmanagerv1b\x06proto3"
+	"\x06Listen\x12\x1c.rtpmanager.v1.ListenRequest\x1a\x1d.rtpmanager.v1.ListenResponse\x12Z\n" +
+	"\rCollectDigits\x12#.rtpmanager.v1.CollectDigitsRequest\x1a$.rtpmanager.v1.CollectDigitsResponseB=Z;github.com/sebas/switchboard/pkg/rtpmanager/v1;rtpmanagerv1b\x06proto3"
 
 var (
 	file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescOnce sync.Once
@@ -1919,78 +2303,86 @@ func file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP() []byte {
 	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescData
 }
 
-var file_api_proto_rtpmanager_v1_rtpmanager_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_api_proto_rtpmanager_v1_rtpmanager_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_api_proto_rtpmanager_v1_rtpmanager_proto_goTypes = []any{
 	(SessionState)(0),                   // 0: rtpmanager.v1.SessionState
 	(TerminateReason)(0),                // 1: rtpmanager.v1.TerminateReason
-	(*CreateSessionRequest)(nil),        // 2: rtpmanager.v1.CreateSessionRequest
-	(*CodecOffer)(nil),                  // 3: rtpmanager.v1.CodecOffer
-	(*CreateSessionResponse)(nil),       // 4: rtpmanager.v1.CreateSessionResponse
-	(*DestroySessionRequest)(nil),       // 5: rtpmanager.v1.DestroySessionRequest
-	(*DestroySessionResponse)(nil),      // 6: rtpmanager.v1.DestroySessionResponse
-	(*PlayAudioRequest)(nil),            // 7: rtpmanager.v1.PlayAudioRequest
-	(*PlaybackEvent)(nil),               // 8: rtpmanager.v1.PlaybackEvent
-	(*PlaybackStarted)(nil),             // 9: rtpmanager.v1.PlaybackStarted
-	(*PlaybackProgress)(nil),            // 10: rtpmanager.v1.PlaybackProgress
-	(*PlaybackCompleted)(nil),           // 11: rtpmanager.v1.PlaybackCompleted
-	(*PlaybackError)(nil),               // 12: rtpmanager.v1.PlaybackError
-	(*PlaybackStopped)(nil),             // 13: rtpmanager.v1.PlaybackStopped
-	(*StopAudioRequest)(nil),            // 14: rtpmanager.v1.StopAudioRequest
-	(*StopAudioResponse)(nil),           // 15: rtpmanager.v1.StopAudioResponse
-	(*PlayTTSRequest)(nil),              // 16: rtpmanager.v1.PlayTTSRequest
-	(*HealthRequest)(nil),               // 17: rtpmanager.v1.HealthRequest
-	(*HealthResponse)(nil),              // 18: rtpmanager.v1.HealthResponse
-	(*SessionStatus)(nil),               // 19: rtpmanager.v1.SessionStatus
-	(*UpdateSessionRemoteRequest)(nil),  // 20: rtpmanager.v1.UpdateSessionRemoteRequest
-	(*UpdateSessionRemoteResponse)(nil), // 21: rtpmanager.v1.UpdateSessionRemoteResponse
-	(*BridgeMediaRequest)(nil),          // 22: rtpmanager.v1.BridgeMediaRequest
-	(*BridgeMediaResponse)(nil),         // 23: rtpmanager.v1.BridgeMediaResponse
-	(*UnbridgeMediaRequest)(nil),        // 24: rtpmanager.v1.UnbridgeMediaRequest
-	(*UnbridgeMediaResponse)(nil),       // 25: rtpmanager.v1.UnbridgeMediaResponse
-	(*ListenRequest)(nil),               // 26: rtpmanager.v1.ListenRequest
-	(*ListenResponse)(nil),              // 27: rtpmanager.v1.ListenResponse
+	(CollectReason)(0),                  // 2: rtpmanager.v1.CollectReason
+	(*CreateSessionRequest)(nil),        // 3: rtpmanager.v1.CreateSessionRequest
+	(*CodecOffer)(nil),                  // 4: rtpmanager.v1.CodecOffer
+	(*CreateSessionResponse)(nil),       // 5: rtpmanager.v1.CreateSessionResponse
+	(*DestroySessionRequest)(nil),       // 6: rtpmanager.v1.DestroySessionRequest
+	(*DestroySessionResponse)(nil),      // 7: rtpmanager.v1.DestroySessionResponse
+	(*PlayAudioRequest)(nil),            // 8: rtpmanager.v1.PlayAudioRequest
+	(*PlaybackEvent)(nil),               // 9: rtpmanager.v1.PlaybackEvent
+	(*PlaybackStarted)(nil),             // 10: rtpmanager.v1.PlaybackStarted
+	(*PlaybackProgress)(nil),            // 11: rtpmanager.v1.PlaybackProgress
+	(*PlaybackCompleted)(nil),           // 12: rtpmanager.v1.PlaybackCompleted
+	(*PlaybackError)(nil),               // 13: rtpmanager.v1.PlaybackError
+	(*PlaybackStopped)(nil),             // 14: rtpmanager.v1.PlaybackStopped
+	(*StopAudioRequest)(nil),            // 15: rtpmanager.v1.StopAudioRequest
+	(*StopAudioResponse)(nil),           // 16: rtpmanager.v1.StopAudioResponse
+	(*PlayTTSRequest)(nil),              // 17: rtpmanager.v1.PlayTTSRequest
+	(*HealthRequest)(nil),               // 18: rtpmanager.v1.HealthRequest
+	(*HealthResponse)(nil),              // 19: rtpmanager.v1.HealthResponse
+	(*SessionStatus)(nil),               // 20: rtpmanager.v1.SessionStatus
+	(*UpdateSessionRemoteRequest)(nil),  // 21: rtpmanager.v1.UpdateSessionRemoteRequest
+	(*UpdateSessionRemoteResponse)(nil), // 22: rtpmanager.v1.UpdateSessionRemoteResponse
+	(*BridgeMediaRequest)(nil),          // 23: rtpmanager.v1.BridgeMediaRequest
+	(*BridgeMediaResponse)(nil),         // 24: rtpmanager.v1.BridgeMediaResponse
+	(*UnbridgeMediaRequest)(nil),        // 25: rtpmanager.v1.UnbridgeMediaRequest
+	(*UnbridgeMediaResponse)(nil),       // 26: rtpmanager.v1.UnbridgeMediaResponse
+	(*ListenRequest)(nil),               // 27: rtpmanager.v1.ListenRequest
+	(*PromptSpec)(nil),                  // 28: rtpmanager.v1.PromptSpec
+	(*CollectDigitsRequest)(nil),        // 29: rtpmanager.v1.CollectDigitsRequest
+	(*CollectDigitsResponse)(nil),       // 30: rtpmanager.v1.CollectDigitsResponse
+	(*ListenResponse)(nil),              // 31: rtpmanager.v1.ListenResponse
 }
 var file_api_proto_rtpmanager_v1_rtpmanager_proto_depIdxs = []int32{
-	3,  // 0: rtpmanager.v1.CreateSessionRequest.offered:type_name -> rtpmanager.v1.CodecOffer
-	19, // 1: rtpmanager.v1.CreateSessionResponse.status:type_name -> rtpmanager.v1.SessionStatus
+	4,  // 0: rtpmanager.v1.CreateSessionRequest.offered:type_name -> rtpmanager.v1.CodecOffer
+	20, // 1: rtpmanager.v1.CreateSessionResponse.status:type_name -> rtpmanager.v1.SessionStatus
 	1,  // 2: rtpmanager.v1.DestroySessionRequest.reason:type_name -> rtpmanager.v1.TerminateReason
-	19, // 3: rtpmanager.v1.DestroySessionResponse.status:type_name -> rtpmanager.v1.SessionStatus
-	9,  // 4: rtpmanager.v1.PlaybackEvent.started:type_name -> rtpmanager.v1.PlaybackStarted
-	10, // 5: rtpmanager.v1.PlaybackEvent.progress:type_name -> rtpmanager.v1.PlaybackProgress
-	11, // 6: rtpmanager.v1.PlaybackEvent.completed:type_name -> rtpmanager.v1.PlaybackCompleted
-	12, // 7: rtpmanager.v1.PlaybackEvent.error:type_name -> rtpmanager.v1.PlaybackError
-	13, // 8: rtpmanager.v1.PlaybackEvent.stopped:type_name -> rtpmanager.v1.PlaybackStopped
+	20, // 3: rtpmanager.v1.DestroySessionResponse.status:type_name -> rtpmanager.v1.SessionStatus
+	10, // 4: rtpmanager.v1.PlaybackEvent.started:type_name -> rtpmanager.v1.PlaybackStarted
+	11, // 5: rtpmanager.v1.PlaybackEvent.progress:type_name -> rtpmanager.v1.PlaybackProgress
+	12, // 6: rtpmanager.v1.PlaybackEvent.completed:type_name -> rtpmanager.v1.PlaybackCompleted
+	13, // 7: rtpmanager.v1.PlaybackEvent.error:type_name -> rtpmanager.v1.PlaybackError
+	14, // 8: rtpmanager.v1.PlaybackEvent.stopped:type_name -> rtpmanager.v1.PlaybackStopped
 	0,  // 9: rtpmanager.v1.SessionStatus.state:type_name -> rtpmanager.v1.SessionState
-	3,  // 10: rtpmanager.v1.UpdateSessionRemoteRequest.answered:type_name -> rtpmanager.v1.CodecOffer
-	19, // 11: rtpmanager.v1.UpdateSessionRemoteResponse.status:type_name -> rtpmanager.v1.SessionStatus
-	19, // 12: rtpmanager.v1.BridgeMediaResponse.status:type_name -> rtpmanager.v1.SessionStatus
-	19, // 13: rtpmanager.v1.UnbridgeMediaResponse.status:type_name -> rtpmanager.v1.SessionStatus
-	2,  // 14: rtpmanager.v1.RTPManagerService.CreateSession:input_type -> rtpmanager.v1.CreateSessionRequest
-	5,  // 15: rtpmanager.v1.RTPManagerService.DestroySession:input_type -> rtpmanager.v1.DestroySessionRequest
-	7,  // 16: rtpmanager.v1.RTPManagerService.PlayAudio:input_type -> rtpmanager.v1.PlayAudioRequest
-	14, // 17: rtpmanager.v1.RTPManagerService.StopAudio:input_type -> rtpmanager.v1.StopAudioRequest
-	17, // 18: rtpmanager.v1.RTPManagerService.Health:input_type -> rtpmanager.v1.HealthRequest
-	20, // 19: rtpmanager.v1.RTPManagerService.UpdateSessionRemote:input_type -> rtpmanager.v1.UpdateSessionRemoteRequest
-	22, // 20: rtpmanager.v1.RTPManagerService.BridgeMedia:input_type -> rtpmanager.v1.BridgeMediaRequest
-	24, // 21: rtpmanager.v1.RTPManagerService.UnbridgeMedia:input_type -> rtpmanager.v1.UnbridgeMediaRequest
-	16, // 22: rtpmanager.v1.RTPManagerService.PlayTTS:input_type -> rtpmanager.v1.PlayTTSRequest
-	26, // 23: rtpmanager.v1.RTPManagerService.Listen:input_type -> rtpmanager.v1.ListenRequest
-	4,  // 24: rtpmanager.v1.RTPManagerService.CreateSession:output_type -> rtpmanager.v1.CreateSessionResponse
-	6,  // 25: rtpmanager.v1.RTPManagerService.DestroySession:output_type -> rtpmanager.v1.DestroySessionResponse
-	8,  // 26: rtpmanager.v1.RTPManagerService.PlayAudio:output_type -> rtpmanager.v1.PlaybackEvent
-	15, // 27: rtpmanager.v1.RTPManagerService.StopAudio:output_type -> rtpmanager.v1.StopAudioResponse
-	18, // 28: rtpmanager.v1.RTPManagerService.Health:output_type -> rtpmanager.v1.HealthResponse
-	21, // 29: rtpmanager.v1.RTPManagerService.UpdateSessionRemote:output_type -> rtpmanager.v1.UpdateSessionRemoteResponse
-	23, // 30: rtpmanager.v1.RTPManagerService.BridgeMedia:output_type -> rtpmanager.v1.BridgeMediaResponse
-	25, // 31: rtpmanager.v1.RTPManagerService.UnbridgeMedia:output_type -> rtpmanager.v1.UnbridgeMediaResponse
-	8,  // 32: rtpmanager.v1.RTPManagerService.PlayTTS:output_type -> rtpmanager.v1.PlaybackEvent
-	27, // 33: rtpmanager.v1.RTPManagerService.Listen:output_type -> rtpmanager.v1.ListenResponse
-	24, // [24:34] is the sub-list for method output_type
-	14, // [14:24] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	4,  // 10: rtpmanager.v1.UpdateSessionRemoteRequest.answered:type_name -> rtpmanager.v1.CodecOffer
+	20, // 11: rtpmanager.v1.UpdateSessionRemoteResponse.status:type_name -> rtpmanager.v1.SessionStatus
+	20, // 12: rtpmanager.v1.BridgeMediaResponse.status:type_name -> rtpmanager.v1.SessionStatus
+	20, // 13: rtpmanager.v1.UnbridgeMediaResponse.status:type_name -> rtpmanager.v1.SessionStatus
+	28, // 14: rtpmanager.v1.CollectDigitsRequest.prompt:type_name -> rtpmanager.v1.PromptSpec
+	2,  // 15: rtpmanager.v1.CollectDigitsResponse.reason:type_name -> rtpmanager.v1.CollectReason
+	3,  // 16: rtpmanager.v1.RTPManagerService.CreateSession:input_type -> rtpmanager.v1.CreateSessionRequest
+	6,  // 17: rtpmanager.v1.RTPManagerService.DestroySession:input_type -> rtpmanager.v1.DestroySessionRequest
+	8,  // 18: rtpmanager.v1.RTPManagerService.PlayAudio:input_type -> rtpmanager.v1.PlayAudioRequest
+	15, // 19: rtpmanager.v1.RTPManagerService.StopAudio:input_type -> rtpmanager.v1.StopAudioRequest
+	18, // 20: rtpmanager.v1.RTPManagerService.Health:input_type -> rtpmanager.v1.HealthRequest
+	21, // 21: rtpmanager.v1.RTPManagerService.UpdateSessionRemote:input_type -> rtpmanager.v1.UpdateSessionRemoteRequest
+	23, // 22: rtpmanager.v1.RTPManagerService.BridgeMedia:input_type -> rtpmanager.v1.BridgeMediaRequest
+	25, // 23: rtpmanager.v1.RTPManagerService.UnbridgeMedia:input_type -> rtpmanager.v1.UnbridgeMediaRequest
+	17, // 24: rtpmanager.v1.RTPManagerService.PlayTTS:input_type -> rtpmanager.v1.PlayTTSRequest
+	27, // 25: rtpmanager.v1.RTPManagerService.Listen:input_type -> rtpmanager.v1.ListenRequest
+	29, // 26: rtpmanager.v1.RTPManagerService.CollectDigits:input_type -> rtpmanager.v1.CollectDigitsRequest
+	5,  // 27: rtpmanager.v1.RTPManagerService.CreateSession:output_type -> rtpmanager.v1.CreateSessionResponse
+	7,  // 28: rtpmanager.v1.RTPManagerService.DestroySession:output_type -> rtpmanager.v1.DestroySessionResponse
+	9,  // 29: rtpmanager.v1.RTPManagerService.PlayAudio:output_type -> rtpmanager.v1.PlaybackEvent
+	16, // 30: rtpmanager.v1.RTPManagerService.StopAudio:output_type -> rtpmanager.v1.StopAudioResponse
+	19, // 31: rtpmanager.v1.RTPManagerService.Health:output_type -> rtpmanager.v1.HealthResponse
+	22, // 32: rtpmanager.v1.RTPManagerService.UpdateSessionRemote:output_type -> rtpmanager.v1.UpdateSessionRemoteResponse
+	24, // 33: rtpmanager.v1.RTPManagerService.BridgeMedia:output_type -> rtpmanager.v1.BridgeMediaResponse
+	26, // 34: rtpmanager.v1.RTPManagerService.UnbridgeMedia:output_type -> rtpmanager.v1.UnbridgeMediaResponse
+	9,  // 35: rtpmanager.v1.RTPManagerService.PlayTTS:output_type -> rtpmanager.v1.PlaybackEvent
+	31, // 36: rtpmanager.v1.RTPManagerService.Listen:output_type -> rtpmanager.v1.ListenResponse
+	30, // 37: rtpmanager.v1.RTPManagerService.CollectDigits:output_type -> rtpmanager.v1.CollectDigitsResponse
+	27, // [27:38] is the sub-list for method output_type
+	16, // [16:27] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_rtpmanager_v1_rtpmanager_proto_init() }
@@ -2010,8 +2402,8 @@ func file_api_proto_rtpmanager_v1_rtpmanager_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc), len(file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   26,
+			NumEnums:      3,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

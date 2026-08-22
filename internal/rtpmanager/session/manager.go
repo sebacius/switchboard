@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pion/rtp"
+	"github.com/sebas/switchboard/internal/rtpmanager/dtmf"
 	"github.com/sebas/switchboard/internal/rtpmanager/media"
 	"github.com/sebas/switchboard/internal/rtpmanager/portpool"
 	"github.com/sebas/switchboard/internal/rtpmanager/sdp"
@@ -29,7 +30,13 @@ type Session struct {
 	Codec      string
 	// Answer is what negotiation decided, including the DTMF payload type. Codec
 	// above remains the audio codec as a string, for the API and logs.
-	Answer       AnswerSpec
+	Answer AnswerSpec
+
+	// Digits holds keys pressed but not yet consumed. It exists for the whole
+	// session, not just during a collection, so a caller who dials through a
+	// menu does not lose the digits pressed between nodes.
+	Digits *dtmf.Buffer
+
 	State        rtpv1.SessionState
 	CreatedAt    time.Time
 	ctx          context.Context
@@ -99,6 +106,7 @@ func (m *Manager) CreateSession(callID, remoteAddr string, remotePort int, offer
 		RemotePort:   remotePort,
 		Codec:        selectedCodec,
 		Answer:       answer,
+		Digits:       dtmf.NewBuffer(),
 		State:        rtpv1.SessionState_SESSION_STATE_CREATED,
 		CreatedAt:    time.Now(),
 		ctx:          ctx,
@@ -213,6 +221,7 @@ func (m *Manager) CreateSessionPendingRemote(callID string, offeredCodecs []stri
 		RemotePort:   0,  // Empty - to be set later
 		Codec:        selectedCodec,
 		Answer:       answer,
+		Digits:       dtmf.NewBuffer(),
 		State:        rtpv1.SessionState_SESSION_STATE_PENDING_REMOTE,
 		CreatedAt:    time.Now(),
 		ctx:          ctx,

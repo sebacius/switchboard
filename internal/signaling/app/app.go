@@ -35,6 +35,7 @@ type SwitchBoard struct {
 	byeHandler      *routing.BYEHandler
 	ackHandler      *routing.ACKHandler
 	cancelHandler   *routing.CANCELHandler
+	infoHandler     *routing.INFOHandler
 	dialogMgr       dialog.DialogStore
 	transport       mediaclient.Transport
 	callService     b2bua.CallService
@@ -281,6 +282,11 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		sipTrunk,
 		didRoutes,
 	)
+	// SIP INFO carries DTMF for endpoints with no RFC 4733. The sink is wired in
+	// group 10 with the flow engine; registering the method now means an INFO
+	// gets a 200 rather than a 501 in the meantime.
+	infoHandler := routing.NewINFOHandler(dialogMgr, nil)
+
 	byeHandler := routing.NewBYEHandler(dialogMgr, callService)
 	ackHandler := routing.NewACKHandler(dialogMgr)
 	cancelHandler := routing.NewCANCELHandler(dialogMgr)
@@ -297,6 +303,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		byeHandler:      byeHandler,
 		ackHandler:      ackHandler,
 		cancelHandler:   cancelHandler,
+		infoHandler:     infoHandler,
 		dialogMgr:       dialogMgr,
 		transport:       mediaTransport,
 		callService:     callService,
@@ -334,6 +341,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	uas.OnRequest(sip.BYE, proxy.handleBYE)
 	uas.OnRequest(sip.ACK, proxy.handleACK)
 	uas.OnRequest(sip.CANCEL, proxy.handleCANCEL)
+	uas.OnRequest(sip.INFO, proxy.handleINFO)
 
 	slog.Info("SIP handlers registered", "methods", "REGISTER, INVITE, BYE, ACK, CANCEL")
 	slog.Info("Configuration", "port", cfg.Port, "bind", cfg.BindAddr, "realm", realm)
@@ -383,6 +391,10 @@ func (p *SwitchBoard) handleACK(req *sip.Request, tx sip.ServerTransaction) {
 
 func (p *SwitchBoard) handleCANCEL(req *sip.Request, tx sip.ServerTransaction) {
 	p.cancelHandler.HandleCANCEL(req, tx)
+}
+
+func (p *SwitchBoard) handleINFO(req *sip.Request, tx sip.ServerTransaction) {
+	p.infoHandler.HandleINFO(req, tx)
 }
 
 func (p *SwitchBoard) Close() error {

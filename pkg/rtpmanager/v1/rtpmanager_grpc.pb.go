@@ -29,6 +29,7 @@ const (
 	RTPManagerService_UnbridgeMedia_FullMethodName       = "/rtpmanager.v1.RTPManagerService/UnbridgeMedia"
 	RTPManagerService_PlayTTS_FullMethodName             = "/rtpmanager.v1.RTPManagerService/PlayTTS"
 	RTPManagerService_Listen_FullMethodName              = "/rtpmanager.v1.RTPManagerService/Listen"
+	RTPManagerService_CollectDigits_FullMethodName       = "/rtpmanager.v1.RTPManagerService/CollectDigits"
 )
 
 // RTPManagerServiceClient is the client API for RTPManagerService service.
@@ -69,6 +70,14 @@ type RTPManagerServiceClient interface {
 	// Listen captures incoming RTP audio until silence is detected,
 	// then transcribes it using the configured ASR server (Whisper).
 	Listen(ctx context.Context, in *ListenRequest, opts ...grpc.CallOption) (*ListenResponse, error)
+	// CollectDigits plays an optional prompt and collects DTMF digits.
+	//
+	// Prompt and collection are ONE call on purpose. Split into "play" then
+	// "collect", a digit pressed between them lands in neither and is lost, and
+	// inter-digit timing measured across gRPC round trips to a possibly-remote
+	// manager is timing of the network rather than of the caller. Keeping both
+	// next to the socket is what makes barge-in and type-ahead work at all.
+	CollectDigits(ctx context.Context, in *CollectDigitsRequest, opts ...grpc.CallOption) (*CollectDigitsResponse, error)
 }
 
 type rTPManagerServiceClient struct {
@@ -197,6 +206,16 @@ func (c *rTPManagerServiceClient) Listen(ctx context.Context, in *ListenRequest,
 	return out, nil
 }
 
+func (c *rTPManagerServiceClient) CollectDigits(ctx context.Context, in *CollectDigitsRequest, opts ...grpc.CallOption) (*CollectDigitsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CollectDigitsResponse)
+	err := c.cc.Invoke(ctx, RTPManagerService_CollectDigits_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RTPManagerServiceServer is the server API for RTPManagerService service.
 // All implementations must embed UnimplementedRTPManagerServiceServer
 // for forward compatibility.
@@ -235,6 +254,14 @@ type RTPManagerServiceServer interface {
 	// Listen captures incoming RTP audio until silence is detected,
 	// then transcribes it using the configured ASR server (Whisper).
 	Listen(context.Context, *ListenRequest) (*ListenResponse, error)
+	// CollectDigits plays an optional prompt and collects DTMF digits.
+	//
+	// Prompt and collection are ONE call on purpose. Split into "play" then
+	// "collect", a digit pressed between them lands in neither and is lost, and
+	// inter-digit timing measured across gRPC round trips to a possibly-remote
+	// manager is timing of the network rather than of the caller. Keeping both
+	// next to the socket is what makes barge-in and type-ahead work at all.
+	CollectDigits(context.Context, *CollectDigitsRequest) (*CollectDigitsResponse, error)
 	mustEmbedUnimplementedRTPManagerServiceServer()
 }
 
@@ -274,6 +301,9 @@ func (UnimplementedRTPManagerServiceServer) PlayTTS(*PlayTTSRequest, grpc.Server
 }
 func (UnimplementedRTPManagerServiceServer) Listen(context.Context, *ListenRequest) (*ListenResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Listen not implemented")
+}
+func (UnimplementedRTPManagerServiceServer) CollectDigits(context.Context, *CollectDigitsRequest) (*CollectDigitsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CollectDigits not implemented")
 }
 func (UnimplementedRTPManagerServiceServer) mustEmbedUnimplementedRTPManagerServiceServer() {}
 func (UnimplementedRTPManagerServiceServer) testEmbeddedByValue()                           {}
@@ -462,6 +492,24 @@ func _RTPManagerService_Listen_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RTPManagerService_CollectDigits_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CollectDigitsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RTPManagerServiceServer).CollectDigits(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RTPManagerService_CollectDigits_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RTPManagerServiceServer).CollectDigits(ctx, req.(*CollectDigitsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RTPManagerService_ServiceDesc is the grpc.ServiceDesc for RTPManagerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -500,6 +548,10 @@ var RTPManagerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Listen",
 			Handler:    _RTPManagerService_Listen_Handler,
+		},
+		{
+			MethodName: "CollectDigits",
+			Handler:    _RTPManagerService_CollectDigits_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

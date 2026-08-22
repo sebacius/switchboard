@@ -458,3 +458,61 @@ func (t *GRPCTransport) GetSessionID(callID string) (string, bool) {
 	sessionID, ok := t.callToSession[callID]
 	return sessionID, ok
 }
+
+// CollectDigits implements Transport.CollectDigits.
+func (t *GRPCTransport) CollectDigits(ctx context.Context, req CollectRequest) (*CollectResult, error) {
+	grpcReq := &rtpv1.CollectDigitsRequest{
+		SessionId:           req.SessionID,
+		Interruptible:       req.Interruptible,
+		MaxDigits:           int32(req.MaxDigits),
+		Terminators:         req.Terminators,
+		FirstDigitTimeoutMs: int32(req.FirstDigitTimeoutMs),
+		InterDigitTimeoutMs: int32(req.InterDigitTimeoutMs),
+		OverallTimeoutMs:    int32(req.OverallTimeoutMs),
+		FlushBuffer:         req.FlushBuffer,
+	}
+	if p := req.Prompt; p != nil {
+		grpcReq.Prompt = &rtpv1.PromptSpec{
+			Text:  p.Text,
+			Voice: p.Voice,
+			File:  p.File,
+			Files: p.Files,
+		}
+	}
+
+	resp, err := t.client.CollectDigits(ctx, grpcReq)
+	if err != nil {
+		return nil, fmt.Errorf("CollectDigits RPC failed: %w", err)
+	}
+
+	return &CollectResult{
+		Digits:            resp.Digits,
+		Reason:            collectReasonFromProto(resp.Reason),
+		PromptInterrupted: resp.PromptInterrupted,
+		Err:               resp.ErrorMessage,
+	}, nil
+}
+
+// collectReasonFromProto maps the wire enum onto the client's reason.
+func collectReasonFromProto(r rtpv1.CollectReason) CollectReason {
+	switch r {
+	case rtpv1.CollectReason_COLLECT_REASON_TERMINATOR:
+		return CollectReasonTerminator
+	case rtpv1.CollectReason_COLLECT_REASON_MAX_DIGITS:
+		return CollectReasonMaxDigits
+	case rtpv1.CollectReason_COLLECT_REASON_INTER_DIGIT_TIMEOUT:
+		return CollectReasonInterDigitTimeout
+	case rtpv1.CollectReason_COLLECT_REASON_FIRST_DIGIT_TIMEOUT:
+		return CollectReasonFirstDigitTimeout
+	case rtpv1.CollectReason_COLLECT_REASON_NO_INPUT:
+		return CollectReasonNoInput
+	case rtpv1.CollectReason_COLLECT_REASON_CANCELED:
+		return CollectReasonCanceled
+	case rtpv1.CollectReason_COLLECT_REASON_NO_DTMF_TRANSPORT:
+		return CollectReasonNoDTMFTransport
+	case rtpv1.CollectReason_COLLECT_REASON_ERROR:
+		return CollectReasonError
+	default:
+		return CollectReasonUnspecified
+	}
+}

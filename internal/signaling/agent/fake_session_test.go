@@ -48,6 +48,12 @@ type fakeSession struct {
 	// picks up.
 	groupRounds [][]string
 	groupErr    error
+
+	// Digit collection. collectResults is a script consumed in order; an empty
+	// script behaves like a caller who pressed nothing.
+	collects       []CollectRequest
+	collectResults []CollectResult
+	collectErr     error
 }
 
 func newFakeSession() *fakeSession {
@@ -213,4 +219,32 @@ func (f *fakeSession) ForwardGroupOutcome(ctx context.Context, rounds [][]string
 		}
 	}
 	return GroupOutcome{DialOutcome: classifyDialError("group", err), Members: members}, nil
+}
+
+// CollectDigits serves scripted digits, so a flow test can drive a menu.
+func (f *fakeSession) CollectDigits(ctx context.Context, req CollectRequest) (CollectResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.collects = append(f.collects, req)
+	if len(f.collectResults) == 0 {
+		return CollectResult{Reason: CollectFirstDigitTimeout}, f.collectErr
+	}
+	r := f.collectResults[0]
+	f.collectResults = f.collectResults[1:]
+	return r, f.collectErr
+}
+
+// queueCollect scripts the next collection's result.
+func (f *fakeSession) queueCollect(r CollectResult) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.collectResults = append(f.collectResults, r)
+}
+
+// collected returns the collections that were requested, in order.
+func (f *fakeSession) collected() []CollectRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]CollectRequest(nil), f.collects...)
 }
