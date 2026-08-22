@@ -162,10 +162,10 @@ config API to reporting validation problems.
 
 - [x] 17.1 Remove `GetSettings`/`PutSettings` from `filemanager` and drop `SettingsDir`; `settings.md` is gone and is not coming back
 - [x] 17.2 Remove `GET/PUT /api/v1/config/settings`, the UI settings page and its route, and `Client.GetSettings`/`PutSettings`
-- [ ] 17.3 Convert filemanager tenant CRUD from `<tenant>.md` to `<tenant>.routing.json` + `<tenant>.flows.json`; `ListTenants` reports which files each tenant has
-- [ ] 17.4 Validate on write and reject an invalid edit, returning `[]Problem` (pairs with 11.10) so a bad flow can never be saved into a running system
-- [ ] 17.5 UI: edit routing and flow JSON, and render validation problems against their `flows.<id>.nodes.<node>` paths
-- [ ] 17.6 Tests: a write that fails validation changes nothing on disk; a tenant with only a routing file is listed correctly
+- [x] 17.3 Convert filemanager tenant CRUD from `<tenant>.md` to `<tenant>.routing.json` + `<tenant>.flows.json`; `ListTenants` reports which files each tenant has
+- [x] 17.4 Validate on write and reject an invalid edit, returning `[]Problem` (pairs with 11.10) so a bad flow can never be saved into a running system
+- [x] 17.5 UI: edit routing and flow JSON, and render validation problems against their `flows.<id>.nodes.<node>` paths
+- [x] 17.6 Tests: a write that fails validation changes nothing on disk; a tenant with only a routing file is listed correctly
 
 ## 18. Follow-up
 

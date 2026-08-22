@@ -286,6 +286,9 @@ type TenantFileData struct {
 	Name     string
 	Size     int64
 	Modified string
+	// HasFlows reports whether the tenant has a flow graph. Flows are optional,
+	// so the list says which tenants have one rather than implying all do.
+	HasFlows bool
 }
 
 // ConfigTenantsData holds data for the tenant list
@@ -297,14 +300,26 @@ type ConfigTenantsData struct {
 }
 
 // ConfigTenantEditData holds data for the tenant editor
+// ConfigProblemData is one validation problem shown against its path.
+type ConfigProblemData struct {
+	Path    string
+	Message string
+}
+
 type ConfigTenantEditData struct {
 	Server  string
 	Name    string
 	Content string
-	IsNew   bool
-	Success string
-	Error   string
+	// File is "routing" or "flows".
+	File     string
+	IsNew    bool
+	Success  string
+	Error    string
+	Problems []ConfigProblemData
 }
+
+// IsFlows reports whether the flow graph is being edited, for the template.
+func (d ConfigTenantEditData) IsFlows() bool { return d.File == "flows" }
 
 // ConfigDialplanData holds data for the dialplan editor
 type ConfigDialplanData struct {

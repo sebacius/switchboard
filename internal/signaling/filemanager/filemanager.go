@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -45,7 +46,42 @@ type TenantInfo struct {
 	Name     string    `json:"name"`
 	Size     int64     `json:"size"`
 	Modified time.Time `json:"modified"`
+	// HasFlows reports whether the tenant has a flow graph as well as a routing
+	// table. Flows are optional — a tenant may route entirely by direct mapping
+	// — so the list has to say which kind of tenant this is.
+	HasFlows bool `json:"has_flows"`
 }
+
+// FileKind names which of a tenant's files an operation addresses.
+type FileKind string
+
+const (
+	// KindRouting is <tenant>.routing.json: the entry mapping, extensions, ring
+	// groups and symbolic targets.
+	KindRouting FileKind = "routing"
+	// KindFlows is <tenant>.flows.json: the graphs.
+	KindFlows FileKind = "flows"
+)
+
+// suffix returns the filename suffix for a kind.
+func (k FileKind) suffix() (string, error) {
+	switch k {
+	case KindRouting:
+		return routingSuffix, nil
+	case KindFlows:
+		return flowsSuffix, nil
+	default:
+		return "", fmt.Errorf("unknown file kind %q (want %q or %q)", k, KindRouting, KindFlows)
+	}
+}
+
+// The two files that describe a tenant. The prompts these replaced were prose,
+// so an editor could not do better than save what it was given; a flow graph is
+// far more error-prone to hand-edit, which is why writes are validated.
+const (
+	routingSuffix = ".routing.json"
+	flowsSuffix   = ".flows.json"
+)
 
 // Config holds paths and dependencies for the FileManager.
 type Config struct {
@@ -69,98 +105,169 @@ func New(cfg Config) *FileManager {
 	}
 }
 
-// ListTenants returns info about all tenant markdown files.
+// ListTenants returns every tenant that has configuration on disk.
 func (fm *FileManager) ListTenants() ([]TenantInfo, error) {
 	entries, err := os.ReadDir(fm.tenantsDir)
 	if err != nil {
 		return nil, fmt.Errorf("read tenants dir: %w", err)
 	}
 
-	var tenants []TenantInfo
+	seen := map[string]*TenantInfo{}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+		if entry.IsDir() {
 			continue
 		}
+		name := entry.Name()
+
+		var tenant string
+		var isFlows bool
+		switch {
+		case strings.HasSuffix(name, routingSuffix):
+			tenant = strings.TrimSuffix(name, routingSuffix)
+		case strings.HasSuffix(name, flowsSuffix):
+			tenant, isFlows = strings.TrimSuffix(name, flowsSuffix), true
+		default:
+			continue
+		}
+
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		name := strings.TrimSuffix(entry.Name(), ".md")
-		tenants = append(tenants, TenantInfo{
-			Name:     name,
-			Size:     info.Size(),
-			Modified: info.ModTime(),
-		})
+
+		t, ok := seen[tenant]
+		if !ok {
+			t = &TenantInfo{Name: tenant}
+			seen[tenant] = t
+		}
+		t.Size += info.Size()
+		if info.ModTime().After(t.Modified) {
+			t.Modified = info.ModTime()
+		}
+		if isFlows {
+			t.HasFlows = true
+		}
+	}
+
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	tenants := make([]TenantInfo, 0, len(names))
+	for _, name := range names {
+		tenants = append(tenants, *seen[name])
 	}
 	return tenants, nil
 }
 
-// GetTenant reads a tenant markdown file by name (without .md extension).
-func (fm *FileManager) GetTenant(name string) (string, error) {
-	if err := validateTenantName(name); err != nil {
+// GetTenantFile reads one of a tenant's configuration files.
+func (fm *FileManager) GetTenantFile(name string, kind FileKind) (string, error) {
+	path, err := fm.pathFor(name, kind)
+	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(filepath.Join(fm.tenantsDir, name+".md"))
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read tenant %s: %w", name, err)
+		if os.IsNotExist(err) && kind == KindFlows {
+			// Flows are optional; an absent file is an empty graph set rather
+			// than an error, so an editor can create one by saving.
+			return "", nil
+		}
+		return "", fmt.Errorf("read %s for tenant %s: %w", kind, name, err)
 	}
 	return string(data), nil
 }
 
-// CreateTenant creates a new tenant markdown file. Fails if it already exists.
-func (fm *FileManager) CreateTenant(name, content string) error {
-	if err := validateTenantName(name); err != nil {
+// GetTenant reads a tenant's routing file.
+func (fm *FileManager) GetTenant(name string) (string, error) {
+	return fm.GetTenantFile(name, KindRouting)
+}
+
+// PutTenantFile validates and writes one of a tenant's files.
+//
+// The write is REJECTED if the result would not load. A prompt could not be
+// wrong in a way that broke routing; a flow graph can, and saving one that the
+// server would then refuse to reload would take the tenant's routing down at
+// the next restart. So the candidate is validated against the tenant's other
+// file first, and nothing touches disk unless it passes.
+func (fm *FileManager) PutTenantFile(name string, kind FileKind, content string) error {
+	path, err := fm.pathFor(name, kind)
+	if err != nil {
 		return err
 	}
-	path := filepath.Join(fm.tenantsDir, name+".md")
+
+	if problems := fm.validateCandidate(name, kind, content); len(problems) > 0 {
+		return &ValidationError{Tenant: name, Problems: problems}
+	}
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write %s for tenant %s: %w", kind, name, err)
+	}
+	return nil
+}
+
+// PutTenant updates a tenant's routing file.
+func (fm *FileManager) PutTenant(name, content string) error {
+	return fm.PutTenantFile(name, KindRouting, content)
+}
+
+// CreateTenant creates a tenant's routing file. Fails if it already exists.
+func (fm *FileManager) CreateTenant(name, content string) error {
+	path, err := fm.pathFor(name, KindRouting)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("tenant %q already exists", name)
 	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return fmt.Errorf("create tenant %s: %w", name, err)
-	}
-	return nil
+	return fm.PutTenantFile(name, KindRouting, content)
 }
 
-// PutTenant updates an existing tenant markdown file.
-func (fm *FileManager) PutTenant(name, content string) error {
-	if err := validateTenantName(name); err != nil {
-		return err
-	}
-	path := filepath.Join(fm.tenantsDir, name+".md")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return fmt.Errorf("tenant %q not found", name)
-	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write tenant %s: %w", name, err)
-	}
-	return nil
-}
-
-// DeleteTenant removes a tenant markdown file.
+// DeleteTenant removes every file belonging to a tenant.
 func (fm *FileManager) DeleteTenant(name string) error {
 	if err := validateTenantName(name); err != nil {
 		return err
 	}
-	path := filepath.Join(fm.tenantsDir, name+".md")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+
+	routing := filepath.Join(fm.tenantsDir, name+routingSuffix)
+	if _, err := os.Stat(routing); os.IsNotExist(err) {
 		return fmt.Errorf("tenant %q not found", name)
 	}
-	if err := os.Remove(path); err != nil {
+	if err := os.Remove(routing); err != nil {
 		return fmt.Errorf("delete tenant %s: %w", name, err)
+	}
+	// Leaving an orphaned flow file behind would make the tenant fail to load
+	// on the next restart, which is a worse outcome than deleting it.
+	flows := filepath.Join(fm.tenantsDir, name+flowsSuffix)
+	if _, err := os.Stat(flows); err == nil {
+		if err := os.Remove(flows); err != nil {
+			return fmt.Errorf("delete flows for tenant %s: %w", name, err)
+		}
 	}
 	return nil
 }
 
-// Reload refreshes the cached tenant prompts and routing tables. There is no
-// dialplan to reload: a call is routed either by the tenant's routing table or
-// by the supervisor, so those two files are the reloadable routing inputs.
+// pathFor resolves a tenant file path, rejecting an unsafe name.
+func (fm *FileManager) pathFor(name string, kind FileKind) (string, error) {
+	if err := validateTenantName(name); err != nil {
+		return "", err
+	}
+	suffix, err := kind.suffix()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(fm.tenantsDir, name+suffix), nil
+}
+
+// Reload refreshes the cached routing tables and flows.
 func (fm *FileManager) Reload() error {
 	var errors []string
 
 	if fm.settingsReloader != nil {
 		if err := fm.settingsReloader.ReloadSettings(); err != nil {
-			errors = append(errors, fmt.Sprintf("prompts/routing: %v", err))
+			errors = append(errors, fmt.Sprintf("routing: %v", err))
 		}
 	}
 

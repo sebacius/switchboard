@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,7 +21,47 @@ type FileProvider interface {
 	CreateTenant(name, content string) error
 	PutTenant(name, content string) error
 	DeleteTenant(name string) error
+
+	// GetTenantFile and PutTenantFile address a tenant's routing table or its
+	// flows. A write that would not load is refused.
+	GetTenantFile(name string, kind filemanager.FileKind) (string, error)
+	PutTenantFile(name string, kind filemanager.FileKind, content string) error
+
 	Reload() error
+}
+
+// fileKindFrom reads the ?file= parameter, defaulting to the routing table.
+func fileKindFrom(r *http.Request) (filemanager.FileKind, error) {
+	switch v := r.URL.Query().Get("file"); v {
+	case "", string(filemanager.KindRouting):
+		return filemanager.KindRouting, nil
+	case string(filemanager.KindFlows):
+		return filemanager.KindFlows, nil
+	default:
+		return "", fmt.Errorf("unknown file %q (want %q or %q)",
+			v, filemanager.KindRouting, filemanager.KindFlows)
+	}
+}
+
+// writeValidationError renders a refused write so the caller can see WHICH node
+// is wrong rather than only that something is.
+func (s *Server) writeValidationError(w http.ResponseWriter, verr *filemanager.ValidationError) {
+	problems := verr.ValidationProblems()
+	out := make([]map[string]string, 0, len(problems))
+	for _, p := range problems {
+		out = append(out, map[string]string{
+			"path":     p.Path,
+			"message":  p.Message,
+			"severity": string(p.Severity),
+		})
+	}
+
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	s.writeJSON(w, map[string]any{
+		"error":    "configuration is not valid and was not saved",
+		"tenant":   verr.Tenant,
+		"problems": out,
+	})
 }
 
 // SetFileProvider sets the file manager for config API endpoints.
@@ -46,9 +88,10 @@ func (s *Server) handleConfigTenantList(w http.ResponseWriter, r *http.Request) 
 		result := make([]map[string]interface{}, 0, len(tenants))
 		for _, t := range tenants {
 			result = append(result, map[string]interface{}{
-				"name":     t.Name,
-				"size":     t.Size,
-				"modified": t.Modified.Format(time.RFC3339),
+				"name":      t.Name,
+				"size":      t.Size,
+				"modified":  t.Modified.Format(time.RFC3339),
+				"has_flows": t.HasFlows,
 			})
 		}
 		s.writeJSON(w, result)
@@ -73,6 +116,11 @@ func (s *Server) handleConfigTenantList(w http.ResponseWriter, r *http.Request) 
 		}
 		if err := s.fileProvider.CreateTenant(req.Name, req.Content); err != nil {
 			slog.Error("[API] Failed to create tenant", "name", req.Name, "error", err)
+			var verr *filemanager.ValidationError
+			if errors.As(err, &verr) {
+				s.writeValidationError(w, verr)
+				return
+			}
 			if strings.Contains(err.Error(), "already exists") {
 				http.Error(w, err.Error(), http.StatusConflict)
 			} else {
@@ -109,7 +157,12 @@ func (s *Server) handleConfigTenant(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		content, err := s.fileProvider.GetTenant(name)
+		kind, kindErr := fileKindFrom(r)
+		if kindErr != nil {
+			http.Error(w, kindErr.Error(), http.StatusBadRequest)
+			return
+		}
+		content, err := s.fileProvider.GetTenantFile(name, kind)
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
 				http.Error(w, "Tenant not found", http.StatusNotFound)
@@ -118,7 +171,7 @@ func (s *Server) handleConfigTenant(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		s.writeJSON(w, map[string]string{"name": name, "content": content})
+		s.writeJSON(w, map[string]string{"name": name, "file": string(kind), "content": content})
 
 	case http.MethodPut:
 		body, err := io.ReadAll(io.LimitReader(r.Body, 2*1024*1024))
@@ -133,8 +186,22 @@ func (s *Server) handleConfigTenant(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 			return
 		}
-		if err := s.fileProvider.PutTenant(name, req.Content); err != nil {
-			slog.Error("[API] Failed to update tenant", "name", name, "error", err)
+		kind, kindErr := fileKindFrom(r)
+		if kindErr != nil {
+			http.Error(w, kindErr.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.fileProvider.PutTenantFile(name, kind, req.Content); err != nil {
+			slog.Error("[API] Failed to update tenant", "name", name, "file", kind, "error", err)
+
+			// A configuration that would not load is refused with the problems
+			// attached, so whoever saved it can see which node is wrong rather
+			// than only that something is.
+			var verr *filemanager.ValidationError
+			if errors.As(err, &verr) {
+				s.writeValidationError(w, verr)
+				return
+			}
 			if strings.Contains(err.Error(), "not found") {
 				http.Error(w, err.Error(), http.StatusNotFound)
 			} else {
@@ -142,7 +209,7 @@ func (s *Server) handleConfigTenant(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		s.writeJSON(w, map[string]string{"status": "ok"})
+		s.writeJSON(w, map[string]string{"status": "ok", "file": string(kind)})
 
 	case http.MethodDelete:
 		if err := s.fileProvider.DeleteTenant(name); err != nil {

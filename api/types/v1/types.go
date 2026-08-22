@@ -93,12 +93,31 @@ type FileContent struct {
 	Content string `json:"content"`
 }
 
-// TenantFile represents a tenant markdown file.
+// TenantFile represents a tenant's configuration.
 type TenantFile struct {
 	Name     string `json:"name"`
 	Content  string `json:"content,omitempty"`
 	Size     int64  `json:"size,omitempty"`
 	Modified string `json:"modified,omitempty"`
+	// HasFlows reports whether the tenant has a flow graph as well as a routing
+	// table. Flows are optional, so the list has to say.
+	HasFlows bool `json:"has_flows,omitempty"`
+}
+
+// ConfigProblem is one reason a configuration write was refused. Path locates
+// it — "flows.main.nodes.greeting.exits.timeout" — so an editor can point at
+// the node rather than saying only that something is wrong.
+type ConfigProblem struct {
+	Path     string `json:"path"`
+	Message  string `json:"message"`
+	Severity string `json:"severity"`
+}
+
+// ConfigRejection is the body returned when a write fails validation.
+type ConfigRejection struct {
+	Error    string          `json:"error"`
+	Tenant   string          `json:"tenant"`
+	Problems []ConfigProblem `json:"problems"`
 }
 
 // CreateTenantRequest is the body for creating a new tenant file.

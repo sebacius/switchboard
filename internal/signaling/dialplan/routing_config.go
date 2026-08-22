@@ -424,6 +424,12 @@ func (s *RoutingStore) Reload() error {
 	return nil
 }
 
+// ValidateTable runs a routing table's own checks. Exported so the config API
+// validates a proposed edit with the loader's rules rather than a copy.
+func ValidateTable(tenant string, t *RoutingTable, raw []byte) error {
+	return t.validate(tenant, raw)
+}
+
 // LoadTenant reads and validates one tenant's configuration from a directory.
 // Exported so the validate subcommand runs exactly the checks the loader does,
 // rather than a second implementation that can drift from it.

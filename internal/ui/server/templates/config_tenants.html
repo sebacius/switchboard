@@ -52,7 +52,12 @@
                             <svg class="w-4 h-4 text-blue-400 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                             </svg>
-                            <span class="text-sm font-medium text-slate-200">{{.Name}}.md</span>
+                            <span class="text-sm font-medium text-slate-200">{{.Name}}</span>
+                            {{if .HasFlows}}
+                            <span class="ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-300 border border-blue-500/30">flows</span>
+                            {{else}}
+                            <span class="ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-700 text-slate-400">routing only</span>
+                            {{end}}
                         </div>
                     </td>
                     <td class="px-4 py-3 text-sm text-slate-400 font-mono">{{.Size}} B</td>
