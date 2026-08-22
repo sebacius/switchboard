@@ -2,11 +2,14 @@ package config
 
 import (
 	"flag"
+	"fmt"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sebas/switchboard/internal/signaling/llm"
 )
 
 // Config holds the signaling server configuration
@@ -22,15 +25,33 @@ type Config struct {
 
 	// Supervisor settings. Every call is supervised by the LLM agent; there is
 	// no dialplan.
-	LLMServerURL string // Ollama server URL (e.g., "http://localhost:11434")
-	LLMModel     string // Supervisor model served by Ollama (default "qwen3:8b")
-	TTSVoice     string // Piper voice used for the supervisor's speech
+	// LLMProvider is the backend selected by the --llm-model prefix.
+	LLMProvider llm.Provider
+	// LLMModelRef is the raw --llm-model value, kept for logs and the banner.
+	LLMModelRef string
+	// LLMModel is the model id with any provider prefix stripped — what goes on
+	// the wire.
+	LLMModel string
+	// LLMServerURL is the resolved endpoint: the explicit --llm-server /
+	// LLM_SERVER if one was given, otherwise the provider's own default.
+	LLMServerURL string
+	TTSVoice     string // TTS voice used for the supervisor's speech
+
+	// The API key is deliberately NOT here. It is read from the environment at
+	// the one place the client is built. This struct is echoed by the startup
+	// banner and passed around freely; a secret that never enters it cannot leak
+	// from it.
 
 	// LLMKeepAlive is how long Ollama holds the model resident after a request.
 	// Ollama's own default is 5 minutes, which is shorter than the gap between
 	// calls on a quiet PBX — so without this the model unloads overnight and the
 	// first caller of the day pays a multi-gigabyte load inside their turn budget.
 	LLMKeepAlive string
+
+	// KeepAliveIgnoredWarning is non-empty when --llm-keep-alive was set
+	// explicitly for a provider that ignores it. The caller logs it once the
+	// logger exists.
+	KeepAliveIgnoredWarning string
 
 	// TurnTimeout bounds a mid-call turn; FirstTurnTimeout bounds the first one,
 	// which happens while the caller hears ringback and may have to load the
@@ -72,8 +93,11 @@ type Config struct {
 	GRPCKeepaliveTimeout  time.Duration
 }
 
-// Load loads configuration from command line flags and environment variables
-func Load() *Config {
+// Load loads configuration from command line flags and environment variables.
+//
+// It returns an error rather than exiting so that a bad --llm-model is reported
+// before the startup banner prints resolved values it could not resolve.
+func Load() (*Config, error) {
 	cfg := &Config{
 		GRPCConnectTimeout:    10 * time.Second,
 		GRPCKeepaliveInterval: 30 * time.Second,
@@ -86,10 +110,14 @@ func Load() *Config {
 	flag.StringVar(&cfg.BindAddr, "bind", "0.0.0.0", "Bind address for SIP and API")
 	flag.StringVar(&cfg.AdvertiseAddr, "advertise", "", "Address to advertise in SIP headers (auto-detected if not set)")
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error)")
-	flag.StringVar(&cfg.LLMServerURL, "llm-server", "http://localhost:11434", "Ollama LLM server URL")
-	flag.StringVar(&cfg.LLMModel, "llm-model", "qwen3:8b", "Ollama model used by the call supervisor")
-	flag.StringVar(&cfg.TTSVoice, "tts-voice", "alloy", "Piper TTS voice for the supervisor")
-	flag.StringVar(&cfg.LLMKeepAlive, "llm-keep-alive", "30m", "How long Ollama holds the model resident after a request (Ollama format; -1 for indefinitely)")
+	flag.StringVar(&cfg.LLMServerURL, "llm-server", llm.DefaultOllamaServer,
+		"LLM server URL. Defaults to "+llm.DefaultOllamaServer+" for ollama and "+llm.DefaultOpenAIServer+
+			" for openai; set it explicitly to use an OpenAI-compatible gateway")
+	flag.StringVar(&cfg.LLMModel, "llm-model", "qwen3:8b",
+		"Supervisor model as [provider/]model (providers: ollama, openai). No prefix means ollama")
+	flag.StringVar(&cfg.TTSVoice, "tts-voice", "alloy", "TTS voice for the supervisor")
+	flag.StringVar(&cfg.LLMKeepAlive, "llm-keep-alive", "30m",
+		"How long Ollama holds the model resident after a request (Ollama format; -1 for indefinitely). Ignored by openai")
 	flag.DurationVar(&cfg.TurnTimeout, "turn-timeout", 30*time.Second, "Deadline for a mid-call supervisor turn")
 	flag.DurationVar(&cfg.FirstTurnTimeout, "first-turn-timeout", 90*time.Second, "Deadline for the first supervisor turn, which may include loading the model while the caller hears ringback")
 	flag.StringVar(&cfg.PolicyPath, "policy-config", "resources/config/policy.json", "Path to tenant Class-of-Service and channel-limit configuration")
@@ -140,8 +168,24 @@ func Load() *Config {
 			cfg.RTPManagerAddrs = parseAddressList(rtpmanager)
 		}
 	}
+	// Whether the endpoint was chosen explicitly decides whether the provider's
+	// own default applies. flag.Visit reports only the flags actually present on
+	// the command line, which answers exactly that question — comparing the value
+	// against the default string would silently redirect an operator whose
+	// OpenAI-compatible gateway happens to listen on Ollama's port.
+	llmServerExplicit := false
+	llmKeepAliveExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "llm-server":
+			llmServerExplicit = true
+		case "llm-keep-alive":
+			llmKeepAliveExplicit = true
+		}
+	})
 	if llmServer := os.Getenv("LLM_SERVER"); llmServer != "" {
 		cfg.LLMServerURL = llmServer
+		llmServerExplicit = true
 	}
 	if llmModel := os.Getenv("LLM_MODEL"); llmModel != "" {
 		cfg.LLMModel = llmModel
@@ -182,7 +226,26 @@ func Load() *Config {
 		cfg.RoutingPath = cfg.TenantsPath
 	}
 
-	return cfg
+	// Resolve the supervisor's provider last, so it sees the final --llm-model
+	// after every override has been applied.
+	cfg.LLMModelRef = cfg.LLMModel
+	provider, modelID, err := llm.ParseModelRef(cfg.LLMModel)
+	if err != nil {
+		return nil, err
+	}
+	cfg.LLMProvider, cfg.LLMModel = provider, modelID
+
+	if !llmServerExplicit {
+		cfg.LLMServerURL = llm.DefaultServerURL(provider)
+	}
+
+	// Discarding an explicitly-set flag in silence is a debugging tax; say so.
+	if llmKeepAliveExplicit && provider != llm.ProviderOllama {
+		cfg.KeepAliveIgnoredWarning = fmt.Sprintf(
+			"--llm-keep-alive is an Ollama setting and is ignored by provider %q", provider)
+	}
+
+	return cfg, nil
 }
 
 // parseAddressList parses a comma-separated list of addresses

@@ -216,6 +216,10 @@ type fakeExecutor struct {
 	resp  []execResp
 	idx   int
 	calls []string
+
+	// delay makes a tool outlive its turn budget, which is how a test reaches
+	// the loop's cancellation path with the batch only partly dispatched.
+	delay time.Duration
 }
 
 type execResp struct {
@@ -228,6 +232,9 @@ func (e *fakeExecutor) Execute(_ context.Context, call llm.ToolCall, _ CallSessi
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.calls = append(e.calls, call.Function.Name)
+	if e.delay > 0 {
+		time.Sleep(e.delay)
+	}
 	if e.idx >= len(e.resp) {
 		// Default: continue with a generic result.
 		return "ok", DispositionContinue, nil

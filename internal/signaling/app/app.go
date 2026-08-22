@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/emiago/sipgo"
@@ -180,21 +181,37 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		"tenants", len(policyCfg.Tenants),
 	)
 
-	// Create the native tool-calling LLM client. The supervisor cannot run
-	// without it, so an unset server URL is a hard failure rather than a
-	// silently unsupervised switch.
-	if cfg.LLMServerURL == "" {
+	// Create the tool-calling LLM client. The supervisor cannot run without one,
+	// so a misconfigured provider is a hard failure rather than a silently
+	// unsupervised switch.
+	//
+	// The API key is read here, from the environment, and never travels through
+	// cfg: that struct is echoed by the startup banner and passed around freely.
+	// For the same reason it is not a flag — flags are visible in ps.
+	chatClient, err := llm.New(llm.Config{
+		Provider:  cfg.LLMProvider,
+		ServerURL: cfg.LLMServerURL,
+		Model:     cfg.LLMModel,
+		KeepAlive: cfg.LLMKeepAlive,
+		APIKey:    os.Getenv("OPENAI_API_KEY"),
+		// The transport deadline must outlast the largest turn budget, or it
+		// fires first and --first-turn-timeout silently does nothing.
+		Timeout: cfg.FirstTurnTimeout + 30*time.Second,
+	})
+	if err != nil {
 		_ = ua.Close()
 		locStore.Close()
 		_ = mediaTransport.Close()
-		return nil, fmt.Errorf("no LLM server configured: the call supervisor requires --llm-server")
+		return nil, fmt.Errorf("LLM supervisor: %w", err)
 	}
-	chatClient := llm.NewClient(llm.Config{
-		ServerURL: cfg.LLMServerURL,
-		KeepAlive: cfg.LLMKeepAlive,
-	})
-	slog.Info("LLM supervisor configured",
-		"server", cfg.LLMServerURL, "model", cfg.LLMModel, "keep_alive", cfg.LLMKeepAlive)
+	logArgs := []any{"provider", cfg.LLMProvider, "server", cfg.LLMServerURL, "model", cfg.LLMModel}
+	if cfg.LLMProvider == llm.ProviderOllama {
+		logArgs = append(logArgs, "keep_alive", cfg.LLMKeepAlive)
+	}
+	slog.Info("LLM supervisor configured", logArgs...)
+	if cfg.KeepAliveIgnoredWarning != "" {
+		slog.Warn(cfg.KeepAliveIgnoredWarning)
+	}
 
 	// Check the model is reachable and pulled, then load it — in the background,
 	// because a cold multi-gigabyte load takes minutes and the SIP stack must not
