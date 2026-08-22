@@ -33,6 +33,10 @@ const routingGroupPrefix = "group/"
 // the LLM supervisor". It is kept only so the loader can reject it by name.
 const retiredAssistantTarget = "assistant"
 
+// routingFlowPrefix marks a destination as entering a flow graph
+// ("flow/main-ivr"), as opposed to dialing something directly.
+const routingFlowPrefix = "flow/"
+
 // routingFileSuffix is the per-tenant routing file's extension, so "default" is
 // described by default.routing.json.
 const routingFileSuffix = ".routing.json"
@@ -85,13 +89,17 @@ type RoutingTable struct {
 	// Empty inherits DefaultRetrievalPrefix.
 	RetrievalPrefix string `json:"retrieval_prefix"`
 
-	// Extensions maps a dialed extension to a destination: a concrete endpoint
-	// ("user/110"), a ring group ("group/claims"), or the assistant.
+	// Extensions maps dialed digits to a destination: a concrete endpoint
+	// ("user/110"), a ring group ("group/claims"), or a flow ("flow/main-ivr").
+	//
+	// Keys may be digit-map patterns as well as literals, because extension
+	// ranges and number plans cannot be enumerated. The most specific match wins,
+	// computed rather than declared — see digitmap.go.
 	Extensions map[string]string `json:"extensions"`
 
-	// SymbolicTargets maps the names the model may dial to destinations. This is
-	// the capability narrowing tool-authorization enforces; it lives here so the
-	// resolver and the model resolve a name identically.
+	// SymbolicTargets maps dialable names to destinations. This is the
+	// capability narrowing tool-authorization enforces; it lives here so every
+	// path resolves a name identically.
 	SymbolicTargets map[string]string `json:"symbolic_targets"`
 
 	// DIDs maps an inbound DID to a destination within this tenant. The DID→
@@ -101,6 +109,87 @@ type RoutingTable struct {
 
 	// Groups holds this tenant's ring groups by name.
 	Groups map[string]RingGroup `json:"groups"`
+
+	// extensionMap and didMap are the compiled digit maps, built at load so a
+	// call costs a match rather than a compile. compileOnce lets a table built
+	// in code — a test fixture, say — match correctly without a load path.
+	compileOnce  sync.Once
+	extensionMap *DigitMap
+	didMap       *DigitMap
+}
+
+// ensureCompiled builds the digit maps if the table was constructed directly
+// rather than loaded. A compile error here cannot be returned, but it also
+// cannot be new: the load path rejects it first, and a hand-built table with a
+// bad pattern simply matches nothing.
+func (t *RoutingTable) ensureCompiled() {
+	t.compileOnce.Do(func() {
+		if t.extensionMap == nil {
+			t.extensionMap, _ = CompileDigitMap(t.Extensions)
+		}
+		if t.didMap == nil {
+			t.didMap, _ = CompileDigitMap(t.DIDs)
+		}
+	})
+}
+
+// MatchExtension resolves dialed digits against the tenant's entry mapping,
+// returning the most specific match.
+func (t *RoutingTable) MatchExtension(dialed string) (string, bool) {
+	if t == nil {
+		return "", false
+	}
+	t.ensureCompiled()
+	return t.extensionMap.Lookup(dialed)
+}
+
+// MatchDID resolves an inbound DID against the tenant's DID mapping.
+//
+// Carriers are inconsistent about the leading '+', so the lookup tries both
+// forms. A tenant writing its table one way while its carrier signals the other
+// would otherwise fail to route every inbound call it owns.
+func (t *RoutingTable) MatchDID(dialed string) (string, bool) {
+	if t == nil {
+		return "", false
+	}
+	t.ensureCompiled()
+
+	if dest, ok := t.didMap.Lookup(dialed); ok {
+		return dest, true
+	}
+	if alt, ok := togglePlus(dialed); ok {
+		return t.didMap.Lookup(alt)
+	}
+	return "", false
+}
+
+// togglePlus returns the other E.164 form of a number: "+1555..." <-> "1555...".
+func togglePlus(dialed string) (string, bool) {
+	dialed = strings.TrimSpace(dialed)
+	if dialed == "" {
+		return "", false
+	}
+	if strings.HasPrefix(dialed, "+") {
+		return strings.TrimPrefix(dialed, "+"), true
+	}
+	return "+" + dialed, true
+}
+
+// compile builds the digit maps. Ambiguity is rejected here, at load, where an
+// operator can act on it.
+func (t *RoutingTable) compile(tenant string) error {
+	extensions, err := CompileDigitMap(t.Extensions)
+	if err != nil {
+		return fmt.Errorf("tenant %s: extensions: %w", tenant, err)
+	}
+	dids, err := CompileDigitMap(t.DIDs)
+	if err != nil {
+		return fmt.Errorf("tenant %s: dids: %w", tenant, err)
+	}
+	t.compileOnce.Do(func() {
+		t.extensionMap, t.didMap = extensions, dids
+	})
+	return nil
 }
 
 // RetrievalPrefixOrDefault returns the tenant's call-retrieval prefix, defaulted.
@@ -124,6 +213,17 @@ func (t *RoutingTable) Group(name string) (RingGroup, bool) {
 		g.MemberTimeoutMs = DefaultMemberTimeoutMs
 	}
 	return g, true
+}
+
+// IsFlowTarget reports whether a destination enters a flow, and if so its name.
+// A bare destination such as "user/110" stays valid as sugar for a one-node
+// dial, so simple configurations never have to write a graph.
+func IsFlowTarget(target string) (string, bool) {
+	if !strings.HasPrefix(target, routingFlowPrefix) {
+		return "", false
+	}
+	name := strings.TrimSpace(strings.TrimPrefix(target, routingFlowPrefix))
+	return name, name != ""
 }
 
 // IsGroupTarget reports whether a destination string names a ring group, and
@@ -150,6 +250,11 @@ func (t *RoutingTable) validate(tenant string, raw []byte) error {
 		if len(g.Members) == 0 {
 			return fmt.Errorf("tenant %s: ring group %q has no members", tenant, name)
 		}
+	}
+
+	// Patterns compile — and ambiguity is rejected — at load.
+	if err := t.compile(tenant); err != nil {
+		return err
 	}
 
 	// Configuration written for the LLM supervisor must fail loudly and by name.

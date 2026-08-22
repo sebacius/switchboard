@@ -37,13 +37,13 @@
 
 ## 5. Digit-map matcher
 
-- [ ] 5.1 `digitmap.go`: compile `X`, `N`, `Z`, bracketed sets, trailing `.`, and literals into a per-position class list; reject `.` anywhere but last
-- [ ] 5.2 Match with exact-length semantics, or tail-absorbing when a trailing wildcard is present
-- [ ] 5.3 Specificity by accepted-set cardinality (literal 1, `[147]` 3, `[2-8]` 7, `N` 8, `Z` 9, `X` 10, `.` infinite), compared as a per-position vector via dominance — never a scalar, never a declared integer
-- [ ] 5.4 Pairwise language-intersection test, then dominance; two intersecting patterns with neither dominating is a load error naming both
+- [x] 5.1 `digitmap.go`: compile `X`, `N`, `Z`, bracketed sets, trailing `.`, and literals into a per-position class list; reject `.` anywhere but last
+- [x] 5.2 Match with exact-length semantics, or tail-absorbing when a trailing wildcard is present
+- [x] 5.3 Specificity by accepted-set cardinality (literal 1, `[147]` 3, `[2-8]` 7, `N` 8, `Z` 9, `X` 10, `.` infinite), compared as a per-position vector via dominance — never a scalar, never a declared integer
+- [x] 5.4 Pairwise language-intersection test, then dominance; two intersecting patterns with neither dominating is a load error naming both
 - [ ] 5.5 Closed-set transforms `strip_digits`, `strip_suffix_digits`, `normalize: e164|digits|none`, landing in the cursor. No `${}` interpolation
-- [ ] 5.6 Bare destinations stay valid as one-node-dial sugar
-- [ ] 5.7 Table tests: literal beats pattern; `N` beats `Z` beats `X`; `NX` vs `XN` rejected; `[12]X` vs `[23]X` rejected; `9NXXNXXXXXX` matches a NANP number and strips correctly
+- [x] 5.6 Bare destinations stay valid as one-node-dial sugar
+- [x] 5.7 Table tests: literal beats pattern; `N` beats `Z` beats `X`; `NX` vs `XN` rejected; `[12]X` vs `[23]X` rejected; `9NXXNXXXXXX` matches a NANP number and strips correctly
 
 ## 6. Policy: side-effect-free classification
 
@@ -102,7 +102,7 @@
 - [x] 11.5 Acyclicity by three-colour DFS, reporting the actual cycle path
 - [x] 11.6 Every sink node is terminal-typed
 - [ ] 11.7 Target and COS checks via `Policy.Classify` — syntax, group existence, symbolic membership. **No registration check** (runtime state; would fail every boot)
-- [ ] 11.8 Digit-map checks per group 5
+- [x] 11.8 Digit-map checks per group 5
 - [ ] 11.9 E911 **warning-only**: a pattern that shadows an emergency number; a PSTN-capable tenant with no emergency route
 - [ ] 11.10 `Store.Reload` fails on any Error and keeps the previous config; the config API returns `[]Problem` so the UI can say why
 

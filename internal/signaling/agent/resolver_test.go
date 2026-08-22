@@ -207,3 +207,33 @@ func TestResolveTablesAreDirectionScoped(t *testing.T) {
 		t.Fatal("an internal call must not resolve through the DID table")
 	}
 }
+
+// Patterns are the point of the digit map: extension ranges cannot be
+// enumerated. This exercises the resolver end to end rather than the matcher in
+// isolation, so a table that compiles but is never consulted fails here.
+func TestResolvePatternedExtension(t *testing.T) {
+	routing := dialplan.StaticRouting{"acme": {
+		Extensions: map[string]string{
+			"1XX": "user/150", // any 1xx extension reaches the same desk
+			"110": "user/110", // except 110, which is more specific
+		},
+	}}
+	r := NewResolver(routing, resolverDirectory{"110": true, "150": true}, nil, quietLogger())
+
+	// The literal wins over the pattern that also matches it.
+	dest, ok := r.Resolve(internalCall("110"))
+	if !ok || dest.Target != "user/110" {
+		t.Fatalf("110 should resolve to the literal user/110, got %+v (%v)", dest, ok)
+	}
+
+	// Anything else in the range falls to the pattern.
+	dest, ok = r.Resolve(internalCall("137"))
+	if !ok || dest.Target != "user/150" {
+		t.Fatalf("137 should match the 1XX pattern, got %+v (%v)", dest, ok)
+	}
+
+	// Outside the range nothing resolves.
+	if _, ok := r.Resolve(internalCall("237")); ok {
+		t.Fatal("237 is outside the 1XX range and must not resolve")
+	}
+}

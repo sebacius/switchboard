@@ -230,23 +230,11 @@ func (r *Resolver) isRegistered(target string) bool {
 // the same number.
 func lookupDestination(table *dialplan.RoutingTable, dir Direction, callee string) (string, bool) {
 	if dir == DirectionInbound {
-		if dest, ok := table.DIDs[callee]; ok {
-			return dest, true
-		}
-		wanted := didDigits(callee)
-		if wanted == "" {
-			return "", false
-		}
-		for did, dest := range table.DIDs {
-			if didDigits(did) == wanted {
-				return dest, true
-			}
-		}
-		return "", false
+		// MatchDID handles the leading-'+' inconsistency itself.
+		return table.MatchDID(callee)
 	}
 
-	dest, ok := table.Extensions[callee]
-	return dest, ok
+	return table.MatchExtension(callee)
 }
 
 // didDigits reduces a DID to bare digits so "+15558001200" and "15558001200"
