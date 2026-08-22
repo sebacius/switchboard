@@ -33,9 +33,13 @@ func writeRoutes(t *testing.T, dir, body string) string {
 	return path
 }
 
-func writePolicy(t *testing.T, body string) string {
+// writePolicy lays out the shipped default posture: no external dialing
+// anywhere. Every test here wants that, so it takes no argument — a policy
+// fixture that varied would belong in the policy package's own tests.
+func writePolicy(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "policy.json")
+	body := `{"default_channel_limit":10,"tenants":{}}`
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write policy: %v", err)
 	}
@@ -46,7 +50,7 @@ func TestValidConfigurationExitsZero(t *testing.T) {
 	dir := writeConfig(t,
 		`{"operator":"user/100","extensions":{"100":"flow/main"}}`,
 		`{"flows":{"main":{"start":"bye","nodes":{"bye":{"type":"hangup","entry":{}}}}}}`)
-	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+	policy := writePolicy(t)
 
 	var out bytes.Buffer
 	if code := Run([]string{"--routing-path", dir, "--policy-config", policy}, &out); code != ExitOK {
@@ -65,7 +69,7 @@ func TestEveryProblemIsReported(t *testing.T) {
 				"b":{"type":"tts","entry":{"text":"two"},"exits":{"done":"a"}},
 				"orphan":{"type":"hangup","entry":{}}
 			}}}}`)
-	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+	policy := writePolicy(t)
 
 	var out bytes.Buffer
 	code := Run([]string{"--routing-path", dir, "--policy-config", policy}, &out)
@@ -99,8 +103,8 @@ func TestClassOfServiceIsChecked(t *testing.T) {
 					"exits":{"no_answer":"bye","busy":"bye","denied":"bye","failed":"bye"}},
 				"bye":{"type":"hangup","entry":{}}
 			}}}}`)
-	// External dialling disabled: the shipped default posture.
-	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+	// External dialing disabled: the shipped default posture.
+	policy := writePolicy(t)
 
 	var out bytes.Buffer
 	code := Run([]string{"--routing-path", dir, "--policy-config", policy}, &out)
@@ -115,7 +119,7 @@ func TestClassOfServiceIsChecked(t *testing.T) {
 
 // A missing directory is an error, not a silent pass.
 func TestMissingDirectoryIsAnError(t *testing.T) {
-	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+	policy := writePolicy(t)
 	var out bytes.Buffer
 
 	if code := Run([]string{"--routing-path", "/nonexistent", "--policy-config", policy}, &out); code != ExitProblem {
@@ -129,7 +133,7 @@ func TestDIDRoutingToAMissingTenantIsAnError(t *testing.T) {
 	dir := writeConfig(t,
 		`{"operator":"user/100","extensions":{"100":"user/100"}}`, "")
 	routes := writeRoutes(t, dir, `{"dids":{"+15551234567":"ghost"}}`)
-	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+	policy := writePolicy(t)
 
 	var out bytes.Buffer
 	code := Run([]string{
@@ -155,7 +159,7 @@ func TestTenantDIDWithNoRouteIsWarned(t *testing.T) {
 		`{"operator":"user/100","extensions":{"100":"user/100"},
 		  "dids":{"+15558001200":"user/100"}}`, "")
 	routes := writeRoutes(t, dir, `{"dids":{}}`)
-	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+	policy := writePolicy(t)
 
 	var out bytes.Buffer
 	code := Run([]string{
@@ -176,7 +180,7 @@ func TestRoutedTenantDIDIsNotWarned(t *testing.T) {
 		`{"operator":"user/100","extensions":{"100":"user/100"},
 		  "dids":{"+15558001200":"user/100"}}`, "")
 	routes := writeRoutes(t, dir, `{"dids":{"+15558001200":"acme"}}`)
-	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+	policy := writePolicy(t)
 
 	var out bytes.Buffer
 	if code := Run([]string{
@@ -197,7 +201,7 @@ func TestCrossCheckToleratesTheLeadingPlus(t *testing.T) {
 		  "dids":{"+15558001200":"user/100"}}`, "")
 	// Routed WITHOUT the plus; the tenant handles it WITH one.
 	routes := writeRoutes(t, dir, `{"dids":{"15558001200":"acme"}}`)
-	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+	policy := writePolicy(t)
 
 	var out bytes.Buffer
 	Run([]string{"--routing-path", dir, "--policy-config", policy, "--routes-path", routes}, &out)
@@ -215,7 +219,7 @@ func TestPatternDIDsAreNotCrossChecked(t *testing.T) {
 		`{"operator":"user/100","extensions":{"100":"user/100"},
 		  "dids":{"+1555800XXXX":"user/100"}}`, "")
 	routes := writeRoutes(t, dir, `{"dids":{}}`)
-	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+	policy := writePolicy(t)
 
 	var out bytes.Buffer
 	Run([]string{"--routing-path", dir, "--policy-config", policy, "--routes-path", routes}, &out)
@@ -229,7 +233,7 @@ func TestPatternDIDsAreNotCrossChecked(t *testing.T) {
 // failure, so a signaling-only deployment still validates.
 func TestMissingRoutesFileIsNotAnError(t *testing.T) {
 	dir := writeConfig(t, `{"operator":"user/100","extensions":{"100":"user/100"}}`, "")
-	policy := writePolicy(t, `{"default_channel_limit":10,"tenants":{}}`)
+	policy := writePolicy(t)
 
 	var out bytes.Buffer
 	if code := Run([]string{

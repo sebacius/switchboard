@@ -247,7 +247,7 @@ so it reaches the tenant operator.
 Both steps use the same matcher, so they cannot disagree about whether a number
 matches:
 
-- **Either E.164 form works.** A carrier signalling `15558001200` finds a route
+- **Either E.164 form works.** A carrier signaling `15558001200` finds a route
   written `+15558001200`. Which form a given trunk sends is not something the
   operator writing this file can know in advance.
 - **Patterns work**, so owning a block is one line rather than ten thousand.
@@ -360,7 +360,7 @@ export LOGLEVEL=debug
 | `--tts-server` | `TTS_SERVER` | http://localhost:8000 | TTS server URL (Piper, or any OpenAI-compatible `/v1/audio/speech`) |
 | `--asr-server` | `ASR_SERVER` | http://localhost:8001 | ASR server URL — **currently unused** |
 
-TTS synthesises `tts` node text and `ivr` prompts into audio streamed over RTP.
+TTS synthesizes `tts` node text and `ivr` prompts into audio streamed over RTP.
 A flow that only plays recorded files, dials, transfers and hangs up needs no
 TTS at all.
 

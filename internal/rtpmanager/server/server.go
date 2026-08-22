@@ -504,7 +504,7 @@ func (s *Server) CollectDigits(ctx context.Context, req *rtpv1.CollectDigitsRequ
 		FlushBuffer:         req.FlushBuffer,
 	}
 
-	// A spoken prompt is synthesised here, before the socket is taken, so the
+	// A spoken prompt is synthesized here, before the socket is taken, so the
 	// TTS round trip does not eat into the caller's first-digit budget.
 	if p := req.Prompt; p != nil {
 		switch {

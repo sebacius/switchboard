@@ -51,7 +51,7 @@ func (h *INFOHandler) HandleINFO(req *sip.Request, tx sip.ServerTransaction) {
 	if !ok {
 		// An INFO we do not understand is still a well-formed request; 200 is
 		// friendlier than an error the far end will retry.
-		slog.Debug("[INFO] Ignoring INFO with no recognised DTMF body", "call_id", callID)
+		slog.Debug("[INFO] Ignoring INFO with no recognized DTMF body", "call_id", callID)
 		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusOK, "OK", nil))
 		return
 	}
@@ -100,11 +100,12 @@ func firstDTMFRune(s string) (rune, bool) {
 		return '#', true
 	}
 
-	for _, r := range strings.TrimSpace(s) {
-		if strings.ContainsRune("0123456789*#ABCD", r) {
-			return r, true
-		}
-		break
+	// Only the FIRST character is considered: a Signal value names one key, so
+	// scanning further would turn "1x" into a valid "1" rather than rejecting a
+	// body this parser does not understand.
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) > 0 && strings.ContainsRune("0123456789*#ABCD", runes[0]) {
+		return runes[0], true
 	}
 	return 0, false
 }

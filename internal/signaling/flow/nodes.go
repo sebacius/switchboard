@@ -35,7 +35,7 @@ func (e *Engine) runNode(ctx context.Context, sess agent.CallSession, cc agent.C
 	case *dialplan.DialUserEntry:
 		return e.runDialUser(ctx, sess, cc, entry, policy)
 	case *dialplan.DialExternalEntry:
-		return e.runDialExternal(ctx, sess, cc, entry, policy)
+		return e.runDialExternal(ctx, sess, entry, policy)
 	case *dialplan.TransferEntry:
 		return e.runTransfer(ctx, sess, cc, entry, policy)
 	case *dialplan.HangupEntry:
@@ -238,7 +238,7 @@ func (e *Engine) dialGroup(ctx context.Context, sess agent.CallSession, cc agent
 		memberTimeout = time.Duration(group.MemberTimeoutMs) * time.Millisecond
 	}
 
-	rounds := roundsFor(group, members)
+	rounds := roundsFor(members)
 	if sess.HasAnswered() {
 		// Post-answer there is no forward path, so members are tried in order
 		// rather than rung together. The last failure decides the exit.
@@ -265,9 +265,13 @@ func (e *Engine) dialGroup(ctx context.Context, sess agent.CallSession, cc agent
 	return exitWith(res.ExitName(), describeGroup(name, res))
 }
 
-// roundsFor turns a group's strategy into ring rounds. Sequential rings members
-// one at a time in order; round-robin does the same from a rotating start.
-func roundsFor(group dialplan.RingGroup, members []string) [][]string {
+// roundsFor turns a member list into ring rounds — one member per round, so
+// they are tried in order.
+//
+// The group's strategy is deliberately not read here: the rotation for
+// round-robin is applied to the member list before this point, so both
+// strategies produce the same shape and differ only in where the list starts.
+func roundsFor(members []string) [][]string {
 	rounds := make([][]string, 0, len(members))
 	for _, m := range members {
 		rounds = append(rounds, []string{m})
@@ -276,7 +280,7 @@ func roundsFor(group dialplan.RingGroup, members []string) [][]string {
 }
 
 // runDialExternal dials a symbolic external destination.
-func (e *Engine) runDialExternal(ctx context.Context, sess agent.CallSession, cc agent.CallContext,
+func (e *Engine) runDialExternal(ctx context.Context, sess agent.CallSession,
 	entry *dialplan.DialExternalEntry, policy *agent.Policy) outcome {
 
 	nodeCtx, cancel := nodeContext(ctx, entry.TimeoutMs)

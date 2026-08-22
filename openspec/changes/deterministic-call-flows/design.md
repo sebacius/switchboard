@@ -275,7 +275,7 @@ Flows live in `<tenant>.flows.json`, separate from `<tenant>.routing.json`.
 The risk of a second file is a window where flows reference a group the other file
 just removed. Designed out rather than accepted: both files for a tenant are read
 and validated **together in one `Reload` pass**, preserving today's fail-closed
-behaviour (`routing_config.go:241` — a bad edit keeps the old cache in force).
+behavior (`routing_config.go:241` — a bad edit keeps the old cache in force).
 
 ### 14. `Engine.Handle` keeps `CallResolution.Handle`'s signature
 

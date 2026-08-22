@@ -280,7 +280,7 @@ Without the path, "why did this caller end up with the operator" has no answer.
 
 Routing needs nothing external. One optional service adds voice:
 
-- **TTS** (Piper, or any OpenAI-compatible `/v1/audio/speech`) — synthesises
+- **TTS** (Piper, or any OpenAI-compatible `/v1/audio/speech`) — synthesizes
   `tts` node text and `ivr` prompts. Without it, flows can still play recorded
   audio files, dial, transfer and hang up.
 

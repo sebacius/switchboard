@@ -28,7 +28,7 @@ Every node SHALL have the same structure: a `type` from a closed set, an `entry`
 carrying type-specific input, and an `exits` map from declared exit name to node ID.
 
 The node types SHALL be exactly `ivr`, `tts`, `play_audio`, `dial_user`,
-`dial_external`, `transfer`, and `hangup`. A node of an unrecognised type SHALL be a
+`dial_external`, `transfer`, and `hangup`. A node of an unrecognized type SHALL be a
 load error.
 
 Each node type's set of exit names SHALL be fixed in code, not in configuration, so that

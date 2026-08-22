@@ -13,7 +13,7 @@ package dialplan
 //
 // What they must NOT do is match differently. They did: the gate was a bare map
 // lookup while the tenant table tolerated the leading '+', so a carrier
-// signalling "15558001200" against a "+15558001200" route was declined at the
+// signaling "15558001200" against a "+15558001200" route was declined at the
 // door — even though the tenant's own table would have matched it perfectly.
 // DIDMap is the one matcher both now use, so they cannot drift apart again.
 
@@ -49,7 +49,7 @@ func (d *DIDMap) Lookup(dialed string) (string, bool) {
 	return value, ok
 }
 
-// LookupWithDigits also returns the dialled digits after the matching entry's
+// LookupWithDigits also returns the dialed digits after the matching entry's
 // transform.
 func (d *DIDMap) LookupWithDigits(dialed string) (string, string, bool) {
 	if d == nil || d.m == nil {

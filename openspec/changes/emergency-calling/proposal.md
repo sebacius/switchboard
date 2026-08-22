@@ -9,7 +9,7 @@ break it on their own:
 
 - A tenant with the documented-safe default `allow_external_dial: false` cannot
   dial 911 **at all**. That default is correct for toll-fraud and wrong here.
-- A tenant with external dialling enabled but an empty `external_allowlist`
+- A tenant with external dialing enabled but an empty `external_allowlist`
   cannot either, because the allowlist is deny-by-omission.
 - `deterministic-call-flows` added digit-map patterns, and a perfectly
   reasonable `"9."` outbound entry silently swallows `911` — `9` followed by
@@ -18,7 +18,7 @@ break it on their own:
   breath.
 
 The legal position is specific rather than general. **Kari's Law** (47 U.S.C.
-§ 623) requires direct 911 dialling with no prefix, and on-site notification
+§ 623) requires direct 911 dialing with no prefix, and on-site notification
 when a call is placed. **RAY BAUM'S Act** (47 CFR § 9.16) requires a
 dispatchable location — a street address plus enough detail to find the caller
 inside the building — conveyed with the call. Both apply to multi-line
@@ -40,7 +40,7 @@ dials.
 retrieval, ahead of the entry mapping, ahead of every pattern. No digit map can
 shadow, capture or transform them.
 
-**Prefix-stripped dialling is accepted, not required.** Kari's Law requires
+**Prefix-stripped dialing is accepted, not required.** Kari's Law requires
 `911` to work with no prefix; a site that trains people to dial `9` first must
 keep working too, so `9911` routes as an emergency call while `911` needs no
 prefix at all.

@@ -16,7 +16,7 @@ import (
 // wrong: a perfectly reasonable "9." outbound pattern silently swallows 911,
 // because 9 followed by 11 matches it.
 //
-// Kari's Law requires direct 911 dialling with no prefix plus on-site
+// Kari's Law requires direct 911 dialing with no prefix plus on-site
 // notification; RAY BAUM'S Act requires a dispatchable location. Emergency
 // routing must bypass Class of Service entirely and be un-configurable — it
 // cannot be something a tenant is able to misconfigure. That is its own change,
@@ -70,8 +70,8 @@ func CheckEmergency(tenant string, table *RoutingTable) Problems {
 	// 2. A tenant that can reach the PSTN but has no emergency entry at all.
 	if tenantCanReachPSTN(table) && !hasEmergencyEntry(table) {
 		warn("extensions", fmt.Sprintf(
-			"tenant has outbound dialling but no entry for any of %s. Emergency calling is not "+
-				"implemented in Switchboard: a caller dialling 911 from this tenant reaches nothing",
+			"tenant has outbound dialing but no entry for any of %s. Emergency calling is not "+
+				"implemented in Switchboard: a caller dialing 911 from this tenant reaches nothing",
 			strings.Join(emergencyNumbers, ", ")))
 	}
 

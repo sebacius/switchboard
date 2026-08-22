@@ -1,9 +1,10 @@
 package agent
 
 import (
-	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"sync"
 	"testing"
+
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 )
 
 // loaded builds a dialplan.RoutingSource in which each named tenant has a routing table.

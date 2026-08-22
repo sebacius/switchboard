@@ -83,7 +83,7 @@ type TargetClassifier interface {
 }
 
 // ValidateFlows checks a tenant's flows against its routing table and returns
-// the first error as a Go error, for load paths that want fail-closed behaviour.
+// the first error as a Go error, for load paths that want fail-closed behavior.
 func ValidateFlows(tenant string, table *RoutingTable, set *FlowSet) error {
 	return CheckFlows(tenant, table, set).Err()
 }
@@ -553,16 +553,16 @@ func findCycle(flow *FlowDef) []string {
 		grey  = 1
 		black = 2
 	)
-	colour := map[string]int{}
+	color := map[string]int{}
 	var stack []string
 
 	var visit func(string) []string
 	visit = func(id string) []string {
-		colour[id] = grey
+		color[id] = grey
 		stack = append(stack, id)
 
 		for _, next := range edgesOf(flow, id) {
-			switch colour[next] {
+			switch color[next] {
 			case grey:
 				// Found it: slice the stack from where this node first appears.
 				for i, s := range stack {
@@ -579,12 +579,12 @@ func findCycle(flow *FlowDef) []string {
 		}
 
 		stack = stack[:len(stack)-1]
-		colour[id] = black
+		color[id] = black
 		return nil
 	}
 
 	for _, id := range sortedNodeIDs(flow) {
-		if colour[id] == white {
+		if color[id] == white {
 			if cycle := visit(id); cycle != nil {
 				return cycle
 			}

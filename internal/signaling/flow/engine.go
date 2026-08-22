@@ -112,7 +112,7 @@ func (e *Engine) runFlow(ctx context.Context, sess agent.CallSession, cc agent.C
 	flowName string, def *dialplan.FlowDef, dialed string) bool {
 
 	cursor := newCursor(sess.CallID(), cc.Tenant, flowName, def)
-	// What the caller dialled, after the entry's transform. A flow can read it;
+	// What the caller dialed, after the entry's transform. A flow can read it;
 	// it is never a dial target.
 	cursor.dialed = dialed
 	e.track(cursor)
@@ -236,7 +236,7 @@ func (e *Engine) tryRetrieval(ctx context.Context, sess agent.CallSession, cc ag
 }
 
 // entryFor resolves dialed digits against the tenant's entry mapping, returning
-// the destination and the dialled digits after any transform.
+// the destination and the dialed digits after any transform.
 func (e *Engine) entryFor(table *dialplan.RoutingTable, cc agent.CallContext) (string, string, bool) {
 	if cc.Direction == agent.DirectionInbound {
 		return table.MatchDIDWithDigits(cc.Callee)

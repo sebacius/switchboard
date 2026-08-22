@@ -422,7 +422,7 @@ type ConfigRejectedError struct {
 	Rejection types.ConfigRejection
 }
 
-// Error summarises the problems.
+// Error summarizes the problems.
 func (e *ConfigRejectedError) Error() string {
 	if len(e.Rejection.Problems) == 1 {
 		p := e.Rejection.Problems[0]

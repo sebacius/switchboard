@@ -143,7 +143,7 @@ func (t *RoutingTable) MatchExtension(dialed string) (string, bool) {
 	return t.extensionMap.Lookup(dialed)
 }
 
-// MatchExtensionWithDigits also returns the dialled digits after the matching
+// MatchExtensionWithDigits also returns the dialed digits after the matching
 // entry's transform.
 func (t *RoutingTable) MatchExtensionWithDigits(dialed string) (string, string, bool) {
 	if t == nil {
@@ -168,7 +168,7 @@ func (t *RoutingTable) MatchDID(dialed string) (string, bool) {
 	return dest, ok
 }
 
-// MatchDIDWithDigits also returns the dialled digits after the transform.
+// MatchDIDWithDigits also returns the dialed digits after the transform.
 func (t *RoutingTable) MatchDIDWithDigits(dialed string) (string, string, bool) {
 	if t == nil {
 		return "", "", false

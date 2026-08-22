@@ -237,23 +237,6 @@ func lookupDestination(table *dialplan.RoutingTable, dir Direction, callee strin
 	return table.MatchExtension(callee)
 }
 
-// didDigits reduces a DID to bare digits so "+15558001200" and "15558001200"
-// compare equal. Carriers are inconsistent about the leading +, and a tenant
-// writing its table one way while its carrier signals the other would send every
-// inbound call to the model instead of to the person it was dialed for.
-//
-// This is deliberately NOT policy's normalizeDigits, which preserves a leading +
-// because the barred-prefix patterns are written in E.164.
-func didDigits(did string) string {
-	var b strings.Builder
-	for _, r := range did {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
 // LogDecision records what resolution decided for a call. It is deliberately one
 // line per call at info level: "why did the AI answer this?" is the first
 // question asked when a deterministic route does not happen, and it should be

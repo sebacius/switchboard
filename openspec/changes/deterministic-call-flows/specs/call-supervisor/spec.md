@@ -6,7 +6,7 @@
 
 ### Requirement: LLM-driven answer — forward versus engage media
 **Reason**: There is no model to decide when to answer.
-**Migration**: Preserved as a structural rule in `call-flows`: a dial reached before any media node forwards without answering, and once any node plays media the call is answered. The observable behaviour for a direct extension call is unchanged.
+**Migration**: Preserved as a structural rule in `call-flows`: a dial reached before any media node forwards without answering, and once any node plays media the call is answered. The observable behavior for a direct extension call is unchanged.
 
 ### Requirement: Nested context scopes
 **Reason**: The runner that owned `callCtx ⊃ turnCtx ⊃ playbackCtx` is deleted.

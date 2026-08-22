@@ -49,7 +49,7 @@ type Cursor struct {
 	// digits carries a collected value between nodes.
 	digits string
 
-	// dialed is what the caller dialled, after the entry mapping's transform.
+	// dialed is what the caller dialed, after the entry mapping's transform.
 	dialed string
 
 	// decisions are the authorization verdicts made for this call.
@@ -79,7 +79,7 @@ func (c *Cursor) Hops() []Hop { return c.hops }
 // Digits returns the most recently collected digits.
 func (c *Cursor) Digits() string { return c.digits }
 
-// Dialed returns what the caller dialled, after the entry transform.
+// Dialed returns what the caller dialed, after the entry transform.
 func (c *Cursor) Dialed() string { return c.dialed }
 
 // Path renders the traversal as "greeting -> claims -> vm-130", which is the

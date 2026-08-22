@@ -30,7 +30,7 @@ func TestParseINFODTMFFormats(t *testing.T) {
 		{"bare digit", "5", '5', true},
 		{"bare hash", "#", '#', true},
 		{"empty", "", 0, false},
-		{"unrecognised", "Hello", 0, false},
+		{"unrecognized", "Hello", 0, false},
 	}
 
 	for _, tc := range cases {

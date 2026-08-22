@@ -70,7 +70,7 @@ position's accepted set, never a declared priority integer; hand-maintained
 `"priority": 20` was the actual defect in the old dialplan. Two patterns that
 overlap with equal specificity are a config error at load, not a tiebreak.
 
-**BREAKING (behaviour):** a call that resolves to nothing no longer reaches an AI
+**BREAKING (behavior):** a call that resolves to nothing no longer reaches an AI
 receptionist; it reaches the tenant operator, or 480 if none is configured.
 
 **BREAKING (configuration):** `<tenant>.md` prompts, `settings.md`, the
@@ -93,7 +93,7 @@ unit per allowed target, so load-time COS validation would drain it. Splitting
 per-`Policy`-instance while `Policy` is built per call, making "per day"
 effectively per call.
 
-**Kept:** `resolver.go`'s registered-extension and `*7XX` retrieval behaviour
+**Kept:** `resolver.go`'s registered-extension and `*7XX` retrieval behavior
 (now inside the engine), `router.go`, `policy.go`, `parking.go`, `session.go`,
 `trunk/`, `b2bua/`, `location/`, `dialog/`, `drain/`, `api/`, `filemanager/`.
 TTS is unchanged and now serves IVR prompts. The rtpmanager `Listen` RPC and

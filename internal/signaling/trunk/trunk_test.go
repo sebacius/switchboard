@@ -1,12 +1,12 @@
 package trunk
 
 import (
-	"testing"
-
-	"github.com/emiago/sipgo/sip"
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
+
+	"github.com/emiago/sipgo/sip"
 )
 
 func TestMatchInbound(t *testing.T) {

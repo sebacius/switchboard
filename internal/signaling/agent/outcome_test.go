@@ -24,7 +24,7 @@ func TestClassifyDialError(t *testing.T) {
 		{"no contacts is unavailable", b2bua.ErrNoContacts, DialUnavailable},
 		{"unknown target is unavailable", b2bua.ErrTargetNotFound, DialUnavailable},
 		{"group no answer", ErrGroupNoAnswer, DialNoAnswer},
-		{"caller cancelled", b2bua.ErrDialCanceled, DialFailed},
+		{"caller canceled", b2bua.ErrDialCanceled, DialFailed},
 		{"anything else", errors.New("transport exploded"), DialFailed},
 	}
 

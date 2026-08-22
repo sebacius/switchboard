@@ -260,7 +260,7 @@ func TestTransformsReshapeDialledDigits(t *testing.T) {
 	}
 }
 
-// A transform can only ever narrow or reshape what was dialled. It must never
+// A transform can only ever narrow or reshape what was dialed. It must never
 // be able to lengthen the string, because that is the difference between
 // normalising input and constructing a destination.
 func TestTransformNeverLengthensBeyondAPlus(t *testing.T) {
@@ -279,7 +279,7 @@ func TestTransformNeverLengthensBeyondAPlus(t *testing.T) {
 func TestUnknownNormalizeIsRejected(t *testing.T) {
 	err := Transform{Normalize: "e123"}.validate()
 	if err == nil {
-		t.Fatal("an unknown normalisation must be rejected")
+		t.Fatal("an unknown normalization must be rejected")
 	}
 	if !strings.Contains(err.Error(), "e164") {
 		t.Errorf("the error should list the valid forms: %v", err)

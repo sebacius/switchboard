@@ -25,7 +25,7 @@ import (
 //
 // Nothing declares a priority integer. Hand-maintained "priority": 20 was the
 // actual defect in the dialplan this replaces: it drifted from intent, and
-// inserting a rule meant renumbering its neighbours.
+// inserting a rule meant renumbering its neighbors.
 //
 // Comparison is a per-position VECTOR, not a weighted scalar — a scalar collapses
 // unlike patterns onto the same number and invites collisions. Two patterns that
@@ -297,7 +297,7 @@ func minInt(a, b int) int {
 // substitution in a dialplan is how a routing table becomes a small programming
 // language: the moment matched digits can be spliced into a destination,
 // symbolic narrowing is bypassed and a config edit can reach an arbitrary
-// number. These transforms only ever narrow or reshape what was dialled; they
+// number. These transforms only ever narrow or reshape what was dialed; they
 // cannot construct a target.
 type Transform struct {
 	// StripDigits removes N leading digits — a "9" outbound prefix, say.
@@ -315,7 +315,7 @@ const (
 	NormalizeE164   = "e164"
 )
 
-// validate rejects a transform that names an unknown normalisation.
+// validate rejects a transform that names an unknown normalization.
 func (t Transform) validate() error {
 	switch t.Normalize {
 	case "", NormalizeNone, NormalizeDigits, NormalizeE164:
@@ -329,7 +329,7 @@ func (t Transform) validate() error {
 	return nil
 }
 
-// Apply reshapes dialled digits. It never lengthens the string, which is the
+// Apply reshapes dialed digits. It never lengthens the string, which is the
 // property that keeps a transform from constructing a destination.
 func (t Transform) Apply(dialed string) string {
 	rs := []rune(dialed)
@@ -506,8 +506,8 @@ func (m *DigitMap) Lookup(dialed string) (string, bool) {
 	return dest, ok
 }
 
-// LookupWithDigits also returns the dialled digits after the winning entry's
-// transform, for a flow that wants to know what was dialled.
+// LookupWithDigits also returns the dialed digits after the winning entry's
+// transform, for a flow that wants to know what was dialed.
 //
 // The transformed value is data the flow can read; it is never a dial target.
 // Pattern matching selects WHAT TO RUN, and only symbolic targets say WHERE TO

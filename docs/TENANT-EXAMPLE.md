@@ -5,8 +5,8 @@ split between them is the whole design:
 
 | File | Holds | Read by |
 | --- | --- | --- |
-| `resources/tenants/<tenant>.routing.json` | **Data** — the entry mapping, extensions, DIDs, ring groups, and the names that may be dialled externally | routing, and capability narrowing |
-| `resources/tenants/<tenant>.flows.json` | **Behaviour** — menus, prompts, transfers, conditional dialling | the flow engine |
+| `resources/tenants/<tenant>.routing.json` | **Data** — the entry mapping, extensions, DIDs, ring groups, and the names that may be dialed externally | routing, and capability narrowing |
+| `resources/tenants/<tenant>.flows.json` | **Behaviour** — menus, prompts, transfers, conditional dialing | the flow engine |
 | `resources/config/policy.json` → `tenants.<tenant>` | **Authorization** — what is permitted, never what a name means | the policy layer, on every dial |
 
 One more file matters for inbound calls, and it is deliberately **not** a tenant
@@ -77,7 +77,7 @@ but matches nothing in step 2, so it reaches acme's operator rather than being
 declined. That difference is exactly why the two steps are not one table.
 
 Both steps use the same matcher, so they cannot disagree about whether a number
-matches. Either E.164 form works, because a carrier signalling `15558001200`
+matches. Either E.164 form works, because a carrier signaling `15558001200`
 must find a route written `+15558001200` — which form a given trunk sends is not
 something you can know when you write the file. Patterns work, so a block is one
 line. The most specific claim wins, so carving a single number out of a block
@@ -112,7 +112,7 @@ This is the reference: every routing feature appears here.
   // (enter a graph). A bare destination is sugar for a one-node dial, so simple
   // configurations never have to write a flow.
   "extensions": {
-    "0":    "user/150",           // dialling 0 reaches the front desk
+    "0":    "user/150",           // dialing 0 reaches the front desk
     "100":  "flow/main-ivr",      // the main menu
     "105":  "user/105",
     "130":  "group/claims",
@@ -470,11 +470,11 @@ Nothing in Switchboard currently special-cases emergency numbers:
 
 - A tenant with the default `allow_external_dial: false` cannot dial 911 **at
   all**.
-- A tenant with external dialling enabled but an empty allowlist cannot either.
+- A tenant with external dialing enabled but an empty allowlist cannot either.
 - A perfectly reasonable outbound pattern such as `"9."` silently swallows `911`,
   because `9` followed by `11` matches it.
 
-Kari's Law requires direct 911 dialling with no prefix, plus on-site
+Kari's Law requires direct 911 dialing with no prefix, plus on-site
 notification. RAY BAUM'S Act requires a dispatchable location. Emergency routing
 must bypass Class of Service entirely and be **un-configurable** — it cannot be
 something a tenant is able to get wrong.

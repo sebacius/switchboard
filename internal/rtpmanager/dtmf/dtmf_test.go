@@ -6,16 +6,26 @@ import (
 	"github.com/pion/rtp"
 )
 
-// eventPacket builds one telephone-event RTP packet.
-func eventPacket(pt uint8, code byte, end bool, durationMs int, ts uint32) *rtp.Packet {
+// testPayloadType is the negotiated telephone-event payload type these tests
+// use. Which number it is does not matter to the decoder, only that packets
+// carry the one it was told to expect.
+const testPayloadType uint8 = 101
+
+// testEventCode is the DTMF event these packet-level tests use — digit '1'.
+// Which digit it is does not matter to the packet framing; the full code-to-
+// digit mapping is covered by TestDecodeDigits against Decode directly.
+const testEventCode byte = 1
+
+// eventPacket builds one telephone-event RTP packet for testEventCode.
+func eventPacket(end bool, durationMs int, ts uint32) *rtp.Packet {
 	flags := byte(0)
 	if end {
 		flags = endBit
 	}
 	duration := durationMs * 8 // 8kHz clock
 	return &rtp.Packet{
-		Header:  rtp.Header{PayloadType: pt, Timestamp: ts},
-		Payload: []byte{code, flags, byte(duration >> 8), byte(duration)},
+		Header:  rtp.Header{PayloadType: testPayloadType, Timestamp: ts},
+		Payload: []byte{testEventCode, flags, byte(duration >> 8), byte(duration)},
 	}
 }
 
@@ -66,12 +76,12 @@ func TestOneKeypressYieldsOneDigit(t *testing.T) {
 	// Held for 100ms, then the end packet repeated — all one event, one
 	// timestamp.
 	for i := 0; i < 5; i++ {
-		if digit, ok := d.Handle(eventPacket(101, 1, false, i*20, 8000)); ok {
+		if digit, ok := d.Handle(eventPacket(false, i*20, 8000)); ok {
 			got = append(got, digit)
 		}
 	}
 	for i := 0; i < 3; i++ {
-		if digit, ok := d.Handle(eventPacket(101, 1, true, 100, 8000)); ok {
+		if digit, ok := d.Handle(eventPacket(true, 100, 8000)); ok {
 			got = append(got, digit)
 		}
 	}
@@ -89,7 +99,7 @@ func TestSameDigitPressedTwiceYieldsTwo(t *testing.T) {
 	var got []rune
 	for _, ts := range []uint32{8000, 9600} {
 		for i := 0; i < 3; i++ {
-			if digit, ok := d.Handle(eventPacket(101, 1, i == 2, 60, ts)); ok {
+			if digit, ok := d.Handle(eventPacket(i == 2, 60, ts)); ok {
 				got = append(got, digit)
 			}
 		}
@@ -122,7 +132,7 @@ func TestDisabledDetectorIgnoresEverything(t *testing.T) {
 	if d.Enabled() {
 		t.Fatal("payload type 0 means no DTMF transport was negotiated")
 	}
-	if _, ok := d.Handle(eventPacket(101, 1, true, 100, 8000)); ok {
+	if _, ok := d.Handle(eventPacket(true, 100, 8000)); ok {
 		t.Error("a disabled detector must produce no digits")
 	}
 }
@@ -188,7 +198,7 @@ func TestPushWakesAWaiter(t *testing.T) {
 	}
 }
 
-// Re-prompting after invalid input must not honour digits aimed at the old
+// Re-prompting after invalid input must not honor digits aimed at the old
 // question.
 func TestFlushDiscardsStaleDigits(t *testing.T) {
 	b := NewBuffer()
@@ -211,7 +221,7 @@ func TestCancelReleasesAWaiter(t *testing.T) {
 
 	b.Push('2')
 	if got := b.Buffered(); got != "2" {
-		t.Errorf("after cancelling, the digit should buffer; got %q", got)
+		t.Errorf("after canceling, the digit should buffer; got %q", got)
 	}
 }
 

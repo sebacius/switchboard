@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/sebas/switchboard/internal/signaling/parking"
 )
@@ -17,13 +16,6 @@ import (
 // parking.Service.CleanupByCallID into the dialog manager's OnTerminated
 // callback, so a parked call whose dialog dies frees its slot through the same
 // path a non-agent call always did.
-
-// defaultMOHFile is the hold music used when the tenant names none.
-const defaultMOHFile = "hold_music.wav"
-
-// defaultDialTimeout bounds an outbound dial attempt made outside a flow node
-// that carries its own timeout.
-const defaultDialTimeout = 30 * time.Second
 
 // ParkingService is the seam call retrieval needs from parking.Service.
 // Depending on the narrow interface (rather than the concrete type) keeps

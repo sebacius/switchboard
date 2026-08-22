@@ -55,7 +55,7 @@ func TestPSTNCapableTenantWithoutEmergencyIsWarned(t *testing.T) {
 
 	ps := CheckEmergency("acme", table)
 	if len(ps) == 0 {
-		t.Fatal("a tenant with outbound dialling and no emergency entry must be warned")
+		t.Fatal("a tenant with outbound dialing and no emergency entry must be warned")
 	}
 	if !strings.Contains(ps[0].Message, "not implemented") {
 		t.Errorf("the warning should be honest that the feature does not exist: %v", ps[0].Message)

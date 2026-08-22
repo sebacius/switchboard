@@ -1,8 +1,9 @@
 package agent
 
 import (
-	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"sync"
+
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 )
 
 // Admission is the deterministic gate in front of every call (spec:

@@ -104,7 +104,7 @@ func (b *Buffer) Cancel(ch chan rune) {
 // Flush discards everything buffered, returning what it dropped.
 //
 // A node re-prompting after invalid input flushes: the caller's earlier digits
-// were a response to a question that has now changed, and honouring them would
+// were a response to a question that has now changed, and honoring them would
 // answer the new prompt with the old answer.
 func (b *Buffer) Flush() string {
 	b.mu.Lock()

@@ -126,7 +126,7 @@ func NodeTypes() []string {
 // Exactly one of Text or File/Files is set; the validator enforces that rather
 // than silently preferring one.
 type PromptSpec struct {
-	// Text is synthesised by the TTS server.
+	// Text is synthesized by the TTS server.
 	Text string `json:"text,omitempty"`
 	// Voice names the TTS voice; empty uses the server default.
 	Voice string `json:"voice,omitempty"`
@@ -160,7 +160,7 @@ func (p PromptSpec) validate() error {
 		return fmt.Errorf("prompt sets more than one of text, file, and files; pick one")
 	}
 	if strings.TrimSpace(p.Voice) != "" && strings.TrimSpace(p.Text) == "" {
-		return fmt.Errorf("prompt sets a voice but no text; voice only applies to synthesised speech")
+		return fmt.Errorf("prompt sets a voice but no text; voice only applies to synthesized speech")
 	}
 	return nil
 }

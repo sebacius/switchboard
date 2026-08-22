@@ -341,7 +341,7 @@ func TestTraversalIsRecorded(t *testing.T) {
 	}
 }
 
-// A denied external destination takes the denied exit rather than dialling.
+// A denied external destination takes the denied exit rather than dialing.
 func TestDeniedExternalTakesDeniedExit(t *testing.T) {
 	const flowJSON = `{"flows":{"main":{
 		"start":"out",
@@ -377,7 +377,7 @@ func TestDeniedExternalTakesDeniedExit(t *testing.T) {
 	e.Handle(context.Background(), sess, internalCall("100"))
 
 	if len(sess.Dialed) != 0 {
-		t.Fatalf("a denied destination must not be dialled, dialed %v", sess.Dialed)
+		t.Fatalf("a denied destination must not be dialed, dialed %v", sess.Dialed)
 	}
 	if len(sess.Spoken) != 1 {
 		t.Fatalf("the denied exit should be taken, spoke %v", sess.Spoken)

@@ -117,7 +117,7 @@ func TestRoutingChangeThatBreaksAFlowIsRejected(t *testing.T) {
 	writeFile(t, dir, "acme.routing.json", validRouting)
 	writeFile(t, dir, "acme.flows.json", validFlows)
 
-	// Removing the claims group leaves the flow dialling nothing.
+	// Removing the claims group leaves the flow dialing nothing.
 	err := fm.PutTenantFile("acme", KindRouting,
 		`{"operator":"user/100","extensions":{"100":"flow/main"},"groups":{}}`)
 

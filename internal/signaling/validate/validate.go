@@ -21,6 +21,16 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/trunk"
 )
 
+// say writes a line of report output.
+//
+// A write failure here is not actionable: the destination is the caller's
+// writer, usually stdout, and a validator that abandoned its report because a
+// pipe closed would be less useful than one that finished. The error is dropped
+// deliberately, in one place, rather than at every call site.
+func say(out io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(out, format, args...)
+}
+
 // Exit codes, following the usual convention so CI can branch on them.
 const (
 	ExitOK      = 0
@@ -42,9 +52,9 @@ func Run(args []string, out io.Writer) int {
 	quiet := fs.Bool("quiet", false, "Print problems only")
 
 	fs.Usage = func() {
-		fmt.Fprintln(out, "Usage: switchboard-signaling validate [flags]")
-		fmt.Fprintln(out, "\nChecks tenant routing tables and flow graphs without starting the server.")
-		fmt.Fprintln(out, "\nFlags:")
+		say(out, "Usage: switchboard-signaling validate [flags]\n")
+		say(out, "\nChecks tenant routing tables and flow graphs without starting the server.\n")
+		say(out, "\nFlags:\n")
 		fs.PrintDefaults()
 	}
 
@@ -54,7 +64,7 @@ func Run(args []string, out io.Writer) int {
 
 	problems, err := check(*routingPath, *policyPath, *routesPath)
 	if err != nil {
-		fmt.Fprintf(out, "error: %v\n", err)
+		say(out, "error: %v\n", err)
 		return ExitProblem
 	}
 
@@ -237,22 +247,22 @@ func report(out io.Writer, problems dialplan.Problems, routingPath string, quiet
 		switch p.Severity {
 		case dialplan.SeverityError:
 			errors++
-			fmt.Fprintf(out, "error: %s: %s\n  %s\n", p.Tenant, p.Path, p.Message)
+			say(out, "error: %s: %s\n  %s\n", p.Tenant, p.Path, p.Message)
 		case dialplan.SeverityWarning:
 			warnings++
-			fmt.Fprintf(out, "warning: %s: %s\n  %s\n", p.Tenant, p.Path, p.Message)
+			say(out, "warning: %s: %s\n  %s\n", p.Tenant, p.Path, p.Message)
 		}
 	}
 
 	if errors > 0 {
-		fmt.Fprintf(out, "\n%d error(s), %d warning(s) in %s\n", errors, warnings, routingPath)
+		say(out, "\n%d error(s), %d warning(s) in %s\n", errors, warnings, routingPath)
 		return ExitProblem
 	}
 	if !quiet {
 		if warnings > 0 {
-			fmt.Fprintf(out, "\nno errors, %d warning(s) in %s\n", warnings, routingPath)
+			say(out, "\nno errors, %d warning(s) in %s\n", warnings, routingPath)
 		} else {
-			fmt.Fprintf(out, "%s is valid\n", routingPath)
+			say(out, "%s is valid\n", routingPath)
 		}
 	}
 	return ExitOK

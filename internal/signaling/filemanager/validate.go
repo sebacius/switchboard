@@ -28,7 +28,7 @@ type ValidationError struct {
 	Problems dialplan.Problems
 }
 
-// Error summarises the problems.
+// Error summarizes the problems.
 func (e *ValidationError) Error() string {
 	if len(e.Problems) == 1 {
 		return fmt.Sprintf("%s: %s", e.Problems[0].Path, e.Problems[0].Message)

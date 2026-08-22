@@ -39,7 +39,7 @@ const (
 type CollectRequest struct {
 	// Prompt is played while collecting. Nil collects in silence.
 	Prompt *media.PlayRequest
-	// PromptAudio is pre-synthesised audio for the prompt, when the prompt is
+	// PromptAudio is pre-synthesized audio for the prompt, when the prompt is
 	// TTS rather than a file.
 	PromptAudio []byte
 
