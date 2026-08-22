@@ -1,6 +1,11 @@
-// Command agent-smoke drives the REAL call supervisor against a REAL Ollama
-// server with a fake CallSession, so the model's behavior can be exercised
-// without SIP, RTP, ASR, or TTS.
+// Command agent-smoke drives the REAL call supervisor against a real LLM —
+// Ollama, or an OpenAI-compatible endpoint — with a fake CallSession, so the
+// model's behavior can be exercised without SIP, RTP, ASR, or TTS.
+//
+// The model is given as [provider/]model, the same as --llm-model:
+//
+//	go run ./cmd/agent-smoke --model qwen3:8b
+//	OPENAI_API_KEY=... go run ./cmd/agent-smoke --model openai/gpt-4o
 //
 // It is the spike rig for the open question in the design: does qwen3 keep its
 // tool-calling accuracy with thinking turned off? Unit tests use a scripted
@@ -42,8 +47,8 @@ import (
 
 func main() {
 	var (
-		llmServer    = flag.String("llm-server", "http://localhost:11434", "Ollama server URL")
-		model        = flag.String("model", "qwen3:8b", "Ollama model")
+		llmServer    = flag.String("llm-server", "", "LLM server URL (default: the provider's own)")
+		model        = flag.String("model", "qwen3:8b", "Supervisor model as [provider/]model (providers: ollama, openai)")
 		tenant       = flag.String("tenant", "devtenant", "Tenant whose prompt to load")
 		caller       = flag.String("caller", "102", "Caller (From user part)")
 		callee       = flag.String("callee", "105", "Callee (To user part / DID)")
@@ -101,7 +106,22 @@ func main() {
 	// first and --turn-timeout does nothing. In production the opposite ordering
 	// is correct (a 30s turn ctx inside a 60s HTTP timeout), but here the whole
 	// point of the flag is to outwait slow hardware.
-	chat := llm.NewClient(llm.Config{ServerURL: *llmServer, Timeout: *turnTimeout + 30*time.Second})
+	provider, modelID, err := llm.ParseModelRef(*model)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	chat, err := llm.New(llm.Config{
+		Provider:  provider,
+		ServerURL: *llmServer,
+		Model:     modelID,
+		APIKey:    os.Getenv("OPENAI_API_KEY"),
+		Timeout:   *turnTimeout + 30*time.Second,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "llm: %v\n", err)
+		os.Exit(1)
+	}
 
 	cc := agent.CallContext{
 		Caller:    *caller,
@@ -112,7 +132,7 @@ func main() {
 
 	runner := agent.NewRunner(agent.RunnerConfig{
 		Prompts:     prompts,
-		Model:       *model,
+		Model:       modelID,
 		Chat:        chat,
 		Logger:      logger,
 		TurnTimeout: *turnTimeout,
@@ -128,8 +148,8 @@ func main() {
 
 	session := newFakeSession(cc)
 
-	fmt.Printf("--- call start: %s %s -> %s (tenant %s, model %s)\n",
-		dir, cc.Caller, cc.Callee, cc.Tenant, *model)
+	fmt.Printf("--- call start: %s %s -> %s (tenant %s, provider %s, model %s)\n",
+		dir, cc.Caller, cc.Callee, cc.Tenant, provider, modelID)
 	fmt.Println("--- type caller speech and press enter; Ctrl-D ends the call")
 
 	ctx, cancel := context.WithCancel(context.Background())

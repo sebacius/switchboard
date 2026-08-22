@@ -393,9 +393,10 @@ func (c *callRun) runTurn(parent context.Context, userText string, budget time.D
 // to the runaway breaker) so the tool result feeds back into the model.
 func (c *callRun) executeTools(turnCtx context.Context, calls []llm.ToolCall) error {
 	terminal := false
-	for _, call := range calls {
+	for i, call := range calls {
 		select {
 		case <-turnCtx.Done():
+			c.answerUnexecuted(calls[i:], "the turn was canceled")
 			return turnCtx.Err()
 		default:
 		}
@@ -411,9 +412,10 @@ func (c *callRun) executeTools(turnCtx context.Context, calls []llm.ToolCall) er
 		}
 
 		c.conversation = append(c.conversation, llm.NativeMessage{
-			Role:     "tool",
-			ToolName: call.Function.Name,
-			Content:  result,
+			Role:       "tool",
+			ToolName:   call.Function.Name,
+			ToolCallID: call.ID,
+			Content:    result,
 		})
 
 		switch disp {
@@ -422,6 +424,7 @@ func (c *callRun) executeTools(turnCtx context.Context, calls []llm.ToolCall) er
 		case DispositionParked:
 			// The loop holds the call alive; do not re-prompt. Unpark or
 			// cancellation drives the next move (decision #5 / Parked disposition).
+			c.answerUnexecuted(calls[i+1:], "the call was parked before this tool ran")
 			c.log.Info("call parked", "tool", call.Function.Name)
 			return nil
 		case DispositionContinue:
@@ -436,6 +439,27 @@ func (c *callRun) executeTools(turnCtx context.Context, calls []llm.ToolCall) er
 
 	// Tool results fed back: re-prompt autonomously, bounded by the breaker.
 	return c.autonomousReprompt(turnCtx)
+}
+
+// answerUnexecuted records a result for tool calls the loop advertised but never
+// dispatched, which happens when the call parks or the turn is canceled
+// part-way through a batch.
+//
+// It exists because the whole conversation is replayed on every turn. An
+// assistant message carrying tool_calls with no matching result is accepted by
+// Ollama and rejected outright by OpenAI-compatible servers — and since the
+// rejection lands on the NEXT turn (an unpark, typically), not the one that
+// created the gap, it is invisible to any single-turn test. Answering here keeps
+// the history well-formed for every provider, and honest for all of them.
+func (c *callRun) answerUnexecuted(calls []llm.ToolCall, why string) {
+	for _, call := range calls {
+		c.conversation = append(c.conversation, llm.NativeMessage{
+			Role:       "tool",
+			ToolName:   call.Function.Name,
+			ToolCallID: call.ID,
+			Content:    fmt.Sprintf("not executed: %s", why),
+		})
+	}
 }
 
 // autonomousReprompt drives the "tool result feeds back" loop. Each pass is an

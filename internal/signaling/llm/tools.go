@@ -45,10 +45,11 @@ func (r *ToolRegistry) Names() []string {
 	return append([]string(nil), r.order...)
 }
 
-// AsOllamaTools converts the registry to native tool definitions for /api/chat,
-// preserving registration order. A tool with no Parameters gets an empty object
-// schema.
-func (r *ToolRegistry) AsOllamaTools() []ToolDef {
+// AsToolDefs converts the registry to tool definitions, preserving registration
+// order. A tool with no Parameters gets an empty object schema. The shape is the
+// one both providers accept — Ollama and OpenAI agree on how a tool is DEFINED,
+// and differ only in how a call and its result are expressed.
+func (r *ToolRegistry) AsToolDefs() []ToolDef {
 	defs := make([]ToolDef, 0, len(r.order))
 	for _, name := range r.order {
 		t := r.tools[name]

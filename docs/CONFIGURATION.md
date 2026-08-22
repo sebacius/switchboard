@@ -44,18 +44,35 @@ supervisor (see the tenant routing table above for what resolves without it).
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--llm-server` | `LLM_SERVER` | http://localhost:11434 | Ollama server URL |
-| `--llm-model` | `LLM_MODEL` | qwen3:8b | Model used by the call supervisor |
-| `--llm-keep-alive` | `LLM_KEEP_ALIVE` | 30m | How long Ollama holds the model resident after a request (`-1` for indefinitely) |
+| `--llm-model` | `LLM_MODEL` | qwen3:8b | Supervisor model as `[provider/][model]`. Providers: `ollama`, `openai`. No prefix means `ollama`. A bare provider name (`openai`) takes that provider's default model — `gpt-4o` for `openai`, `qwen3:8b` for `ollama` — and its default endpoint. Splits on the **first** slash, so `openai/meta-llama/llama-3.1-70b` works. An unknown prefix is a startup error |
+| `--llm-server` | `LLM_SERVER` | *per provider* | LLM server URL. Defaults to `http://localhost:11434` for `ollama` and `https://api.openai.com` for `openai`. Set it to use an OpenAI-compatible gateway (Groq, vLLM, OpenRouter, LiteLLM) |
+| *(none)* | `OPENAI_API_KEY` | *(empty)* | Credential for the `openai` provider. **Environment only** — never a flag, because flags are visible in `ps` and in the startup banner. Required for `api.openai.com`, optional for a gateway that does not authenticate |
+| `--llm-keep-alive` | `LLM_KEEP_ALIVE` | 30m | How long Ollama holds the model resident after a request (`-1` for indefinitely). **Ollama only** — ignored by `openai`, which warns if you set it explicitly |
 | `--first-turn-timeout` | `FIRST_TURN_TIMEOUT` | 90s | Deadline for the **first** supervisor turn |
 | `--turn-timeout` | `TURN_TIMEOUT` | 30s | Deadline for a **mid-call** supervisor turn |
 | `--tts-voice` | `TTS_VOICE` | *(empty)* | Piper voice for the supervisor (empty uses the RTP manager default) |
 
+The default model for a bare provider name lives in Switchboard, not in your
+config, so the startup banner prints the **resolved** model. Pin it explicitly
+(`--llm-model openai/gpt-4o`) if you need the model, latency and per-minute cost
+to survive a Switchboard upgrade unchanged.
+
 #### Startup probe and model warm-up
 
 At startup the signaling server checks that the LLM answers and that
-`--llm-model` is actually pulled on it, then sends one small request to load the
-model, logging how long that took:
+`--llm-model` is available on it, then — for a provider that loads models on
+demand — sends one small request to load the model, logging how long that took.
+
+What it does with what it finds depends on the provider. Ollama cannot run a
+model it has not pulled, so absence from its listing is reported as a warning.
+An OpenAI-compatible listing is advisory (gateways serve models they do not
+enumerate), so absence is noted without claiming the model is unavailable, and no
+warm-up is sent — a hosted provider has no model load to absorb, and the request
+would only be billed. Rejected credentials are reported distinctly from a server
+that never answered, because the two look identical in a log and have completely
+different fixes.
+
+Nothing the probe finds blocks startup:
 
 ```
 LLM ready and warmed load_time=6.774s note=this is what the first caller would otherwise have waited inside their turn budget

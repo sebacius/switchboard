@@ -59,14 +59,14 @@ func TestReadyReflectsTheServerNotTheFlag(t *testing.T) {
 	fake := &fakeOllama{models: []string{"qwen3:8b"}}
 	srv := fake.server(t)
 
-	if c := NewClient(Config{ServerURL: srv.URL}); !c.Ready() {
+	if c := NewOllamaClient(Config{ServerURL: srv.URL}); !c.Ready() {
 		t.Fatal("a reachable server must be Ready")
 	}
 	// A well-formed URL pointing at nothing: the old implementation said yes.
-	if c := NewClient(Config{ServerURL: "http://127.0.0.1:1"}); c.Ready() {
+	if c := NewOllamaClient(Config{ServerURL: "http://127.0.0.1:1"}); c.Ready() {
 		t.Fatal("an unreachable server must not be Ready")
 	}
-	if c := NewClient(Config{ServerURL: ""}); c.Ready() {
+	if c := NewOllamaClient(Config{ServerURL: ""}); c.Ready() {
 		t.Fatal("an unconfigured client must not be Ready")
 	}
 }
@@ -77,7 +77,7 @@ func TestReadyReflectsTheServerNotTheFlag(t *testing.T) {
 func TestChatSendsKeepAlive(t *testing.T) {
 	fake := &fakeOllama{models: []string{"qwen3:8b"}}
 	srv := fake.server(t)
-	c := NewClient(Config{ServerURL: srv.URL, KeepAlive: "45m"})
+	c := NewOllamaClient(Config{ServerURL: srv.URL, KeepAlive: "45m"})
 
 	if _, err := c.ChatNative(context.Background(), []NativeMessage{{Role: "user"}}, nil, "qwen3:8b"); err != nil {
 		t.Fatalf("ChatNative: %v", err)
@@ -90,7 +90,7 @@ func TestChatSendsKeepAlive(t *testing.T) {
 func TestKeepAliveDefaultsToSomethingLongerThanOllamas(t *testing.T) {
 	fake := &fakeOllama{models: []string{"qwen3:8b"}}
 	srv := fake.server(t)
-	c := NewClient(Config{ServerURL: srv.URL}) // no KeepAlive set
+	c := NewOllamaClient(Config{ServerURL: srv.URL}) // no KeepAlive set
 
 	if _, err := c.ChatNative(context.Background(), []NativeMessage{{Role: "user"}}, nil, "qwen3:8b"); err != nil {
 		t.Fatalf("ChatNative: %v", err)
@@ -112,7 +112,7 @@ func TestKeepAliveDefaultsToSomethingLongerThanOllamas(t *testing.T) {
 func TestProbeAndWarmLoadsThePresentModel(t *testing.T) {
 	fake := &fakeOllama{models: []string{"qwen3:8b", "qwen3:0.6b"}}
 	srv := fake.server(t)
-	c := NewClient(Config{ServerURL: srv.URL})
+	c := NewOllamaClient(Config{ServerURL: srv.URL})
 
 	ProbeAndWarm(context.Background(), c, "qwen3:8b", quiet())
 
@@ -126,7 +126,7 @@ func TestProbeAndWarmLoadsThePresentModel(t *testing.T) {
 func TestProbeAndWarmDoesNotWarmAMissingModel(t *testing.T) {
 	fake := &fakeOllama{models: []string{"llama3.2:3b"}}
 	srv := fake.server(t)
-	c := NewClient(Config{ServerURL: srv.URL})
+	c := NewOllamaClient(Config{ServerURL: srv.URL})
 
 	ProbeAndWarm(context.Background(), c, "qwen3:8b", quiet())
 
@@ -138,7 +138,7 @@ func TestProbeAndWarmDoesNotWarmAMissingModel(t *testing.T) {
 // An unreachable LLM must not panic or block: the supervisor is optional, and
 // deterministic resolution routes calls without it.
 func TestProbeAndWarmSurvivesAnUnreachableServer(t *testing.T) {
-	c := NewClient(Config{ServerURL: "http://127.0.0.1:1"})
+	c := NewOllamaClient(Config{ServerURL: "http://127.0.0.1:1"})
 
 	done := make(chan struct{})
 	go func() {
@@ -148,7 +148,7 @@ func TestProbeAndWarmSurvivesAnUnreachableServer(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(probeTimeout + 5*time.Second):
+	case <-time.After(c.ProbeProfile().ProbeTimeout + 5*time.Second):
 		t.Fatal("the probe must not hang when the server is unreachable")
 	}
 }
@@ -156,7 +156,7 @@ func TestProbeAndWarmSurvivesAnUnreachableServer(t *testing.T) {
 func TestHasModel(t *testing.T) {
 	fake := &fakeOllama{models: []string{"qwen3:8b"}}
 	srv := fake.server(t)
-	c := NewClient(Config{ServerURL: srv.URL})
+	c := NewOllamaClient(Config{ServerURL: srv.URL})
 
 	if ok, err := c.HasModel(context.Background(), "qwen3:8b"); err != nil || !ok {
 		t.Fatalf("HasModel(present) = %v, %v", ok, err)

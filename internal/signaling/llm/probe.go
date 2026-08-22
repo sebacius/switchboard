@@ -2,15 +2,13 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"errors"
 	"log/slog"
-	"net/http"
 	"time"
 )
 
 // The startup banner echoes whatever flags it was given, so a supervisor
-// pointed at a dead Ollama, or at a live one missing the configured model, looks
+// pointed at a dead server, or at a live one missing the configured model, looks
 // like a perfectly healthy boot. The failure surfaces on the first real call —
 // mid-INVITE, with a caller on the line — as a turn deadline, which reads like
 // "the model is broken" rather than "the model was never there".
@@ -20,89 +18,47 @@ import (
 // routed — deterministic resolution handles a registered extension with no model
 // at all — so a missing LLM must not stop the SIP stack coming up.
 
-// probeTimeout bounds the reachability and model-listing check.
-const probeTimeout = 5 * time.Second
-
 // warmupTimeout bounds the load-the-model request. It is generous because that
 // is the entire point: this call exists to absorb a multi-gigabyte model load so
 // that a caller never does.
 const warmupTimeout = 5 * time.Minute
 
-// tagsResponse is the /api/tags body, trimmed to what the probe reads.
-type tagsResponse struct {
-	Models []struct {
-		Name string `json:"name"`
-	} `json:"models"`
-}
-
-// listModels returns the model names the server currently has pulled.
-func (c *Client) listModels(ctx context.Context) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.serverURL+"/api/tags", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d from %s/api/tags", resp.StatusCode, c.serverURL)
-	}
-
-	var tags tagsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
-		return nil, fmt.Errorf("parse /api/tags: %w", err)
-	}
-
-	names := make([]string, 0, len(tags.Models))
-	for _, m := range tags.Models {
-		names = append(names, m.Name)
-	}
-	return names, nil
-}
-
-// HasModel reports whether the server has the named model pulled.
-func (c *Client) HasModel(ctx context.Context, model string) (bool, error) {
-	names, err := c.listModels(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, n := range names {
-		if n == model {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// Warm sends a minimal chat request so Ollama loads the model into memory. It
-// returns how long that took, which is the number worth watching: it is exactly
-// what the first caller would otherwise have paid inside their turn budget.
-func (c *Client) Warm(ctx context.Context, model string) (time.Duration, error) {
-	start := time.Now()
-	_, err := c.ChatNative(ctx, []NativeMessage{{Role: "user", Content: "hi"}}, nil, model)
-	return time.Since(start), err
-}
-
-// ProbeAndWarm checks the supervisor's model is reachable and present, then
-// loads it. It logs its findings and never returns an error, because nothing it
-// discovers should stop the server: a deployment whose LLM is down still routes
-// every call its tenant routing tables can resolve.
+// ProbeAndWarm checks the supervisor's model is reachable and present, then —
+// for a provider that loads models on demand — loads it. It logs its findings
+// and never returns an error, because nothing it discovers should stop the
+// server: a deployment whose LLM is down still routes every call its tenant
+// routing tables can resolve.
+//
+// What it does with what it finds is driven by the provider's ProbeProfile, so
+// an operator on a hosted API is never told to run `ollama pull`, and a partial
+// gateway model listing never raises a false alarm about a model that works.
 //
 // Run it in a goroutine — a cold model load can take minutes, and the SIP stack
 // must not wait on it.
-func ProbeAndWarm(ctx context.Context, c *Client, model string, log *slog.Logger) {
+func ProbeAndWarm(ctx context.Context, p Prober, model string, log *slog.Logger) {
 	if log == nil {
 		log = slog.Default()
 	}
-	log = log.With("component", "llm-probe", "server", c.ServerURL(), "model", model)
+	log = log.With("component", "llm-probe", "server", p.ServerURL(), "model", model)
+	profile := p.ProbeProfile()
+
+	probeTimeout := profile.ProbeTimeout
+	if probeTimeout == 0 {
+		probeTimeout = 5 * time.Second
+	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	names, err := c.listModels(probeCtx)
+	names, err := p.ListModels(probeCtx)
 	cancel()
 	if err != nil {
+		// Credentials rejected is a different problem from nobody answering, and
+		// says so: the server is fine, the deployment just cannot use it.
+		if errors.Is(err, ErrUnauthorized) {
+			log.Warn("LLM server rejected our credentials; every supervised call will fail. "+
+				"Check OPENAI_API_KEY. Deterministic routing is unaffected",
+				"error", err)
+			return
+		}
 		log.Warn("LLM server did not answer; supervised calls will fail until it does. "+
 			"Deterministic routing is unaffected — check --llm-server",
 			"error", err)
@@ -116,20 +72,35 @@ func ProbeAndWarm(ctx context.Context, c *Client, model string, log *slog.Logger
 			break
 		}
 	}
+
 	if !present {
-		// The single most confusing failure this probe exists to catch: the
-		// server is healthy, so every other signal looks fine, and each call
-		// fails on a model the host has never heard of.
-		log.Warn("LLM server is up but does NOT have the configured model; every supervised call will fail. "+
-			"Pull it (ollama pull) or fix --llm-model",
-			"available", names)
+		if profile.ModelListAuthoritative {
+			// The single most confusing failure this probe exists to catch: the
+			// server is healthy, so every other signal looks fine, and each call
+			// fails on a model the host has never heard of.
+			log.Warn("LLM server is up but does NOT have the configured model; every supervised call will fail. "+
+				profile.MissingModelHint,
+				"available", names)
+			return
+		}
+		// The listing is advisory for this provider, so absence proves nothing —
+		// say what was seen without claiming the model is unavailable.
+		log.Info("LLM server reachable; the configured model is not in its listing, "+
+			"which is advisory for this provider and does not mean it is unavailable",
+			"listed", len(names))
+	}
+
+	if !profile.Warmable {
+		// Nothing to preload: the provider serves models it already holds, and a
+		// warm-up request would buy nothing and may be billed.
+		log.Info("LLM ready", "note", "hosted provider: no model load to absorb, so no warm-up was sent")
 		return
 	}
 
 	warmCtx, cancelWarm := context.WithTimeout(ctx, warmupTimeout)
 	defer cancelWarm()
 
-	took, err := c.Warm(warmCtx, model)
+	took, err := p.Warm(warmCtx, model)
 	if err != nil {
 		log.Warn("LLM model present but the warm-up request failed; the first caller will pay the model load",
 			"error", err, "elapsed", took.Round(time.Millisecond))

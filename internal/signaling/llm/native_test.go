@@ -3,12 +3,18 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
 func TestClientImplementsChatClient(t *testing.T) {
-	var _ ChatClient = (*Client)(nil)
+	// Every provider must satisfy the full Client contract; the scripted double
+	// only needs the chat half, because that is all the runner ever sees.
+	var _ Client = (*OllamaClient)(nil)
+	var _ Client = (*OpenAIClient)(nil)
 	var _ ChatClient = (*ScriptedClient)(nil)
+	var _ Prober = (*OllamaClient)(nil)
+	var _ Prober = (*OpenAIClient)(nil)
 }
 
 func TestNativeRequestMarshalsThinkFalseAndTools(t *testing.T) {
@@ -26,7 +32,7 @@ func TestNativeRequestMarshalsThinkFalseAndTools(t *testing.T) {
 	data, err := json.Marshal(nativeChatRequest{
 		Model:    "qwen3:8b",
 		Messages: []NativeMessage{{Role: "user", Content: "hi"}},
-		Tools:    reg.AsOllamaTools(),
+		Tools:    reg.AsToolDefs(),
 		Stream:   false,
 		Think:    false,
 	})
@@ -50,10 +56,10 @@ func TestNativeRequestMarshalsThinkFalseAndTools(t *testing.T) {
 	}
 }
 
-func TestAsOllamaToolsShape(t *testing.T) {
+func TestAsToolDefsShape(t *testing.T) {
 	reg := NewToolRegistry()
 	reg.Register(&AgentTool{Name: "hangup", Description: "End the call"})
-	defs := reg.AsOllamaTools()
+	defs := reg.AsToolDefs()
 	if len(defs) != 1 {
 		t.Fatalf("expected 1 def, got %d", len(defs))
 	}
@@ -103,5 +109,41 @@ func TestScriptedClientSequence(t *testing.T) {
 	}
 	if _, err := sc.ChatNative(context.Background(), nil, nil, ""); err == nil {
 		t.Fatal("expected error after exhausting scripted results")
+	}
+}
+
+// The provider-agnostic message type carries fields only OpenAI uses. On the
+// Ollama path they are always empty, and omitempty must keep them off the wire
+// entirely — a request body that grew keys when a second provider was added
+// would be a behavior change to a path nobody meant to touch.
+func TestOllamaWireFormatCarriesNoOpenAIFields(t *testing.T) {
+	req := nativeChatRequest{
+		Model: "qwen3:8b",
+		Messages: []NativeMessage{
+			{Role: "system", Content: "you are a receptionist"},
+			{Role: "assistant", ToolCalls: []ToolCall{
+				{Function: ToolCallFunction{Name: "dial", Arguments: map[string]any{"target": "user/105"}}},
+			}},
+			{Role: "tool", ToolName: "dial", Content: "forwarded"},
+		},
+		Think: false,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(body)
+
+	for _, key := range []string{`"tool_call_id"`, `"id"`} {
+		if strings.Contains(got, key) {
+			t.Errorf("Ollama request body contains %s, which only OpenAI uses: %s", key, got)
+		}
+	}
+	// The fields Ollama does need must still be there.
+	for _, key := range []string{`"tool_name"`, `"tool_calls"`} {
+		if !strings.Contains(got, key) {
+			t.Errorf("Ollama request body is missing %s: %s", key, got)
+		}
 	}
 }

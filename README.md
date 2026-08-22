@@ -258,19 +258,63 @@ text is spoken, listening is the runner's job. Each handler returns a
 disposition the dispatch loop acts on: `Continue`, `Terminal`, or `Parked` (the
 loop holds the call without driving further turns; the handler never blocks).
 
-### Native tool calling
+### Providers and native tool calling
 
-The supervisor uses Ollama's native **`/api/chat`** endpoint — not the
-OpenAI-compatible `/v1/chat/completions` — with `think: false`. The native
-endpoint returns `thinking`, `content`, and `tool_calls` as *separate fields*, so
-reasoning can never leak into text-to-speech. (`/v1` folds reasoning into
-`<think>` tags inside content, which is version-dependent and one bad parse away
-from speaking the model's scratchpad to a caller.) Only `content` is ever spoken.
+The supervisor speaks to one of two providers, selected by a prefix on
+`--llm-model`:
 
-`think: false` is effectively forced by the latency budget: a thinking pass costs
-seconds, and the first turn runs *inside the INVITE transaction*.
+```bash
+--llm-model qwen3:8b                       # no prefix means ollama
+--llm-model ollama/qwen3:8b                # the same, written explicitly
+--llm-model openai                         # openai with its default model (gpt-4o)
+--llm-model openai/gpt-4o                  # the same, pinned explicitly
+--llm-model openai/meta-llama/llama-3.1-70b \
+  --llm-server https://gateway.internal    # any OpenAI-compatible server
+```
 
-No third-party LLM library is used — the client is `net/http` against Ollama.
+Naming a provider with no model picks that provider's default — `openai` is
+`gpt-4o`, `ollama` is `qwen3:8b` — and its default endpoint, so `--llm-model
+openai` plus `OPENAI_API_KEY` is a complete configuration. The banner always
+prints the **resolved** model, because that default lives in this repo: bumping it
+would change the model, latency and per-minute cost of any deployment using the
+short form. Pin the model explicitly if that matters to you.
+
+The value splits on the **first** slash only, so a model id that contains slashes
+survives intact. An unrecognised prefix is a startup error naming the valid
+providers, not a guess — sending an entire deployment's calls to the wrong
+endpoint over a typo is worse than refusing to start. The cost is that a
+namespaced Ollama model (`hf.co/user/repo`) now needs the explicit `ollama/`
+prefix; the error says so, with the exact string that works.
+
+`--llm-server` defaults per provider (`http://localhost:11434` for ollama,
+`https://api.openai.com` for openai) and is always honoured when set, which is
+what makes Groq, vLLM, OpenRouter and LiteLLM work through the same code path.
+The API key is read from **`OPENAI_API_KEY` in the environment only** — never a
+flag, because flags are visible in `ps` and in the startup banner. It is required
+for `api.openai.com` and optional for a gateway that does not authenticate.
+
+**Ollama** uses the native **`/api/chat`** endpoint with `think: false`, which
+returns `thinking`, `content`, and `tool_calls` as *separate fields*. `think:
+false` is effectively forced by the latency budget: a thinking pass costs seconds,
+and the first turn runs *inside the INVITE transaction*.
+
+**OpenAI** uses `/v1/chat/completions`, which has no separate reasoning field.
+That is exactly why it was avoided originally, so the leak is handled explicitly
+rather than assumed away: reasoning arriving as `reasoning_content`/`reasoning`,
+or folded into content as `<think>` tags, is routed to `thinking` and never to
+`content`. Only `content` is ever spoken.
+
+Content is **filtered rather than trusted on both providers**. `think: false` is a
+request, not a guarantee — `qwen3:4b` was measured writing its chain of thought
+into `content` on every trial — so the same filter runs on the Ollama path too. It
+fails closed: an unterminated `<think>` with no closer, which is what a
+token-truncated response looks like, is treated as reasoning through to the end.
+
+A reasoning model (`o1`, `o3`, `gpt-5`) works but is a poor fit: its latency
+routinely exceeds the mid-call turn budget. Prefer a non-reasoning model for the
+supervisor.
+
+No third-party LLM library is used — both clients are `net/http`.
 
 ### The runner: one loop, three nested scopes
 
@@ -301,7 +345,7 @@ Two safety mechanisms fall out of this shape:
 
 The supervisor connects three external services:
 
-- **LLM** (Ollama) — the supervisor, default model `qwen3:8b`
+- **LLM** (Ollama or OpenAI) — the supervisor, default model `qwen3:8b` on Ollama
 - **ASR** (Whisper) — Speech-to-text for caller input
 - **TTS** (Piper) — Text-to-speech for agent responses
 
@@ -415,6 +459,18 @@ go run cmd/signaling/main.go \
   --llm-server http://localhost:11434 \
   --llm-model qwen3:8b &
 
+# ...or point the supervisor at OpenAI instead of a local model. The key comes
+# from the environment; there is deliberately no flag for it.
+OPENAI_API_KEY=sk-... go run cmd/signaling/main.go --llm-model openai &
+
+# ...or pin the model rather than taking the default
+OPENAI_API_KEY=sk-... go run cmd/signaling/main.go --llm-model openai/gpt-4o &
+
+# ...or at any OpenAI-compatible gateway (Groq, vLLM, OpenRouter, LiteLLM)
+go run cmd/signaling/main.go \
+  --llm-model openai/llama-3.3-70b-versatile \
+  --llm-server https://api.groq.com/openai &
+
 go run cmd/ui/main.go
 
 # 5. Register a softphone and dial another registered extension
@@ -422,13 +478,16 @@ go run cmd/ui/main.go
 
 The AI services can run on any reachable host — replace `localhost` with the IP of wherever you started them.
 
-The signaling server **requires** an LLM server: without a supervisor there is
+The signaling server **requires** an LLM: without a supervisor there is
 nothing to route calls, so it refuses to start rather than running unsupervised.
+It does not require the LLM to be *reachable* — a deployment whose model is down
+still starts and still routes every call deterministic resolution can resolve.
 
 ### Trying the supervisor without SIP
 
-`cmd/agent-smoke` drives the real runner against real Ollama with a fake call
+`cmd/agent-smoke` drives the real runner against a real LLM with a fake call
 session, so you can watch routing decisions without softphones, RTP, ASR, or TTS.
+Its `--model` takes the same `[provider/]model` form as `--llm-model`.
 Stdin becomes caller speech; tool dispatches and TTS print with a `>>>` prefix.
 
 ```bash
@@ -437,6 +496,10 @@ go run ./cmd/agent-smoke --direction internal --caller 102 --callee 105
 
 # Inbound call: expect a greeting, then intent routing as you type
 go run ./cmd/agent-smoke --direction inbound --caller +15551234567 --callee 5558001200
+
+# Against OpenAI rather than a local model
+OPENAI_API_KEY=sk-... go run ./cmd/agent-smoke --model openai/gpt-4o \
+  --direction inbound --caller +15551234567 --callee 5558001200
 ```
 
 Use `--verbose` to surface the model's `thinking` field on stderr — it must never
