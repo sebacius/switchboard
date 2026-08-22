@@ -422,16 +422,20 @@ spend the tenant's daily budget.
 
 ```bash
 # Every problem at once, each with its path. Also cross-checks routes.json.
-switchboard-signaling validate --routing-path resources/tenants
+switchboard-signaling validate \
+  --routing-path resources/tenants \
+  --policy-config resources/config/policy.json \
+  --routes-path resources/config/routes.json
 
-# Walk a flow against a fake call and print the traversal.
-flow-smoke --tenant acme --dialed 100 --digits 2
+# Walk a flow against a fake call and print the traversal. There is no installed
+# flow-smoke binary; run it from the repo (make flow-smoke uses the defaults).
+go run ./cmd/flow-smoke --tenant acme --dialed 100 --digits 2
 ```
 
 ```
 dialing "100" as internal for tenant acme
 
-flow "main-ivr", 3 hop(s)
+flow "main-ivr", 3 hop(s), 0ms
   1. greeting      (ivr)         --2--> digits 2
   2. ring-claims   (dial_user)   --no_answer--> no_answer
   3. to-operator   (dial_user)   --answered--> connected to user/150
@@ -439,6 +443,16 @@ flow "main-ivr", 3 hop(s)
 path: greeting -> ring-claims -> to-operator
 outcome: answered
 ```
+
+The tool then lists what the walk touched — `spoken:` for anything a `tts` or
+`ivr` node would have said, `dialed:` for the endpoints it would have called,
+`relayed to caller:` for responses forwarded upstream — omitting each section
+when it is empty.
+
+The tenant in this document is illustrative and is not on disk, so the command
+above only runs against a tenant you have actually written into
+`--routing-path`. `make flow-smoke DIALED=700 DIGITS=2` walks the shipped
+`devtenant` instead.
 
 The same traversal is written to the call record when `--cdr-path` is set, which
 is what makes "why did this caller end up with the operator" answerable after the

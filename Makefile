@@ -45,8 +45,8 @@ help:
 	@echo "  make docker-build-rtpmanager- Build rtpmanager Docker image"
 	@echo "  make docker-build-ui        - Build UI Docker image"
 	@echo ""
-	@echo "SUPPORTING SERVICES (Ollama / Whisper / Piper):"
-	@echo "  make services-up      - Start LLM/ASR/TTS via docker compose"
+	@echo "SUPPORTING SERVICES (Piper TTS / Whisper ASR; Ollama is unused):"
+	@echo "  make services-up      - Start supporting services via docker compose"
 	@echo "  make services-down    - Stop supporting services"
 	@echo "  make services-logs    - Tail supporting service logs"
 	@echo ""
@@ -154,14 +154,15 @@ docker-build: docker-build-signaling docker-build-rtpmanager docker-build-ui
 	@echo "All Docker images built"
 
 # ============================================================================
-# Supporting services (Ollama / Whisper / Piper) via docker compose
+# Supporting services via docker compose. Only Piper (TTS) is on the call path;
+# Whisper is dormant and Ollama is left over from the removed LLM supervisor.
 # ============================================================================
 
 COMPOSE_SERVICES ?= deploy/docker/docker-compose.services.yml
 
 services-up:
 	@docker compose -f $(COMPOSE_SERVICES) up -d
-	@echo "Supporting services starting. ollama-init will pull the model on first run."
+	@echo "Supporting services starting. ollama-init will pull a model on first run; nothing consumes it."
 
 services-down:
 	@docker compose -f $(COMPOSE_SERVICES) down

@@ -21,7 +21,7 @@ All Switchboard services can be configured via environment variables or command-
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
 | `--port` | `PORT` | 5060 | SIP listen port (UDP) |
-| `--bind` | `BIND` | 0.0.0.0 | Bind address for SIP |
+| `--bind` | `BIND` | 0.0.0.0 | Bind address for SIP and the REST API |
 | `--advertise` | `ADVERTISE` | (auto-detected) | Public IP for SIP Contact headers |
 | `--api-port` | `API_PORT` | 8080 | REST API HTTP port |
 
@@ -29,7 +29,7 @@ All Switchboard services can be configured via environment variables or command-
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--rtpmanager` | `RTPMANAGER` | localhost:9090 | Comma-separated RTP Manager addresses |
+| `--rtpmanager` | `RTPMANAGER_ADDRS` | localhost:9090 | Comma-separated RTP Manager addresses |
 
 Example with multiple RTP Managers:
 ```bash
@@ -61,6 +61,7 @@ path, "why did this caller end up with the operator" has no answer.
 |------|---------|---------|-------------|
 | `--tenants-path` | `TENANTS_PATH` | resources/tenants | Directory containing per-tenant configuration |
 | `--routing-path` | `ROUTING_PATH` | (same as `--tenants-path`) | Directory containing `<tenant>.routing.json` and `<tenant>.flows.json` |
+| `--policy-config` | `POLICY_CONFIG` | resources/config/policy.json | Class of Service and channel limits |
 
 A tenant is described by **two** files, loaded and validated as one unit — which
 is what makes cross-file checks meaningful, since a flow may dial a ring group
@@ -70,7 +71,16 @@ the other file defines. There is **no default tenant**.
 
 ```bash
 switchboard-signaling validate --routing-path resources/tenants
+
+# Or, with the repo defaults for every path:
+make validate
 ```
+
+It also takes `--policy-config` (default `resources/config/policy.json`),
+`--routes-path` (default `resources/config/routes.json`) and `--quiet`. Class of
+Service is checked against the policy file and DIDs are cross-checked against
+`routes.json`, so pointing it at the wrong file weakens the check rather than
+skipping it loudly.
 
 It runs the same checks the loader does — so "validate passes but the server will
 not start" cannot happen — and reports every problem rather than the first, each
@@ -299,13 +309,13 @@ name is exactly the drift the move was meant to end.
 | `external_allowlist` | Prefix allowlist, consulted only when external dial is enabled. Empty with external enabled denies everything |
 | `barred_prefixes` | Overrides the built-in barred classes (premium-rate, satellite, IRSF-heavy codes). Omit to inherit the defaults |
 | `max_external_units_per_day` | Spend circuit breaker. Zero permits no external spend |
-| `allow_caller_provided_number` | Gates the separate hard-gated tool that dials a raw caller-supplied number |
+| `allow_caller_provided_number` | Gates dialing a raw, un-narrowed number. **Nothing reaches this path today** — it gated a supervisor tool that no longer exists, and no flow node can express a raw number. Leave it false |
 
 ### Logging
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--loglevel` | `LOGLEVEL` | info | Log level: debug, info, warn, error |
+| `--loglevel` | `LOGLEVEL` | debug | Log level: debug, info, warn, error |
 
 ### Complete Example
 
@@ -314,7 +324,7 @@ name is exactly the drift the move was meant to end.
 export PORT=5060
 export BIND=0.0.0.0
 export ADVERTISE=192.168.1.10
-export RTPMANAGER=rtpmanager1:9090,rtpmanager2:9090
+export RTPMANAGER_ADDRS=rtpmanager1:9090,rtpmanager2:9090
 export CDR_PATH=/var/log/switchboard/cdr.jsonl
 export POLICY_CONFIG=/etc/switchboard/policy.json
 export TENANTS_PATH=/etc/switchboard/tenants
@@ -342,15 +352,15 @@ export LOGLEVEL=debug
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
 | `--grpc-port` | `GRPC_PORT` | 9090 | gRPC listen port |
-| `--grpc-bind` | `GRPC_BIND` | 0.0.0.0 | Bind address for gRPC |
+| `--bind` | `BIND` | 0.0.0.0 | Bind address for gRPC |
 
 ### Media Configuration
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
 | `--advertise` | `ADVERTISE` | (auto-detected) | Public IP for SDP connection address |
-| `--rtp-min` | `RTP_PORT_MIN` | 10000 | Start of RTP port range |
-| `--rtp-max` | `RTP_PORT_MAX` | 20000 | End of RTP port range |
+| `--rtp-port-min` | `RTP_PORT_MIN` | 10000 | Start of RTP port range |
+| `--rtp-port-max` | `RTP_PORT_MAX` | 20000 | End of RTP port range |
 | `--audio-path` | `AUDIO_PATH` | ./audio | Base path for audio files |
 
 ### Speech Service Connections
@@ -359,6 +369,7 @@ export LOGLEVEL=debug
 |------|---------|---------|-------------|
 | `--tts-server` | `TTS_SERVER` | http://localhost:8000 | TTS server URL (Piper, or any OpenAI-compatible `/v1/audio/speech`) |
 | `--asr-server` | `ASR_SERVER` | http://localhost:8001 | ASR server URL — **currently unused** |
+| `--asr-model` | `ASR_MODEL` | Systran/faster-whisper-base | Model id sent to the ASR server; required by that API |
 
 TTS synthesizes `tts` node text and `ivr` prompts into audio streamed over RTP.
 A flow that only plays recorded files, dials, transfers and hangs up needs no
@@ -383,14 +394,14 @@ Each RTP session uses 2 ports (RTP + RTCP), so capacity = (max - min) / 2.
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--loglevel` | `LOGLEVEL` | info | Log level: debug, info, warn, error |
+| `--loglevel` | `LOGLEVEL` | debug | Log level: debug, info, warn, error |
 
 ### Complete Example
 
 ```bash
 # Environment variables
 export GRPC_PORT=9090
-export GRPC_BIND=0.0.0.0
+export BIND=0.0.0.0
 export ADVERTISE=192.168.1.10
 export RTP_PORT_MIN=10000
 export RTP_PORT_MAX=20000
@@ -404,10 +415,10 @@ export LOGLEVEL=info
 # Or with flags
 ./switchboard-rtpmanager \
   --grpc-port 9090 \
-  --grpc-bind 0.0.0.0 \
+  --bind 0.0.0.0 \
   --advertise 192.168.1.10 \
-  --rtp-min 10000 \
-  --rtp-max 20000 \
+  --rtp-port-min 10000 \
+  --rtp-port-max 20000 \
   --audio-path /var/lib/switchboard/audio \
   --tts-server http://localhost:8000 \
   --asr-server http://localhost:8001 \
@@ -427,7 +438,7 @@ export LOGLEVEL=info
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--backends` | `UI_BACKENDS` | (required) | Comma-separated backend definitions |
+| `--backends` | `UI_BACKENDS` | http://localhost:8080 | Comma-separated backend definitions |
 
 Backend format: `name=url` pairs, comma-separated.
 
@@ -507,9 +518,10 @@ flow cannot be saved into a running system.
 All services on one machine:
 
 ```bash
-./switchboard-rtpmanager --grpc-port 9090 &
-./switchboard-signaling --rtpmanager localhost:9090 &
-./switchboard-ui --backends http://localhost:8080
+# make build-all writes these into build/
+./build/switchboard-rtpmanager --grpc-port 9090 &
+./build/switchboard-signaling --rtpmanager localhost:9090 &
+./build/switchboard-ui --backends http://localhost:8080
 ```
 
 ### Multi-Host Production
@@ -542,17 +554,17 @@ All services on one machine:
 # RTP Manager 1
 ./switchboard-rtpmanager \
   --advertise $PUBLIC_IP \
-  --rtp-min 10000 --rtp-max 13333
+  --rtp-port-min 10000 --rtp-port-max 13333
 
 # RTP Manager 2
 ./switchboard-rtpmanager \
   --advertise $PUBLIC_IP \
-  --rtp-min 13334 --rtp-max 16666
+  --rtp-port-min 13334 --rtp-port-max 16666
 
 # RTP Manager 3
 ./switchboard-rtpmanager \
   --advertise $PUBLIC_IP \
-  --rtp-min 16667 --rtp-max 20000
+  --rtp-port-min 16667 --rtp-port-max 20000
 ```
 
 ### NAT Traversal
@@ -578,14 +590,14 @@ For systemd or Docker deployments, use an environment file:
 PORT=5060
 BIND=0.0.0.0
 ADVERTISE=192.168.1.10
-RTPMANAGER=localhost:9090
+RTPMANAGER_ADDRS=localhost:9090
 LOGLEVEL=info
 ```
 
 ```bash
 # /etc/switchboard/rtpmanager.env
 GRPC_PORT=9090
-GRPC_BIND=0.0.0.0
+BIND=0.0.0.0
 ADVERTISE=192.168.1.10
 RTP_PORT_MIN=10000
 RTP_PORT_MAX=20000
@@ -597,7 +609,11 @@ LOGLEVEL=info
 
 ## Related Documents
 
+| Document | Description |
+|----------|-------------|
+| [Tenant example](TENANT-EXAMPLE.md) | A worked tenant: routing table, flows, policy, and the two DID lookups |
+| [Project README](../README.md) | Architecture, call path, and what does and does not work yet |
 
 ---
 
-*Last updated: March 2026*
+*Last updated: August 2026*
