@@ -3,6 +3,7 @@ package agent
 import (
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
 )
@@ -105,6 +106,11 @@ type Policy struct {
 	cfg    TenantPolicy
 	log    *slog.Logger
 	spend  *SpendLedger
+
+	// decisions accumulates this call's verdicts so they can be attached to its
+	// record. A Policy is built per call, so this is exactly one call's worth.
+	decisionsMu sync.Mutex
+	decisions   []RecordedDecision
 
 	barred []string // resolved barred prefixes (cfg or defaults)
 }
@@ -285,6 +291,31 @@ func (p *Policy) authorizeResolved(resolved string) Decision {
 	return allow("external destination authorized")
 }
 
+// RecordedDecision is one authorization verdict, for the call record.
+type RecordedDecision struct {
+	Target  string
+	Allowed bool
+	Reason  string
+}
+
+// recordDecision keeps a verdict for the call record.
+func (p *Policy) recordDecision(resolved string, d Decision) {
+	p.decisionsMu.Lock()
+	defer p.decisionsMu.Unlock()
+	p.decisions = append(p.decisions, RecordedDecision{
+		Target: resolved, Allowed: d.Allowed, Reason: d.Reason,
+	})
+}
+
+// Decisions returns the verdicts made for this call, so they can be written
+// into its record alongside the traversal — the path and why it was allowed to
+// go that way, readable together.
+func (p *Policy) Decisions() []RecordedDecision {
+	p.decisionsMu.Lock()
+	defer p.decisionsMu.Unlock()
+	return append([]RecordedDecision(nil), p.decisions...)
+}
+
 // isInternalTarget reports whether a resolved target is an internal directory
 // reference that cannot reach an external trunk.
 //
@@ -333,14 +364,13 @@ func matchPrefix(digits, raw string, patterns []string) (string, bool) {
 	return "", false
 }
 
-// logDecision emits the authorization verdict for audit. Every verdict —
-// allow and deny — is logged so denied actions are surfaced as fraud signals.
-//
-// TODO(cdr): once the structured call record exists, write (tool, target,
-// resolved, decision, reason) into the CDR here too so denied dials are
-// auditable per-call as potential toll-fraud / injection signals (spec:
-// tool-authorization "Decision logging"). For now slog is the only sink.
+// logDecision emits the authorization verdict for audit. Every verdict — allow
+// and deny — is logged so denied actions are surfaced as fraud signals, and
+// recorded against the call so they are durable rather than living only in
+// process output (spec: tool-authorization "Decision logging").
 func (p *Policy) logDecision(tool, target, resolved string, d Decision) {
+	p.recordDecision(resolved, d)
+
 	verdict := "deny"
 	if d.Allowed {
 		verdict = "allow"

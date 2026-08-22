@@ -116,22 +116,22 @@
 
 - [x] 13.1 `flow.Trace` on the cursor: node, type, exit, entered-at, duration, detail per hop
 - [x] 13.2 `CDRSink` interface with one implementation — append-only JSONL under `--cdr-path`; hops into the existing `store.CDR.Metadata` blob
-- [ ] 13.3 Fold `policy.logDecision` verdicts into the same record; close the `TODO(cdr)` at `policy.go:295`
+- [x] 13.3 Fold `policy.logDecision` verdicts into the same record; close the `TODO(cdr)` at `policy.go:295`
 - [x] 13.4 No SQL repository, no events bus, no NATS subjects
 
 ## 14. Wire it up
 
 - [x] 14.1 Swap `resolution.Handle` for `flow.Engine.Handle` in `invite.go`; delete `resolver.go` and `resolution_exec.go` in the same commit
-- [ ] 14.2 Construct the engine in `app.go` with the routing store, policy builder, parking service, and CDR sink
-- [ ] 14.3 Ship an example `resources/tenants/devtenant.flows.json` exercising every node type
+- [x] 14.2 Construct the engine in `app.go` with the routing store, policy builder, parking service, and CDR sink
+- [x] 14.3 Ship an example `resources/tenants/devtenant.flows.json` exercising every node type
 
 ## 15. Documentation
 
-- [ ] 15.1 `CLAUDE.md`: folder structure (`llm/` and the supervisor files are gone, `dialplan/` and `flow/` are new) and the call-flow diagram
-- [ ] 15.2 `README.md`: remove the "LLM supervisor on every call" framing and the supporting-services setup
-- [ ] 15.3 `docs/CONFIGURATION.md`: drop LLM flags/env, document `<tenant>.flows.json`, `--cdr-path`, and `validate`
-- [ ] 15.4 `docs/TENANT-EXAMPLE.md`: a rewrite, not an edit — it is entirely about the prompt/routing/policy three-file split, and the prompt file is gone
-- [ ] 15.5 Document that `answered` is terminal, so "after the bridge ends, do X" is inexpressible by design
+- [x] 15.1 `CLAUDE.md`: folder structure (`llm/` and the supervisor files are gone, `dialplan/` and `flow/` are new) and the call-flow diagram
+- [x] 15.2 `README.md`: remove the "LLM supervisor on every call" framing and the supporting-services setup
+- [x] 15.3 `docs/CONFIGURATION.md`: drop LLM flags/env, document `<tenant>.flows.json`, `--cdr-path`, and `validate`
+- [x] 15.4 `docs/TENANT-EXAMPLE.md`: a rewrite, not an edit — it is entirely about the prompt/routing/policy three-file split, and the prompt file is gone
+- [x] 15.5 Document that `answered` is terminal, so "after the bridge ends, do X" is inexpressible by design
 
 ## 16. Verification
 

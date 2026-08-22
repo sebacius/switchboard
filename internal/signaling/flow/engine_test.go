@@ -401,3 +401,33 @@ func TestNoDTMFTransportDegrades(t *testing.T) {
 		t.Fatalf("it should fall through to the operator, dialed %v", sess.Dialed)
 	}
 }
+
+// A denied destination must be auditable per-call, not only in process output:
+// the path and why it was permitted have to read together.
+func TestDecisionsAreRecordedAgainstTheCall(t *testing.T) {
+	const flowJSON = `{"flows":{"main":{
+		"start":"ring",
+		"nodes":{
+			"ring":{"type":"dial_user","entry":{"target":"user/110","timeout_ms":20000},
+				"exits":{"no_answer":"bye","busy":"bye","rejected":"bye","unavailable":"bye"}},
+			"bye":{"type":"hangup","entry":{}}
+		}}}}`
+
+	var traces []Trace
+	e := testEngine(t, map[string]string{"100": "flow/main"}, flowJSON)
+	e.cfg.Trace = TraceFunc(func(tr Trace) { traces = append(traces, tr) })
+
+	sess := flowtest.New().QueueDial(agent.DialAnswered, 200)
+	e.Handle(context.Background(), sess, internalCall("100"))
+
+	if len(traces) != 1 {
+		t.Fatalf("expected one trace, got %d", len(traces))
+	}
+	if len(traces[0].Decisions) == 0 {
+		t.Fatal("the authorization verdict should be recorded against the call")
+	}
+	d := traces[0].Decisions[0]
+	if d.Target != "user/110" || !d.Allowed {
+		t.Errorf("expected an allow for user/110, got %+v", d)
+	}
+}

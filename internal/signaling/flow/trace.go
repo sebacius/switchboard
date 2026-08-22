@@ -8,19 +8,29 @@ import "time"
 
 // Trace is one completed traversal.
 type Trace struct {
-	CallID  string    `json:"call_id"`
-	Tenant  string    `json:"tenant"`
-	Flow    string    `json:"flow"`
-	Outcome string    `json:"outcome"`
-	Path    string    `json:"path"`
-	Hops    []Hop     `json:"hops"`
-	Started time.Time `json:"started"`
-	Ended   time.Time `json:"ended"`
+	CallID  string `json:"call_id"`
+	Tenant  string `json:"tenant"`
+	Flow    string `json:"flow"`
+	Outcome string `json:"outcome"`
+	Path    string `json:"path"`
+	Hops    []Hop  `json:"hops"`
+	// Decisions are the authorization verdicts made during the call, so the
+	// path and why it was permitted read together.
+	Decisions []Decision `json:"decisions,omitempty"`
+	Started   time.Time  `json:"started"`
+	Ended     time.Time  `json:"ended"`
 }
 
 // DurationMs is how long the call spent in the flow.
 func (t Trace) DurationMs() int64 {
 	return t.Ended.Sub(t.Started).Milliseconds()
+}
+
+// Decision is one authorization verdict recorded against a call.
+type Decision struct {
+	Target  string `json:"target"`
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason"`
 }
 
 // TraceSink receives completed traversals.

@@ -152,6 +152,7 @@ func (e *Engine) runFlow(ctx context.Context, sess agent.CallSession, cc agent.C
 
 		enteredAt := time.Now()
 		outcome := e.runNode(flowCtx, sess, cc, cursor, node, policy)
+		cursor.captureDecisions(policy)
 
 		next := node.Exits[outcome.exit]
 		cursor.record(cursor.Node(), node.Type, outcome.exit, outcome.detail, enteredAt, next)
@@ -288,14 +289,15 @@ func (e *Engine) emitTrace(cursor *Cursor, outcome string) {
 		return
 	}
 	e.cfg.Trace.Record(Trace{
-		CallID:  cursor.CallID,
-		Tenant:  cursor.Tenant,
-		Flow:    cursor.Flow,
-		Outcome: outcome,
-		Path:    cursor.Path(),
-		Hops:    cursor.Hops(),
-		Started: cursor.startedAt,
-		Ended:   time.Now(),
+		CallID:    cursor.CallID,
+		Tenant:    cursor.Tenant,
+		Flow:      cursor.Flow,
+		Outcome:   outcome,
+		Path:      cursor.Path(),
+		Hops:      cursor.Hops(),
+		Started:   cursor.startedAt,
+		Ended:     time.Now(),
+		Decisions: cursor.decisions,
 	})
 }
 

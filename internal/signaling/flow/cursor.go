@@ -49,6 +49,9 @@ type Cursor struct {
 	// digits carries a collected value between nodes.
 	digits string
 
+	// decisions are the authorization verdicts made for this call.
+	decisions []Decision
+
 	startedAt time.Time
 }
 
@@ -97,6 +100,20 @@ func (c *Cursor) record(nodeID string, nodeType dialplan.NodeType, exit, detail 
 		Detail:     detail,
 	})
 	c.node = next
+}
+
+// captureDecisions copies the policy's verdicts onto the cursor, so the call
+// record shows what was permitted as well as where the call went.
+func (c *Cursor) captureDecisions(policy *agent.Policy) {
+	if policy == nil {
+		return
+	}
+	c.decisions = c.decisions[:0]
+	for _, d := range policy.Decisions() {
+		c.decisions = append(c.decisions, Decision{
+			Target: d.Target, Allowed: d.Allowed, Reason: d.Reason,
+		})
+	}
 }
 
 // retry increments and returns a node's retry count. This is the ONLY repetition

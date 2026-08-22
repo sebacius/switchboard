@@ -31,6 +31,13 @@ func (c CDRTrace) Record(t Trace) {
 		})
 	}
 
+	decisions := make([]cdr.Decision, 0, len(t.Decisions))
+	for _, d := range t.Decisions {
+		decisions = append(decisions, cdr.Decision{
+			Target: d.Target, Allowed: d.Allowed, Reason: d.Reason,
+		})
+	}
+
 	rec := cdr.Record{
 		CallID:    t.CallID,
 		Tenant:    t.Tenant,
@@ -38,6 +45,7 @@ func (c CDRTrace) Record(t Trace) {
 		Path:      t.Path,
 		Hops:      hops,
 		Outcome:   t.Outcome,
+		Decisions: decisions,
 		StartedAt: t.Started,
 		EndedAt:   t.Ended,
 	}
