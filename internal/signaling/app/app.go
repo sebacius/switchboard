@@ -11,6 +11,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/agent"
 	"github.com/sebas/switchboard/internal/signaling/api"
 	"github.com/sebas/switchboard/internal/signaling/b2bua"
+	"github.com/sebas/switchboard/internal/signaling/cdr"
 	"github.com/sebas/switchboard/internal/signaling/config"
 	"github.com/sebas/switchboard/internal/signaling/dialog"
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
@@ -260,6 +261,20 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 
 	// A call with exactly one correct destination — a registered extension, a
 	// *7XX pickup, a mapped DID, a ring group — is executed directly.
+	// Call records answer "why did this caller end up there", which needs the
+	// path rather than only the outcome. A record that cannot be written must
+	// never take the call with it, so a failure here warns and carries on.
+	var traceSink flow.TraceSink
+	if cfg.CDRPath != "" {
+		sink, err := cdr.NewJSONLSink(cfg.CDRPath)
+		if err != nil {
+			slog.Warn("Call records disabled", "path", cfg.CDRPath, "error", err)
+		} else {
+			slog.Info("Call records enabled", "path", cfg.CDRPath)
+			traceSink = flow.CDRTrace{Sink: sink, Log: slog.Default()}
+		}
+	}
+
 	// The flow engine routes every call: single-hop destinations directly, and
 	// anything mapped to a flow through its graph.
 	flowEngine := flow.New(flow.Config{
@@ -268,6 +283,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		Resolver:    agent.NewResolver(routingStore, directory, parkService, slog.Default()),
 		Parking:     parkService,
 		BuildPolicy: buildPolicy,
+		Trace:       traceSink,
 		Logger:      slog.Default(),
 	})
 

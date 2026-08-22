@@ -103,21 +103,21 @@
 - [x] 11.6 Every sink node is terminal-typed
 - [x] 11.7 Target and COS checks via `Policy.Classify` — syntax, group existence, symbolic membership. **No registration check** (runtime state; would fail every boot)
 - [x] 11.8 Digit-map checks per group 5
-- [ ] 11.9 E911 **warning-only**: a pattern that shadows an emergency number; a PSTN-capable tenant with no emergency route
-- [ ] 11.10 `Store.Reload` fails on any Error and keeps the previous config; the config API returns `[]Problem` so the UI can say why
+- [x] 11.9 E911 **warning-only**: a pattern that shadows an emergency number; a PSTN-capable tenant with no emergency route
+- [x] 11.10 `Store.Reload` fails on any Error and keeps the previous config; the config API returns `[]Problem` so the UI can say why
 
 ## 12. Tooling
 
-- [ ] 12.1 `validate` subcommand: peek `os.Args[1]` in `cmd/signaling/main.go` before `config.Load()`, dispatch to its own `flag.NewFlagSet`. Exit 0 clean / 1 problems / 2 usage
-- [ ] 12.2 `cmd/flow-smoke`: walk a flow against a fake session, feed digits on stdin, print the traversal
-- [ ] 12.3 `make validate` target and a CI step over `resources/tenants/`
+- [x] 12.1 `validate` subcommand: peek `os.Args[1]` in `cmd/signaling/main.go` before `config.Load()`, dispatch to its own `flag.NewFlagSet`. Exit 0 clean / 1 problems / 2 usage
+- [x] 12.2 `cmd/flow-smoke`: walk a flow against a fake session, feed digits on stdin, print the traversal
+- [x] 12.3 `make validate` target and a CI step over `resources/tenants/`
 
 ## 13. Call records
 
-- [ ] 13.1 `flow.Trace` on the cursor: node, type, exit, entered-at, duration, detail per hop
-- [ ] 13.2 `CDRSink` interface with one implementation — append-only JSONL under `--cdr-path`; hops into the existing `store.CDR.Metadata` blob
+- [x] 13.1 `flow.Trace` on the cursor: node, type, exit, entered-at, duration, detail per hop
+- [x] 13.2 `CDRSink` interface with one implementation — append-only JSONL under `--cdr-path`; hops into the existing `store.CDR.Metadata` blob
 - [ ] 13.3 Fold `policy.logDecision` verdicts into the same record; close the `TODO(cdr)` at `policy.go:295`
-- [ ] 13.4 No SQL repository, no events bus, no NATS subjects
+- [x] 13.4 No SQL repository, no events bus, no NATS subjects
 
 ## 14. Wire it up
 

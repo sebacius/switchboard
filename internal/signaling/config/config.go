@@ -24,6 +24,9 @@ type Config struct {
 	// not name one of their own.
 	TTSVoice string
 
+	// CDRPath is the append-only call record file. Empty disables recording.
+	CDRPath string
+
 	// PolicyPath points at the Class-of-Service / capacity JSON: per-tenant
 	// channel limits, external-dial allowlists, symbolic targets, and the spend
 	// circuit breaker. A missing file means the safe default posture.
@@ -73,6 +76,8 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.AdvertiseAddr, "advertise", "", "Address to advertise in SIP headers (auto-detected if not set)")
 	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error)")
 	flag.StringVar(&cfg.TTSVoice, "tts-voice", "alloy", "Default TTS voice for flow prompts")
+	flag.StringVar(&cfg.CDRPath, "cdr-path", "",
+		"Append-only JSONL call record file; empty disables recording")
 	flag.StringVar(&cfg.PolicyPath, "policy-config", "resources/config/policy.json", "Path to tenant Class-of-Service and channel-limit configuration")
 	flag.StringVar(&cfg.TenantsPath, "tenants-path", "resources/tenants", "Directory containing per-tenant configuration files")
 	flag.StringVar(&cfg.RoutingPath, "routing-path", "", "Directory containing per-tenant <tenant>.routing.json and <tenant>.flows.json files (defaults to --tenants-path)")
@@ -122,6 +127,9 @@ func Load() (*Config, error) {
 	}
 	if voice := os.Getenv("TTS_VOICE"); voice != "" {
 		cfg.TTSVoice = voice
+	}
+	if cdrPath := os.Getenv("CDR_PATH"); cdrPath != "" {
+		cfg.CDRPath = cdrPath
 	}
 	if policyPath := os.Getenv("POLICY_CONFIG"); policyPath != "" {
 		cfg.PolicyPath = policyPath

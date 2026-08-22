@@ -424,6 +424,57 @@ func (s *RoutingStore) Reload() error {
 	return nil
 }
 
+// LoadTenant reads and validates one tenant's configuration from a directory.
+// Exported so the validate subcommand runs exactly the checks the loader does,
+// rather than a second implementation that can drift from it.
+func LoadTenant(dir, tenant string) (*RoutingTable, *FlowSet, error) {
+	s := &RoutingStore{tenantsDir: dir}
+	return s.loadTenant(tenant)
+}
+
+// ParseTenant reads a tenant's files WITHOUT running the graph checks.
+//
+// It exists for the validator, which reports every problem rather than the
+// first: the loader is fail-closed by design and collapses a flow's problems
+// into a single error, which is right for a server with a call to route and
+// wrong for an operator fixing a thirty-node graph.
+func ParseTenant(dir, tenant string) (*RoutingTable, *FlowSet, error) {
+	routingPath := filepath.Join(dir, tenant+routingFileSuffix)
+	flowPath := filepath.Join(dir, tenant+flowFileSuffix)
+
+	data, err := os.ReadFile(routingPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, fmt.Errorf(
+				"tenant %s has %s but no %s: flows need a routing table to name their operator and ring groups",
+				tenant, tenant+flowFileSuffix, tenant+routingFileSuffix)
+		}
+		return nil, nil, fmt.Errorf("read routing file %s: %w", routingPath, err)
+	}
+	var table RoutingTable
+	if err := json.Unmarshal(data, &table); err != nil {
+		return nil, nil, fmt.Errorf("parse routing file %s: %w", routingPath, err)
+	}
+	// Table-level checks still fail fast: a malformed routing table makes every
+	// flow problem beneath it meaningless.
+	if err := table.validate(tenant, data); err != nil {
+		return nil, nil, err
+	}
+
+	flowData, err := os.ReadFile(flowPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &table, nil, nil
+		}
+		return nil, nil, fmt.Errorf("read flow file %s: %w", flowPath, err)
+	}
+	var set FlowSet
+	if err := json.Unmarshal(flowData, &set); err != nil {
+		return nil, nil, fmt.Errorf("parse flow file %s: %w", flowPath, err)
+	}
+	return &table, &set, nil
+}
+
 // loadTenant reads and validates one tenant's routing table and flows together.
 // Both files are parsed before either is validated, so validation can see across
 // them — a flow dialing a ring group is checked against the table that defines

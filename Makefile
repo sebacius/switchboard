@@ -3,7 +3,8 @@
 	run-signaling run-rtpmanager run-ui \
 	test-sip test-register test-multi test-api test-deregister \
 	docker-build docker-build-signaling docker-build-rtpmanager docker-build-ui \
-	services-up services-down services-logs
+	services-up services-down services-logs \
+	validate flow-smoke
 
 # Docker image names
 IMAGE_SIGNALING ?= switchboard-signaling
@@ -116,6 +117,17 @@ proto:
 		--go-grpc_out=. --go-grpc_opt=module=github.com/sebas/switchboard \
 		api/proto/rtpmanager/v1/rtpmanager.proto
 	@echo "Generated pkg/rtpmanager/v1/*.pb.go"
+
+# Validate tenant configuration without starting the server. Runs the same
+# checks the loader does, so "validate passes but the server will not start" is
+# impossible; it just reports every problem instead of the first.
+validate:
+	@go run ./cmd/signaling validate --routing-path resources/tenants --policy-config resources/config/policy.json
+
+# Walk a flow against a fake call. Set DIALED and optionally DIGITS:
+#   make flow-smoke DIALED=700 DIGITS=2
+flow-smoke:
+	@go run ./cmd/flow-smoke --dialed "$(DIALED)" --digits "$(DIGITS)"
 
 # Clean
 clean:

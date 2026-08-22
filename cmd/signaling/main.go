@@ -15,9 +15,16 @@ import (
 	"github.com/sebas/switchboard/internal/logger"
 	"github.com/sebas/switchboard/internal/signaling/app"
 	"github.com/sebas/switchboard/internal/signaling/config"
+	"github.com/sebas/switchboard/internal/signaling/validate"
 )
 
 func main() {
+	// Subcommands are dispatched before flag parsing, because the global flag
+	// set belongs to the server and a subcommand needs its own.
+	if len(os.Args) > 1 && os.Args[1] == "validate" {
+		os.Exit(validate.Run(os.Args[2:], os.Stdout))
+	}
+
 	// Load configuration. A bad value is reported here, before the banner prints
 	// values it could not resolve.
 	cfg, err := config.Load()
