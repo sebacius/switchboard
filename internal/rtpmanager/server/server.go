@@ -97,6 +97,7 @@ func (s *Server) CreateSession(ctx context.Context, req *rtpv1.CreateSessionRequ
 		req.RemoteAddr,
 		int(req.RemotePort),
 		req.OfferedCodecs,
+		codecOffersFrom(req.Offered),
 	)
 	if err != nil {
 		slog.Error("[gRPC] CreateSession failed", "error", err)
@@ -108,16 +109,47 @@ func (s *Server) CreateSession(ctx context.Context, req *rtpv1.CreateSessionRequ
 		}, nil
 	}
 
+	if sess.Answer.HasDTMF() {
+		slog.Info("[gRPC] Negotiated DTMF transport",
+			"session_id", sess.ID, "telephone_event_pt", sess.Answer.TelephoneEventPT)
+	} else {
+		// Worth saying out loud: a leg without this cannot collect digits, and a
+		// silent menu is far harder to diagnose than a logged one.
+		slog.Info("[gRPC] No DTMF transport negotiated; digit collection is unavailable on this leg",
+			"session_id", sess.ID)
+	}
+
 	return &rtpv1.CreateSessionResponse{
-		SessionId:     sess.ID,
-		LocalAddr:     sess.LocalAddr,
-		LocalPort:     int32(sess.LocalPort),
-		SelectedCodec: sess.Codec,
-		SdpBody:       sdpBody,
+		SessionId:        sess.ID,
+		LocalAddr:        sess.LocalAddr,
+		LocalPort:        int32(sess.LocalPort),
+		SelectedCodec:    sess.Codec,
+		SdpBody:          sdpBody,
+		TelephoneEventPt: int32(sess.Answer.TelephoneEventPT),
 		Status: &rtpv1.SessionStatus{
 			State: rtpv1.SessionState_SESSION_STATE_CREATED,
 		},
 	}, nil
+}
+
+// codecOffersFrom converts wire offers into the session package's form.
+func codecOffersFrom(offers []*rtpv1.CodecOffer) []session.CodecOffer {
+	if len(offers) == 0 {
+		return nil
+	}
+	out := make([]session.CodecOffer, 0, len(offers))
+	for _, o := range offers {
+		if o == nil {
+			continue
+		}
+		out = append(out, session.CodecOffer{
+			PayloadType:  int(o.PayloadType),
+			EncodingName: o.EncodingName,
+			ClockRate:    int(o.ClockRate),
+			FMTP:         o.Fmtp,
+		})
+	}
+	return out
 }
 
 // DestroySession implements RTPManagerService.DestroySession

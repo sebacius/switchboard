@@ -4,12 +4,25 @@ import (
 	"context"
 )
 
+// CodecOffer is one offered format together with the rtpmap that gives it
+// meaning. A bare payload-type number is enough for a static codec such as PCMU
+// but not for a dynamic one: telephone-event may be 101 in one offer and 96 in
+// another, and only the rtpmap says which. Carrying it is what makes DTMF
+// negotiable at all.
+type CodecOffer struct {
+	PayloadType  int
+	EncodingName string // e.g. "PCMU", "telephone-event"; empty for a static type
+	ClockRate    int
+	FMTP         string // e.g. "0-15"
+}
+
 // SessionInfo contains parameters for creating a media session
 type SessionInfo struct {
 	CallID        string   // SIP Call-ID for correlation
 	RemoteAddr    string   // Client IP address from SDP
 	RemotePort    int      // Client RTP port from SDP
 	OfferedCodecs []string // Payload types offered by client
+	Offered       []CodecOffer
 }
 
 // SessionResult contains the result of session creation
@@ -19,6 +32,9 @@ type SessionResult struct {
 	LocalPort     int    // Port for SDP
 	SDPBody       []byte // Complete SDP answer
 	SelectedCodec string // Negotiated codec
+	// TelephoneEventPT is the negotiated RFC 4733 payload type, or 0 when the
+	// offer carried none. Zero means this leg has no DTMF transport.
+	TelephoneEventPT int
 }
 
 // PlayRequest contains audio playback parameters

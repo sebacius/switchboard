@@ -61,13 +61,13 @@
 
 ## 8. SDP: carry rtpmap and negotiate telephone-event
 
-- [ ] 8.1 `extractSDPInfo` (`routing/invite.go:326-361`) walks `mediaDesc.Attributes` for `rtpmap`/`fmtp`, joins with `MediaName.Formats`, and falls back to the static payload-type table for formats with no rtpmap
-- [ ] 8.2 Add `CodecOffer` to `CreateSessionRequest`, `telephone_event_pt` to `CreateSessionResponse`, and answered offers to `UpdateSessionRemoteRequest`; additive only, no renumbering. Run `make proto`
-- [ ] 8.3 Collapse the two copies of `if codec == "0"` (`session/manager.go:79-89`, `:196-207`) into one `negotiate(offer) (AnswerSpec, error)`; echo **the offerer's** telephone-event payload type, never a hardcoded 101
-- [ ] 8.4 An offer without telephone-event yields an answer without it
-- [ ] 8.5 `sdp.BuildAnswer` emits two formats; `builder.go:35`'s single-element `formats` is the only blocker — the rtpmap and fmtp code at `:96,113-121` already works
-- [ ] 8.6 Replace `Session.Codec string` with `AudioPT` + `TelephoneEventPT`
-- [ ] 8.7 Tests: a dynamic PT other than 101 is echoed; an offer without telephone-event is answered without it
+- [x] 8.1 `extractSDPInfo` (`routing/invite.go:326-361`) walks `mediaDesc.Attributes` for `rtpmap`/`fmtp`, joins with `MediaName.Formats`, and falls back to the static payload-type table for formats with no rtpmap
+- [x] 8.2 Add `CodecOffer` to `CreateSessionRequest`, `telephone_event_pt` to `CreateSessionResponse`, and answered offers to `UpdateSessionRemoteRequest`; additive only, no renumbering. Run `make proto`
+- [x] 8.3 Collapse the two copies of `if codec == "0"` (`session/manager.go:79-89`, `:196-207`) into one `negotiate(offer) (AnswerSpec, error)`; echo **the offerer's** telephone-event payload type, never a hardcoded 101
+- [x] 8.4 An offer without telephone-event yields an answer without it
+- [x] 8.5 `sdp.BuildAnswer` emits two formats; `builder.go:35`'s single-element `formats` is the only blocker — the rtpmap and fmtp code at `:96,113-121` already works
+- [x] 8.6 Replace `Session.Codec string` with `AudioPT` + `TelephoneEventPT`
+- [x] 8.7 Tests: a dynamic PT other than 101 is echoed; an offer without telephone-event is answered without it
 
 ## 9. DTMF detection and collection
 

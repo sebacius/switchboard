@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -150,7 +151,7 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	}
 
 	// Extract SDP info from INVITE
-	clientAddr, clientPort, offeredCodecs, err := h.extractSDPInfo(req)
+	clientAddr, clientPort, offeredCodecs, codecOffers, err := h.extractSDPInfo(req)
 	if err != nil {
 		slog.Error("Failed to extract SDP info", "error", err)
 		notAcceptable := sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable - invalid SDP", nil)
@@ -166,6 +167,7 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 		RemoteAddr:    clientAddr,
 		RemotePort:    clientPort,
 		OfferedCodecs: offeredCodecs,
+		Offered:       codecOffers,
 	})
 	if err != nil {
 		slog.Error("Failed to create media session", "error", err)
@@ -320,30 +322,38 @@ func fromHost(req *sip.Request) string {
 	return from.Address.Host
 }
 
-// extractSDPInfo parses SDP to get client endpoint and offered codecs
-func (h *InviteHandler) extractSDPInfo(req *sip.Request) (clientAddr string, clientPort int, codecs []string, err error) {
+// extractSDPInfo parses SDP to get the client endpoint and the full codec offer.
+//
+// The rtpmap attributes matter as much as the m-line formats. A bare payload
+// type identifies a static codec, but telephone-event is DYNAMIC: real endpoints
+// offer it anywhere in 96-127, so discarding a=rtpmap makes the peer's DTMF
+// payload type unknowable and RFC 4733 impossible. Assuming 101 works in a lab
+// and fails in the field.
+func (h *InviteHandler) extractSDPInfo(req *sip.Request) (clientAddr string, clientPort int, codecs []string, offers []mediaclient.CodecOffer, err error) {
 	callID := req.CallID()
 
 	if req.Body() == nil {
-		return "", 0, nil, fmt.Errorf("no SDP body in INVITE")
+		return "", 0, nil, nil, fmt.Errorf("no SDP body in INVITE")
 	}
 
 	// Parse SDP
 	sdpObj := &psdp.SessionDescription{}
 	if err := sdpObj.Unmarshal(req.Body()); err != nil {
-		return "", 0, nil, fmt.Errorf("failed to parse SDP: %w", err)
+		return "", 0, nil, nil, fmt.Errorf("failed to parse SDP: %w", err)
 	}
 
 	if len(sdpObj.MediaDescriptions) == 0 {
-		return "", 0, nil, fmt.Errorf("no media descriptions in SDP")
+		return "", 0, nil, nil, fmt.Errorf("no media descriptions in SDP")
 	}
 
 	// Get first media (audio)
 	mediaDesc := sdpObj.MediaDescriptions[0]
 	clientPort = mediaDesc.MediaName.Port.Value
 	codecs = mediaDesc.MediaName.Formats
+	offers = codecOffersFrom(mediaDesc)
 
-	slog.Info("[SDP] Parsed media", "callID", callID, "media", mediaDesc.MediaName.Media, "port", clientPort, "codecs", codecs)
+	slog.Info("[SDP] Parsed media", "callID", callID, "media", mediaDesc.MediaName.Media,
+		"port", clientPort, "codecs", codecs, "offers", len(offers))
 
 	// Get client address from SDP connection information
 	if mediaDesc.ConnectionInformation != nil && mediaDesc.ConnectionInformation.Address != nil {
@@ -353,10 +363,76 @@ func (h *InviteHandler) extractSDPInfo(req *sip.Request) (clientAddr string, cli
 	}
 
 	if clientAddr == "" {
-		return "", 0, nil, fmt.Errorf("no client address in SDP")
+		return "", 0, nil, nil, fmt.Errorf("no client address in SDP")
 	}
 
-	return clientAddr, clientPort, codecs, nil
+	return clientAddr, clientPort, codecs, offers, nil
+}
+
+// codecOffersFrom joins an m-line's formats with the a=rtpmap and a=fmtp
+// attributes that describe them. A format with no rtpmap keeps an empty encoding
+// name: for a static payload type the number itself defines the codec, so the
+// far side needs nothing more.
+func codecOffersFrom(media *psdp.MediaDescription) []mediaclient.CodecOffer {
+	rtpmaps := map[int]mediaclient.CodecOffer{}
+	fmtps := map[int]string{}
+
+	for _, attr := range media.Attributes {
+		switch attr.Key {
+		case "rtpmap":
+			// "101 telephone-event/8000"
+			pt, rest, ok := splitAttrPayload(attr.Value)
+			if !ok {
+				continue
+			}
+			name, rate := rest, 0
+			if slash := strings.Index(rest, "/"); slash >= 0 {
+				name = rest[:slash]
+				// The clock rate may be followed by "/channels".
+				rateStr := rest[slash+1:]
+				if s := strings.Index(rateStr, "/"); s >= 0 {
+					rateStr = rateStr[:s]
+				}
+				rate, _ = strconv.Atoi(rateStr)
+			}
+			rtpmaps[pt] = mediaclient.CodecOffer{PayloadType: pt, EncodingName: name, ClockRate: rate}
+
+		case "fmtp":
+			// "101 0-15"
+			pt, rest, ok := splitAttrPayload(attr.Value)
+			if !ok {
+				continue
+			}
+			fmtps[pt] = rest
+		}
+	}
+
+	offers := make([]mediaclient.CodecOffer, 0, len(media.MediaName.Formats))
+	for _, format := range media.MediaName.Formats {
+		pt, err := strconv.Atoi(format)
+		if err != nil {
+			continue
+		}
+		offer := rtpmaps[pt]
+		offer.PayloadType = pt
+		offer.FMTP = fmtps[pt]
+		offers = append(offers, offer)
+	}
+	return offers
+}
+
+// splitAttrPayload splits "101 telephone-event/8000" into its payload type and
+// the remainder.
+func splitAttrPayload(value string) (int, string, bool) {
+	space := strings.Index(value, " ")
+	if space < 0 {
+		return 0, "", false
+	}
+	pt, err := strconv.Atoi(strings.TrimSpace(value[:space]))
+	if err != nil {
+		return 0, "", false
+	}
+	return pt, strings.TrimSpace(value[space+1:]), true
 }
 
 // classifyAndAuthorize gates an incoming INVITE by source. It returns true when

@@ -112,7 +112,9 @@ run-ui: build-ui
 # Proto generation
 proto:
 	@echo "Generating gRPC code..."
-	@protoc --go_out=. --go-grpc_out=. api/proto/rtpmanager/v1/rtpmanager.proto
+	@protoc --go_out=. --go_opt=module=github.com/sebas/switchboard \
+		--go-grpc_out=. --go-grpc_opt=module=github.com/sebas/switchboard \
+		api/proto/rtpmanager/v1/rtpmanager.proto
 	@echo "Generated pkg/rtpmanager/v1/*.pb.go"
 
 # Clean

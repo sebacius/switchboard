@@ -148,8 +148,15 @@ type CreateSessionRequest struct {
 	// Remote endpoint from client SDP
 	RemoteAddr string `protobuf:"bytes,2,opt,name=remote_addr,json=remoteAddr,proto3" json:"remote_addr,omitempty"`
 	RemotePort int32  `protobuf:"varint,3,opt,name=remote_port,json=remotePort,proto3" json:"remote_port,omitempty"`
-	// Codecs offered by remote party (payload type strings: "0", "8", etc.)
+	// Codecs offered by remote party (payload type strings: "0", "8", etc.).
+	// Superseded by `offered`, which carries what each payload type MEANS.
+	// Retained so an older signaling server still negotiates audio correctly.
 	OfferedCodecs []string `protobuf:"bytes,4,rep,name=offered_codecs,json=offeredCodecs,proto3" json:"offered_codecs,omitempty"`
+	// Full codec offer including rtpmap. Bare payload-type numbers are not enough
+	// for dynamic types: telephone-event is a dynamic payload type, so 101 in one
+	// offer and 96 in another can name the same thing, and only the rtpmap says
+	// which. Without this, DTMF cannot be negotiated at all.
+	Offered       []*CodecOffer `protobuf:"bytes,5,rep,name=offered,proto3" json:"offered,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -212,6 +219,88 @@ func (x *CreateSessionRequest) GetOfferedCodecs() []string {
 	return nil
 }
 
+func (x *CreateSessionRequest) GetOffered() []*CodecOffer {
+	if x != nil {
+		return x.Offered
+	}
+	return nil
+}
+
+// CodecOffer is one m-line format together with the rtpmap that gives it
+// meaning.
+type CodecOffer struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Payload type from the m= line.
+	PayloadType int32 `protobuf:"varint,1,opt,name=payload_type,json=payloadType,proto3" json:"payload_type,omitempty"`
+	// Encoding name from a=rtpmap, e.g. "PCMU" or "telephone-event". Empty for a
+	// static payload type carrying no rtpmap, where the number defines the codec.
+	EncodingName string `protobuf:"bytes,2,opt,name=encoding_name,json=encodingName,proto3" json:"encoding_name,omitempty"`
+	// Clock rate from a=rtpmap, e.g. 8000.
+	ClockRate int32 `protobuf:"varint,3,opt,name=clock_rate,json=clockRate,proto3" json:"clock_rate,omitempty"`
+	// Format parameters from a=fmtp, e.g. "0-15" for telephone-event.
+	Fmtp          string `protobuf:"bytes,4,opt,name=fmtp,proto3" json:"fmtp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CodecOffer) Reset() {
+	*x = CodecOffer{}
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CodecOffer) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CodecOffer) ProtoMessage() {}
+
+func (x *CodecOffer) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CodecOffer.ProtoReflect.Descriptor instead.
+func (*CodecOffer) Descriptor() ([]byte, []int) {
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *CodecOffer) GetPayloadType() int32 {
+	if x != nil {
+		return x.PayloadType
+	}
+	return 0
+}
+
+func (x *CodecOffer) GetEncodingName() string {
+	if x != nil {
+		return x.EncodingName
+	}
+	return ""
+}
+
+func (x *CodecOffer) GetClockRate() int32 {
+	if x != nil {
+		return x.ClockRate
+	}
+	return 0
+}
+
+func (x *CodecOffer) GetFmtp() string {
+	if x != nil {
+		return x.Fmtp
+	}
+	return ""
+}
+
 type CreateSessionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unique session ID for subsequent calls
@@ -224,14 +313,18 @@ type CreateSessionResponse struct {
 	// Complete SDP body for SIP response
 	SdpBody []byte `protobuf:"bytes,5,opt,name=sdp_body,json=sdpBody,proto3" json:"sdp_body,omitempty"`
 	// Status
-	Status        *SessionStatus `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Status *SessionStatus `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
+	// Negotiated telephone-event payload type, or 0 when the offer contained none.
+	// Zero means this leg has no RFC 4733 transport, so digit collection on it
+	// must report that rather than waiting for digits that cannot arrive.
+	TelephoneEventPt int32 `protobuf:"varint,7,opt,name=telephone_event_pt,json=telephoneEventPt,proto3" json:"telephone_event_pt,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CreateSessionResponse) Reset() {
 	*x = CreateSessionResponse{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[1]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -243,7 +336,7 @@ func (x *CreateSessionResponse) String() string {
 func (*CreateSessionResponse) ProtoMessage() {}
 
 func (x *CreateSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[1]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -256,7 +349,7 @@ func (x *CreateSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateSessionResponse.ProtoReflect.Descriptor instead.
 func (*CreateSessionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{1}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *CreateSessionResponse) GetSessionId() string {
@@ -301,6 +394,13 @@ func (x *CreateSessionResponse) GetStatus() *SessionStatus {
 	return nil
 }
 
+func (x *CreateSessionResponse) GetTelephoneEventPt() int32 {
+	if x != nil {
+		return x.TelephoneEventPt
+	}
+	return 0
+}
+
 type DestroySessionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -311,7 +411,7 @@ type DestroySessionRequest struct {
 
 func (x *DestroySessionRequest) Reset() {
 	*x = DestroySessionRequest{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[2]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -323,7 +423,7 @@ func (x *DestroySessionRequest) String() string {
 func (*DestroySessionRequest) ProtoMessage() {}
 
 func (x *DestroySessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[2]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -336,7 +436,7 @@ func (x *DestroySessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DestroySessionRequest.ProtoReflect.Descriptor instead.
 func (*DestroySessionRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{2}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *DestroySessionRequest) GetSessionId() string {
@@ -363,7 +463,7 @@ type DestroySessionResponse struct {
 
 func (x *DestroySessionResponse) Reset() {
 	*x = DestroySessionResponse{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[3]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -375,7 +475,7 @@ func (x *DestroySessionResponse) String() string {
 func (*DestroySessionResponse) ProtoMessage() {}
 
 func (x *DestroySessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[3]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -388,7 +488,7 @@ func (x *DestroySessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DestroySessionResponse.ProtoReflect.Descriptor instead.
 func (*DestroySessionResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{3}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *DestroySessionResponse) GetSessionId() string {
@@ -417,7 +517,7 @@ type PlayAudioRequest struct {
 
 func (x *PlayAudioRequest) Reset() {
 	*x = PlayAudioRequest{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[4]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -429,7 +529,7 @@ func (x *PlayAudioRequest) String() string {
 func (*PlayAudioRequest) ProtoMessage() {}
 
 func (x *PlayAudioRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[4]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -442,7 +542,7 @@ func (x *PlayAudioRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlayAudioRequest.ProtoReflect.Descriptor instead.
 func (*PlayAudioRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{4}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PlayAudioRequest) GetSessionId() string {
@@ -490,7 +590,7 @@ type PlaybackEvent struct {
 
 func (x *PlaybackEvent) Reset() {
 	*x = PlaybackEvent{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[5]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -502,7 +602,7 @@ func (x *PlaybackEvent) String() string {
 func (*PlaybackEvent) ProtoMessage() {}
 
 func (x *PlaybackEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[5]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -515,7 +615,7 @@ func (x *PlaybackEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaybackEvent.ProtoReflect.Descriptor instead.
 func (*PlaybackEvent) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{5}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PlaybackEvent) GetSessionId() string {
@@ -621,7 +721,7 @@ type PlaybackStarted struct {
 
 func (x *PlaybackStarted) Reset() {
 	*x = PlaybackStarted{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[6]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -633,7 +733,7 @@ func (x *PlaybackStarted) String() string {
 func (*PlaybackStarted) ProtoMessage() {}
 
 func (x *PlaybackStarted) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[6]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -646,7 +746,7 @@ func (x *PlaybackStarted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaybackStarted.ProtoReflect.Descriptor instead.
 func (*PlaybackStarted) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{6}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PlaybackStarted) GetTotalFrames() int32 {
@@ -673,7 +773,7 @@ type PlaybackProgress struct {
 
 func (x *PlaybackProgress) Reset() {
 	*x = PlaybackProgress{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[7]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -685,7 +785,7 @@ func (x *PlaybackProgress) String() string {
 func (*PlaybackProgress) ProtoMessage() {}
 
 func (x *PlaybackProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[7]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -698,7 +798,7 @@ func (x *PlaybackProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaybackProgress.ProtoReflect.Descriptor instead.
 func (*PlaybackProgress) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{7}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *PlaybackProgress) GetFramesSent() int32 {
@@ -725,7 +825,7 @@ type PlaybackCompleted struct {
 
 func (x *PlaybackCompleted) Reset() {
 	*x = PlaybackCompleted{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[8]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -737,7 +837,7 @@ func (x *PlaybackCompleted) String() string {
 func (*PlaybackCompleted) ProtoMessage() {}
 
 func (x *PlaybackCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[8]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -750,7 +850,7 @@ func (x *PlaybackCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaybackCompleted.ProtoReflect.Descriptor instead.
 func (*PlaybackCompleted) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{8}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *PlaybackCompleted) GetTotalFramesSent() int32 {
@@ -777,7 +877,7 @@ type PlaybackError struct {
 
 func (x *PlaybackError) Reset() {
 	*x = PlaybackError{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[9]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -789,7 +889,7 @@ func (x *PlaybackError) String() string {
 func (*PlaybackError) ProtoMessage() {}
 
 func (x *PlaybackError) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[9]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -802,7 +902,7 @@ func (x *PlaybackError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaybackError.ProtoReflect.Descriptor instead.
 func (*PlaybackError) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{9}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *PlaybackError) GetCode() string {
@@ -829,7 +929,7 @@ type PlaybackStopped struct {
 
 func (x *PlaybackStopped) Reset() {
 	*x = PlaybackStopped{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[10]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -841,7 +941,7 @@ func (x *PlaybackStopped) String() string {
 func (*PlaybackStopped) ProtoMessage() {}
 
 func (x *PlaybackStopped) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[10]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -854,7 +954,7 @@ func (x *PlaybackStopped) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlaybackStopped.ProtoReflect.Descriptor instead.
 func (*PlaybackStopped) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{10}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PlaybackStopped) GetReason() string {
@@ -880,7 +980,7 @@ type StopAudioRequest struct {
 
 func (x *StopAudioRequest) Reset() {
 	*x = StopAudioRequest{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[11]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -892,7 +992,7 @@ func (x *StopAudioRequest) String() string {
 func (*StopAudioRequest) ProtoMessage() {}
 
 func (x *StopAudioRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[11]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -905,7 +1005,7 @@ func (x *StopAudioRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopAudioRequest.ProtoReflect.Descriptor instead.
 func (*StopAudioRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{11}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *StopAudioRequest) GetSessionId() string {
@@ -925,7 +1025,7 @@ type StopAudioResponse struct {
 
 func (x *StopAudioResponse) Reset() {
 	*x = StopAudioResponse{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[12]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -937,7 +1037,7 @@ func (x *StopAudioResponse) String() string {
 func (*StopAudioResponse) ProtoMessage() {}
 
 func (x *StopAudioResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[12]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -950,7 +1050,7 @@ func (x *StopAudioResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopAudioResponse.ProtoReflect.Descriptor instead.
 func (*StopAudioResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{12}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *StopAudioResponse) GetSessionId() string {
@@ -978,7 +1078,7 @@ type PlayTTSRequest struct {
 
 func (x *PlayTTSRequest) Reset() {
 	*x = PlayTTSRequest{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[13]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -990,7 +1090,7 @@ func (x *PlayTTSRequest) String() string {
 func (*PlayTTSRequest) ProtoMessage() {}
 
 func (x *PlayTTSRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[13]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1003,7 +1103,7 @@ func (x *PlayTTSRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlayTTSRequest.ProtoReflect.Descriptor instead.
 func (*PlayTTSRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{13}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PlayTTSRequest) GetSessionId() string {
@@ -1035,7 +1135,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[14]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1047,7 +1147,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[14]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1060,7 +1160,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{14}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{15}
 }
 
 type HealthResponse struct {
@@ -1074,7 +1174,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[15]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1086,7 +1186,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[15]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1099,7 +1199,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{15}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *HealthResponse) GetHealthy() bool {
@@ -1133,7 +1233,7 @@ type SessionStatus struct {
 
 func (x *SessionStatus) Reset() {
 	*x = SessionStatus{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[16]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1145,7 +1245,7 @@ func (x *SessionStatus) String() string {
 func (*SessionStatus) ProtoMessage() {}
 
 func (x *SessionStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[16]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1158,7 +1258,7 @@ func (x *SessionStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionStatus.ProtoReflect.Descriptor instead.
 func (*SessionStatus) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{16}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SessionStatus) GetState() SessionState {
@@ -1176,17 +1276,21 @@ func (x *SessionStatus) GetErrorMessage() string {
 }
 
 type UpdateSessionRemoteRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	RemoteAddr    string                 `protobuf:"bytes,2,opt,name=remote_addr,json=remoteAddr,proto3" json:"remote_addr,omitempty"`
-	RemotePort    int32                  `protobuf:"varint,3,opt,name=remote_port,json=remotePort,proto3" json:"remote_port,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SessionId  string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RemoteAddr string                 `protobuf:"bytes,2,opt,name=remote_addr,json=remoteAddr,proto3" json:"remote_addr,omitempty"`
+	RemotePort int32                  `protobuf:"varint,3,opt,name=remote_port,json=remotePort,proto3" json:"remote_port,omitempty"`
+	// Codecs the callee answered with, for a B-leg created before its remote was
+	// known. Carries the same rtpmap detail as the offer so a bridged leg's
+	// telephone-event payload type is knowable.
+	Answered      []*CodecOffer `protobuf:"bytes,4,rep,name=answered,proto3" json:"answered,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateSessionRemoteRequest) Reset() {
 	*x = UpdateSessionRemoteRequest{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[17]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1198,7 +1302,7 @@ func (x *UpdateSessionRemoteRequest) String() string {
 func (*UpdateSessionRemoteRequest) ProtoMessage() {}
 
 func (x *UpdateSessionRemoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[17]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1211,7 +1315,7 @@ func (x *UpdateSessionRemoteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateSessionRemoteRequest.ProtoReflect.Descriptor instead.
 func (*UpdateSessionRemoteRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{17}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *UpdateSessionRemoteRequest) GetSessionId() string {
@@ -1235,6 +1339,13 @@ func (x *UpdateSessionRemoteRequest) GetRemotePort() int32 {
 	return 0
 }
 
+func (x *UpdateSessionRemoteRequest) GetAnswered() []*CodecOffer {
+	if x != nil {
+		return x.Answered
+	}
+	return nil
+}
+
 type UpdateSessionRemoteResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -1245,7 +1356,7 @@ type UpdateSessionRemoteResponse struct {
 
 func (x *UpdateSessionRemoteResponse) Reset() {
 	*x = UpdateSessionRemoteResponse{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[18]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1257,7 +1368,7 @@ func (x *UpdateSessionRemoteResponse) String() string {
 func (*UpdateSessionRemoteResponse) ProtoMessage() {}
 
 func (x *UpdateSessionRemoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[18]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1270,7 +1381,7 @@ func (x *UpdateSessionRemoteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateSessionRemoteResponse.ProtoReflect.Descriptor instead.
 func (*UpdateSessionRemoteResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{18}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *UpdateSessionRemoteResponse) GetSessionId() string {
@@ -1299,7 +1410,7 @@ type BridgeMediaRequest struct {
 
 func (x *BridgeMediaRequest) Reset() {
 	*x = BridgeMediaRequest{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[19]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1311,7 +1422,7 @@ func (x *BridgeMediaRequest) String() string {
 func (*BridgeMediaRequest) ProtoMessage() {}
 
 func (x *BridgeMediaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[19]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1324,7 +1435,7 @@ func (x *BridgeMediaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BridgeMediaRequest.ProtoReflect.Descriptor instead.
 func (*BridgeMediaRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{19}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *BridgeMediaRequest) GetSessionAId() string {
@@ -1352,7 +1463,7 @@ type BridgeMediaResponse struct {
 
 func (x *BridgeMediaResponse) Reset() {
 	*x = BridgeMediaResponse{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[20]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1364,7 +1475,7 @@ func (x *BridgeMediaResponse) String() string {
 func (*BridgeMediaResponse) ProtoMessage() {}
 
 func (x *BridgeMediaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[20]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1377,7 +1488,7 @@ func (x *BridgeMediaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BridgeMediaResponse.ProtoReflect.Descriptor instead.
 func (*BridgeMediaResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{20}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *BridgeMediaResponse) GetBridgeId() string {
@@ -1405,7 +1516,7 @@ type UnbridgeMediaRequest struct {
 
 func (x *UnbridgeMediaRequest) Reset() {
 	*x = UnbridgeMediaRequest{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[21]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1417,7 +1528,7 @@ func (x *UnbridgeMediaRequest) String() string {
 func (*UnbridgeMediaRequest) ProtoMessage() {}
 
 func (x *UnbridgeMediaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[21]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1430,7 +1541,7 @@ func (x *UnbridgeMediaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnbridgeMediaRequest.ProtoReflect.Descriptor instead.
 func (*UnbridgeMediaRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{21}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *UnbridgeMediaRequest) GetBridgeId() string {
@@ -1457,7 +1568,7 @@ type UnbridgeMediaResponse struct {
 
 func (x *UnbridgeMediaResponse) Reset() {
 	*x = UnbridgeMediaResponse{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[22]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1469,7 +1580,7 @@ func (x *UnbridgeMediaResponse) String() string {
 func (*UnbridgeMediaResponse) ProtoMessage() {}
 
 func (x *UnbridgeMediaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[22]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1482,7 +1593,7 @@ func (x *UnbridgeMediaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnbridgeMediaResponse.ProtoReflect.Descriptor instead.
 func (*UnbridgeMediaResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{22}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *UnbridgeMediaResponse) GetBridgeId() string {
@@ -1511,7 +1622,7 @@ type ListenRequest struct {
 
 func (x *ListenRequest) Reset() {
 	*x = ListenRequest{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[23]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1523,7 +1634,7 @@ func (x *ListenRequest) String() string {
 func (*ListenRequest) ProtoMessage() {}
 
 func (x *ListenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[23]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1536,7 +1647,7 @@ func (x *ListenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListenRequest.ProtoReflect.Descriptor instead.
 func (*ListenRequest) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{23}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ListenRequest) GetSessionId() string {
@@ -1579,7 +1690,7 @@ type ListenResponse struct {
 
 func (x *ListenResponse) Reset() {
 	*x = ListenResponse{}
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[24]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1591,7 +1702,7 @@ func (x *ListenResponse) String() string {
 func (*ListenResponse) ProtoMessage() {}
 
 func (x *ListenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[24]
+	mi := &file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1604,7 +1715,7 @@ func (x *ListenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListenResponse.ProtoReflect.Descriptor instead.
 func (*ListenResponse) Descriptor() ([]byte, []int) {
-	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{24}
+	return file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ListenResponse) GetSessionId() string {
@@ -1639,14 +1750,22 @@ var File_api_proto_rtpmanager_v1_rtpmanager_proto protoreflect.FileDescriptor
 
 const file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc = "" +
 	"\n" +
-	"(api/proto/rtpmanager/v1/rtpmanager.proto\x12\rrtpmanager.v1\"\x98\x01\n" +
+	"(api/proto/rtpmanager/v1/rtpmanager.proto\x12\rrtpmanager.v1\"\xcd\x01\n" +
 	"\x14CreateSessionRequest\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x1f\n" +
 	"\vremote_addr\x18\x02 \x01(\tR\n" +
 	"remoteAddr\x12\x1f\n" +
 	"\vremote_port\x18\x03 \x01(\x05R\n" +
 	"remotePort\x12%\n" +
-	"\x0eoffered_codecs\x18\x04 \x03(\tR\rofferedCodecs\"\xec\x01\n" +
+	"\x0eoffered_codecs\x18\x04 \x03(\tR\rofferedCodecs\x123\n" +
+	"\aoffered\x18\x05 \x03(\v2\x19.rtpmanager.v1.CodecOfferR\aoffered\"\x87\x01\n" +
+	"\n" +
+	"CodecOffer\x12!\n" +
+	"\fpayload_type\x18\x01 \x01(\x05R\vpayloadType\x12#\n" +
+	"\rencoding_name\x18\x02 \x01(\tR\fencodingName\x12\x1d\n" +
+	"\n" +
+	"clock_rate\x18\x03 \x01(\x05R\tclockRate\x12\x12\n" +
+	"\x04fmtp\x18\x04 \x01(\tR\x04fmtp\"\x9a\x02\n" +
 	"\x15CreateSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1d\n" +
@@ -1656,7 +1775,8 @@ const file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc = "" +
 	"local_port\x18\x03 \x01(\x05R\tlocalPort\x12%\n" +
 	"\x0eselected_codec\x18\x04 \x01(\tR\rselectedCodec\x12\x19\n" +
 	"\bsdp_body\x18\x05 \x01(\fR\asdpBody\x124\n" +
-	"\x06status\x18\x06 \x01(\v2\x1c.rtpmanager.v1.SessionStatusR\x06status\"n\n" +
+	"\x06status\x18\x06 \x01(\v2\x1c.rtpmanager.v1.SessionStatusR\x06status\x12,\n" +
+	"\x12telephone_event_pt\x18\a \x01(\x05R\x10telephoneEventPt\"n\n" +
 	"\x15DestroySessionRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x126\n" +
@@ -1719,14 +1839,15 @@ const file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc = "" +
 	"\x0favailable_ports\x18\x03 \x01(\x05R\x0eavailablePorts\"g\n" +
 	"\rSessionStatus\x121\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x1b.rtpmanager.v1.SessionStateR\x05state\x12#\n" +
-	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"}\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"\xb4\x01\n" +
 	"\x1aUpdateSessionRemoteRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1f\n" +
 	"\vremote_addr\x18\x02 \x01(\tR\n" +
 	"remoteAddr\x12\x1f\n" +
 	"\vremote_port\x18\x03 \x01(\x05R\n" +
-	"remotePort\"r\n" +
+	"remotePort\x125\n" +
+	"\banswered\x18\x04 \x03(\v2\x19.rtpmanager.v1.CodecOfferR\banswered\"r\n" +
 	"\x1bUpdateSessionRemoteResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x124\n" +
@@ -1799,74 +1920,77 @@ func file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_rtpmanager_v1_rtpmanager_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_api_proto_rtpmanager_v1_rtpmanager_proto_goTypes = []any{
 	(SessionState)(0),                   // 0: rtpmanager.v1.SessionState
 	(TerminateReason)(0),                // 1: rtpmanager.v1.TerminateReason
 	(*CreateSessionRequest)(nil),        // 2: rtpmanager.v1.CreateSessionRequest
-	(*CreateSessionResponse)(nil),       // 3: rtpmanager.v1.CreateSessionResponse
-	(*DestroySessionRequest)(nil),       // 4: rtpmanager.v1.DestroySessionRequest
-	(*DestroySessionResponse)(nil),      // 5: rtpmanager.v1.DestroySessionResponse
-	(*PlayAudioRequest)(nil),            // 6: rtpmanager.v1.PlayAudioRequest
-	(*PlaybackEvent)(nil),               // 7: rtpmanager.v1.PlaybackEvent
-	(*PlaybackStarted)(nil),             // 8: rtpmanager.v1.PlaybackStarted
-	(*PlaybackProgress)(nil),            // 9: rtpmanager.v1.PlaybackProgress
-	(*PlaybackCompleted)(nil),           // 10: rtpmanager.v1.PlaybackCompleted
-	(*PlaybackError)(nil),               // 11: rtpmanager.v1.PlaybackError
-	(*PlaybackStopped)(nil),             // 12: rtpmanager.v1.PlaybackStopped
-	(*StopAudioRequest)(nil),            // 13: rtpmanager.v1.StopAudioRequest
-	(*StopAudioResponse)(nil),           // 14: rtpmanager.v1.StopAudioResponse
-	(*PlayTTSRequest)(nil),              // 15: rtpmanager.v1.PlayTTSRequest
-	(*HealthRequest)(nil),               // 16: rtpmanager.v1.HealthRequest
-	(*HealthResponse)(nil),              // 17: rtpmanager.v1.HealthResponse
-	(*SessionStatus)(nil),               // 18: rtpmanager.v1.SessionStatus
-	(*UpdateSessionRemoteRequest)(nil),  // 19: rtpmanager.v1.UpdateSessionRemoteRequest
-	(*UpdateSessionRemoteResponse)(nil), // 20: rtpmanager.v1.UpdateSessionRemoteResponse
-	(*BridgeMediaRequest)(nil),          // 21: rtpmanager.v1.BridgeMediaRequest
-	(*BridgeMediaResponse)(nil),         // 22: rtpmanager.v1.BridgeMediaResponse
-	(*UnbridgeMediaRequest)(nil),        // 23: rtpmanager.v1.UnbridgeMediaRequest
-	(*UnbridgeMediaResponse)(nil),       // 24: rtpmanager.v1.UnbridgeMediaResponse
-	(*ListenRequest)(nil),               // 25: rtpmanager.v1.ListenRequest
-	(*ListenResponse)(nil),              // 26: rtpmanager.v1.ListenResponse
+	(*CodecOffer)(nil),                  // 3: rtpmanager.v1.CodecOffer
+	(*CreateSessionResponse)(nil),       // 4: rtpmanager.v1.CreateSessionResponse
+	(*DestroySessionRequest)(nil),       // 5: rtpmanager.v1.DestroySessionRequest
+	(*DestroySessionResponse)(nil),      // 6: rtpmanager.v1.DestroySessionResponse
+	(*PlayAudioRequest)(nil),            // 7: rtpmanager.v1.PlayAudioRequest
+	(*PlaybackEvent)(nil),               // 8: rtpmanager.v1.PlaybackEvent
+	(*PlaybackStarted)(nil),             // 9: rtpmanager.v1.PlaybackStarted
+	(*PlaybackProgress)(nil),            // 10: rtpmanager.v1.PlaybackProgress
+	(*PlaybackCompleted)(nil),           // 11: rtpmanager.v1.PlaybackCompleted
+	(*PlaybackError)(nil),               // 12: rtpmanager.v1.PlaybackError
+	(*PlaybackStopped)(nil),             // 13: rtpmanager.v1.PlaybackStopped
+	(*StopAudioRequest)(nil),            // 14: rtpmanager.v1.StopAudioRequest
+	(*StopAudioResponse)(nil),           // 15: rtpmanager.v1.StopAudioResponse
+	(*PlayTTSRequest)(nil),              // 16: rtpmanager.v1.PlayTTSRequest
+	(*HealthRequest)(nil),               // 17: rtpmanager.v1.HealthRequest
+	(*HealthResponse)(nil),              // 18: rtpmanager.v1.HealthResponse
+	(*SessionStatus)(nil),               // 19: rtpmanager.v1.SessionStatus
+	(*UpdateSessionRemoteRequest)(nil),  // 20: rtpmanager.v1.UpdateSessionRemoteRequest
+	(*UpdateSessionRemoteResponse)(nil), // 21: rtpmanager.v1.UpdateSessionRemoteResponse
+	(*BridgeMediaRequest)(nil),          // 22: rtpmanager.v1.BridgeMediaRequest
+	(*BridgeMediaResponse)(nil),         // 23: rtpmanager.v1.BridgeMediaResponse
+	(*UnbridgeMediaRequest)(nil),        // 24: rtpmanager.v1.UnbridgeMediaRequest
+	(*UnbridgeMediaResponse)(nil),       // 25: rtpmanager.v1.UnbridgeMediaResponse
+	(*ListenRequest)(nil),               // 26: rtpmanager.v1.ListenRequest
+	(*ListenResponse)(nil),              // 27: rtpmanager.v1.ListenResponse
 }
 var file_api_proto_rtpmanager_v1_rtpmanager_proto_depIdxs = []int32{
-	18, // 0: rtpmanager.v1.CreateSessionResponse.status:type_name -> rtpmanager.v1.SessionStatus
-	1,  // 1: rtpmanager.v1.DestroySessionRequest.reason:type_name -> rtpmanager.v1.TerminateReason
-	18, // 2: rtpmanager.v1.DestroySessionResponse.status:type_name -> rtpmanager.v1.SessionStatus
-	8,  // 3: rtpmanager.v1.PlaybackEvent.started:type_name -> rtpmanager.v1.PlaybackStarted
-	9,  // 4: rtpmanager.v1.PlaybackEvent.progress:type_name -> rtpmanager.v1.PlaybackProgress
-	10, // 5: rtpmanager.v1.PlaybackEvent.completed:type_name -> rtpmanager.v1.PlaybackCompleted
-	11, // 6: rtpmanager.v1.PlaybackEvent.error:type_name -> rtpmanager.v1.PlaybackError
-	12, // 7: rtpmanager.v1.PlaybackEvent.stopped:type_name -> rtpmanager.v1.PlaybackStopped
-	0,  // 8: rtpmanager.v1.SessionStatus.state:type_name -> rtpmanager.v1.SessionState
-	18, // 9: rtpmanager.v1.UpdateSessionRemoteResponse.status:type_name -> rtpmanager.v1.SessionStatus
-	18, // 10: rtpmanager.v1.BridgeMediaResponse.status:type_name -> rtpmanager.v1.SessionStatus
-	18, // 11: rtpmanager.v1.UnbridgeMediaResponse.status:type_name -> rtpmanager.v1.SessionStatus
-	2,  // 12: rtpmanager.v1.RTPManagerService.CreateSession:input_type -> rtpmanager.v1.CreateSessionRequest
-	4,  // 13: rtpmanager.v1.RTPManagerService.DestroySession:input_type -> rtpmanager.v1.DestroySessionRequest
-	6,  // 14: rtpmanager.v1.RTPManagerService.PlayAudio:input_type -> rtpmanager.v1.PlayAudioRequest
-	13, // 15: rtpmanager.v1.RTPManagerService.StopAudio:input_type -> rtpmanager.v1.StopAudioRequest
-	16, // 16: rtpmanager.v1.RTPManagerService.Health:input_type -> rtpmanager.v1.HealthRequest
-	19, // 17: rtpmanager.v1.RTPManagerService.UpdateSessionRemote:input_type -> rtpmanager.v1.UpdateSessionRemoteRequest
-	21, // 18: rtpmanager.v1.RTPManagerService.BridgeMedia:input_type -> rtpmanager.v1.BridgeMediaRequest
-	23, // 19: rtpmanager.v1.RTPManagerService.UnbridgeMedia:input_type -> rtpmanager.v1.UnbridgeMediaRequest
-	15, // 20: rtpmanager.v1.RTPManagerService.PlayTTS:input_type -> rtpmanager.v1.PlayTTSRequest
-	25, // 21: rtpmanager.v1.RTPManagerService.Listen:input_type -> rtpmanager.v1.ListenRequest
-	3,  // 22: rtpmanager.v1.RTPManagerService.CreateSession:output_type -> rtpmanager.v1.CreateSessionResponse
-	5,  // 23: rtpmanager.v1.RTPManagerService.DestroySession:output_type -> rtpmanager.v1.DestroySessionResponse
-	7,  // 24: rtpmanager.v1.RTPManagerService.PlayAudio:output_type -> rtpmanager.v1.PlaybackEvent
-	14, // 25: rtpmanager.v1.RTPManagerService.StopAudio:output_type -> rtpmanager.v1.StopAudioResponse
-	17, // 26: rtpmanager.v1.RTPManagerService.Health:output_type -> rtpmanager.v1.HealthResponse
-	20, // 27: rtpmanager.v1.RTPManagerService.UpdateSessionRemote:output_type -> rtpmanager.v1.UpdateSessionRemoteResponse
-	22, // 28: rtpmanager.v1.RTPManagerService.BridgeMedia:output_type -> rtpmanager.v1.BridgeMediaResponse
-	24, // 29: rtpmanager.v1.RTPManagerService.UnbridgeMedia:output_type -> rtpmanager.v1.UnbridgeMediaResponse
-	7,  // 30: rtpmanager.v1.RTPManagerService.PlayTTS:output_type -> rtpmanager.v1.PlaybackEvent
-	26, // 31: rtpmanager.v1.RTPManagerService.Listen:output_type -> rtpmanager.v1.ListenResponse
-	22, // [22:32] is the sub-list for method output_type
-	12, // [12:22] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	3,  // 0: rtpmanager.v1.CreateSessionRequest.offered:type_name -> rtpmanager.v1.CodecOffer
+	19, // 1: rtpmanager.v1.CreateSessionResponse.status:type_name -> rtpmanager.v1.SessionStatus
+	1,  // 2: rtpmanager.v1.DestroySessionRequest.reason:type_name -> rtpmanager.v1.TerminateReason
+	19, // 3: rtpmanager.v1.DestroySessionResponse.status:type_name -> rtpmanager.v1.SessionStatus
+	9,  // 4: rtpmanager.v1.PlaybackEvent.started:type_name -> rtpmanager.v1.PlaybackStarted
+	10, // 5: rtpmanager.v1.PlaybackEvent.progress:type_name -> rtpmanager.v1.PlaybackProgress
+	11, // 6: rtpmanager.v1.PlaybackEvent.completed:type_name -> rtpmanager.v1.PlaybackCompleted
+	12, // 7: rtpmanager.v1.PlaybackEvent.error:type_name -> rtpmanager.v1.PlaybackError
+	13, // 8: rtpmanager.v1.PlaybackEvent.stopped:type_name -> rtpmanager.v1.PlaybackStopped
+	0,  // 9: rtpmanager.v1.SessionStatus.state:type_name -> rtpmanager.v1.SessionState
+	3,  // 10: rtpmanager.v1.UpdateSessionRemoteRequest.answered:type_name -> rtpmanager.v1.CodecOffer
+	19, // 11: rtpmanager.v1.UpdateSessionRemoteResponse.status:type_name -> rtpmanager.v1.SessionStatus
+	19, // 12: rtpmanager.v1.BridgeMediaResponse.status:type_name -> rtpmanager.v1.SessionStatus
+	19, // 13: rtpmanager.v1.UnbridgeMediaResponse.status:type_name -> rtpmanager.v1.SessionStatus
+	2,  // 14: rtpmanager.v1.RTPManagerService.CreateSession:input_type -> rtpmanager.v1.CreateSessionRequest
+	5,  // 15: rtpmanager.v1.RTPManagerService.DestroySession:input_type -> rtpmanager.v1.DestroySessionRequest
+	7,  // 16: rtpmanager.v1.RTPManagerService.PlayAudio:input_type -> rtpmanager.v1.PlayAudioRequest
+	14, // 17: rtpmanager.v1.RTPManagerService.StopAudio:input_type -> rtpmanager.v1.StopAudioRequest
+	17, // 18: rtpmanager.v1.RTPManagerService.Health:input_type -> rtpmanager.v1.HealthRequest
+	20, // 19: rtpmanager.v1.RTPManagerService.UpdateSessionRemote:input_type -> rtpmanager.v1.UpdateSessionRemoteRequest
+	22, // 20: rtpmanager.v1.RTPManagerService.BridgeMedia:input_type -> rtpmanager.v1.BridgeMediaRequest
+	24, // 21: rtpmanager.v1.RTPManagerService.UnbridgeMedia:input_type -> rtpmanager.v1.UnbridgeMediaRequest
+	16, // 22: rtpmanager.v1.RTPManagerService.PlayTTS:input_type -> rtpmanager.v1.PlayTTSRequest
+	26, // 23: rtpmanager.v1.RTPManagerService.Listen:input_type -> rtpmanager.v1.ListenRequest
+	4,  // 24: rtpmanager.v1.RTPManagerService.CreateSession:output_type -> rtpmanager.v1.CreateSessionResponse
+	6,  // 25: rtpmanager.v1.RTPManagerService.DestroySession:output_type -> rtpmanager.v1.DestroySessionResponse
+	8,  // 26: rtpmanager.v1.RTPManagerService.PlayAudio:output_type -> rtpmanager.v1.PlaybackEvent
+	15, // 27: rtpmanager.v1.RTPManagerService.StopAudio:output_type -> rtpmanager.v1.StopAudioResponse
+	18, // 28: rtpmanager.v1.RTPManagerService.Health:output_type -> rtpmanager.v1.HealthResponse
+	21, // 29: rtpmanager.v1.RTPManagerService.UpdateSessionRemote:output_type -> rtpmanager.v1.UpdateSessionRemoteResponse
+	23, // 30: rtpmanager.v1.RTPManagerService.BridgeMedia:output_type -> rtpmanager.v1.BridgeMediaResponse
+	25, // 31: rtpmanager.v1.RTPManagerService.UnbridgeMedia:output_type -> rtpmanager.v1.UnbridgeMediaResponse
+	8,  // 32: rtpmanager.v1.RTPManagerService.PlayTTS:output_type -> rtpmanager.v1.PlaybackEvent
+	27, // 33: rtpmanager.v1.RTPManagerService.Listen:output_type -> rtpmanager.v1.ListenResponse
+	24, // [24:34] is the sub-list for method output_type
+	14, // [14:24] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_rtpmanager_v1_rtpmanager_proto_init() }
@@ -1874,7 +1998,7 @@ func file_api_proto_rtpmanager_v1_rtpmanager_proto_init() {
 	if File_api_proto_rtpmanager_v1_rtpmanager_proto != nil {
 		return
 	}
-	file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[5].OneofWrappers = []any{
+	file_api_proto_rtpmanager_v1_rtpmanager_proto_msgTypes[6].OneofWrappers = []any{
 		(*PlaybackEvent_Started)(nil),
 		(*PlaybackEvent_Progress)(nil),
 		(*PlaybackEvent_Completed)(nil),
@@ -1887,7 +2011,7 @@ func file_api_proto_rtpmanager_v1_rtpmanager_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc), len(file_api_proto_rtpmanager_v1_rtpmanager_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   25,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

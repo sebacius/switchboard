@@ -99,6 +99,7 @@ func (t *GRPCTransport) CreateSession(ctx context.Context, info SessionInfo) (*S
 		RemoteAddr:    info.RemoteAddr,
 		RemotePort:    int32(info.RemotePort),
 		OfferedCodecs: info.OfferedCodecs,
+		Offered:       toProtoOffers(info.Offered),
 	}
 
 	resp, err := t.client.CreateSession(ctx, req)
@@ -116,12 +117,30 @@ func (t *GRPCTransport) CreateSession(ctx context.Context, info SessionInfo) (*S
 	t.mu.Unlock()
 
 	return &SessionResult{
-		SessionID:     resp.SessionId,
-		LocalAddr:     resp.LocalAddr,
-		LocalPort:     int(resp.LocalPort),
-		SDPBody:       resp.SdpBody,
-		SelectedCodec: resp.SelectedCodec,
+		SessionID:        resp.SessionId,
+		LocalAddr:        resp.LocalAddr,
+		LocalPort:        int(resp.LocalPort),
+		SDPBody:          resp.SdpBody,
+		SelectedCodec:    resp.SelectedCodec,
+		TelephoneEventPT: int(resp.TelephoneEventPt),
 	}, nil
+}
+
+// toProtoOffers converts the client's codec offers onto the wire.
+func toProtoOffers(offers []CodecOffer) []*rtpv1.CodecOffer {
+	if len(offers) == 0 {
+		return nil
+	}
+	out := make([]*rtpv1.CodecOffer, 0, len(offers))
+	for _, o := range offers {
+		out = append(out, &rtpv1.CodecOffer{
+			PayloadType:  int32(o.PayloadType),
+			EncodingName: o.EncodingName,
+			ClockRate:    int32(o.ClockRate),
+			Fmtp:         o.FMTP,
+		})
+	}
+	return out
 }
 
 // DestroySession implements Transport.DestroySession
@@ -310,11 +329,12 @@ func (t *GRPCTransport) CreateSessionPendingRemote(ctx context.Context, callID s
 	t.mu.Unlock()
 
 	return &SessionResult{
-		SessionID:     resp.SessionId,
-		LocalAddr:     resp.LocalAddr,
-		LocalPort:     int(resp.LocalPort),
-		SDPBody:       resp.SdpBody,
-		SelectedCodec: resp.SelectedCodec,
+		SessionID:        resp.SessionId,
+		LocalAddr:        resp.LocalAddr,
+		LocalPort:        int(resp.LocalPort),
+		SDPBody:          resp.SdpBody,
+		SelectedCodec:    resp.SelectedCodec,
+		TelephoneEventPT: int(resp.TelephoneEventPt),
 	}, nil
 }
 

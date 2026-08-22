@@ -59,8 +59,33 @@ message CreateSessionRequest {
   string remote_addr = 2;
   int32 remote_port = 3;
 
-  // Codecs offered by remote party (payload type strings: "0", "8", etc.)
+  // Codecs offered by remote party (payload type strings: "0", "8", etc.).
+  // Superseded by `offered`, which carries what each payload type MEANS.
+  // Retained so an older signaling server still negotiates audio correctly.
   repeated string offered_codecs = 4;
+
+  // Full codec offer including rtpmap. Bare payload-type numbers are not enough
+  // for dynamic types: telephone-event is a dynamic payload type, so 101 in one
+  // offer and 96 in another can name the same thing, and only the rtpmap says
+  // which. Without this, DTMF cannot be negotiated at all.
+  repeated CodecOffer offered = 5;
+}
+
+// CodecOffer is one m-line format together with the rtpmap that gives it
+// meaning.
+message CodecOffer {
+  // Payload type from the m= line.
+  int32 payload_type = 1;
+
+  // Encoding name from a=rtpmap, e.g. "PCMU" or "telephone-event". Empty for a
+  // static payload type carrying no rtpmap, where the number defines the codec.
+  string encoding_name = 2;
+
+  // Clock rate from a=rtpmap, e.g. 8000.
+  int32 clock_rate = 3;
+
+  // Format parameters from a=fmtp, e.g. "0-15" for telephone-event.
+  string fmtp = 4;
 }
 
 message CreateSessionResponse {
@@ -79,6 +104,11 @@ message CreateSessionResponse {
 
   // Status
   SessionStatus status = 6;
+
+  // Negotiated telephone-event payload type, or 0 when the offer contained none.
+  // Zero means this leg has no RFC 4733 transport, so digit collection on it
+  // must report that rather than waiting for digits that cannot arrive.
+  int32 telephone_event_pt = 7;
 }
 
 message DestroySessionRequest {
@@ -197,6 +227,11 @@ message UpdateSessionRemoteRequest {
   string session_id = 1;
   string remote_addr = 2;
   int32 remote_port = 3;
+
+  // Codecs the callee answered with, for a B-leg created before its remote was
+  // known. Carries the same rtpmap detail as the offer so a bridged leg's
+  // telephone-event payload type is knowable.
+  repeated CodecOffer answered = 4;
 }
 
 message UpdateSessionRemoteResponse {
