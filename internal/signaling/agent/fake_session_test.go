@@ -188,3 +188,29 @@ func (f *fakeSession) GetDialog() *dialog.Dialog            { return nil }
 func (f *fakeSession) GetSessionID() string                 { return "rtp-sess" }
 func (f *fakeSession) GetTransport() mediaclient.Transport  { return nil }
 func (f *fakeSession) TerminateDialog(string, string) error { return nil }
+
+// ForwardOutcome mirrors Forward but reports the outcome instead of relaying it,
+// which is what a flow node calls.
+func (f *fakeSession) ForwardOutcome(ctx context.Context, target string, timeout time.Duration) (DialOutcome, error) {
+	err := f.Forward(ctx, target, timeout)
+	if err == nil {
+		return DialOutcome{Result: DialAnswered, Target: target}, nil
+	}
+	return classifyDialError(target, err), nil
+}
+
+// ForwardGroupOutcome mirrors ForwardGroup, reporting per-member detail.
+func (f *fakeSession) ForwardGroupOutcome(ctx context.Context, rounds [][]string, memberTimeout time.Duration) (GroupOutcome, error) {
+	err := f.ForwardGroup(ctx, rounds, memberTimeout)
+	if err == nil {
+		return GroupOutcome{DialOutcome: DialOutcome{Result: DialAnswered}}, nil
+	}
+
+	var members []DialOutcome
+	for _, round := range rounds {
+		for _, target := range round {
+			members = append(members, classifyDialError(target, err))
+		}
+	}
+	return GroupOutcome{DialOutcome: classifyDialError("group", err), Members: members}, nil
+}

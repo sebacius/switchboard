@@ -53,11 +53,11 @@
 
 ## 7. Typed dial outcomes
 
-- [ ] 7.1 `DialOutcome` / `DialResult` (`Answered|NoAnswer|Busy|Rejected|Unavailable|Failed`) and `classifyDialError` over `DialError.IsBusy()`/`IsUnavailable()`/`IsTimeout()`, `ErrDialTimeout`, `ErrNoContacts`, `ErrTargetNotFound`
-- [ ] 7.2 Add `CallSession.ForwardOutcome` — relays nothing; refactor `Forward` to be `ForwardOutcome` + `relayForwardFailure`
-- [ ] 7.3 `b2bua.DialParallel` returns per-target outcomes: collect into a mutex-guarded slice and return a copy, changing **nothing** about winner selection or loser cancellation
-- [ ] 7.4 Add `CallSession.ForwardGroupOutcome`; stop collapsing every member outcome into `ErrGroupNoAnswer`
-- [ ] 7.5 Tests: a 486 from the target yields `Busy` with no status relayed upstream; existing `Forward` behaviour is unchanged for the operator fallback
+- [x] 7.1 `DialOutcome` / `DialResult` (`Answered|NoAnswer|Busy|Rejected|Unavailable|Failed`) and `classifyDialError` over `DialError.IsBusy()`/`IsUnavailable()`/`IsTimeout()`, `ErrDialTimeout`, `ErrNoContacts`, `ErrTargetNotFound`
+- [x] 7.2 Add `CallSession.ForwardOutcome` — relays nothing; refactor `Forward` to be `ForwardOutcome` + `relayForwardFailure`
+- [x] 7.3 `b2bua.DialParallel` returns per-target outcomes: collect into a mutex-guarded slice and return a copy, changing **nothing** about winner selection or loser cancellation
+- [x] 7.4 Add `CallSession.ForwardGroupOutcome`; stop collapsing every member outcome into `ErrGroupNoAnswer`
+- [x] 7.5 Tests: a 486 from the target yields `Busy` with no status relayed upstream; existing `Forward` behaviour is unchanged for the operator fallback
 
 ## 8. SDP: carry rtpmap and negotiate telephone-event
 

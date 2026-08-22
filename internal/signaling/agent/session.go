@@ -58,12 +58,20 @@ type CallSession interface {
 	// code. Returns an error if the target could not be reached.
 	Forward(ctx context.Context, target string, timeout time.Duration) error
 
+	// ForwardOutcome is Forward without the upstream relay: it reports what
+	// happened and sends the caller nothing, so a flow decides what they hear.
+	ForwardOutcome(ctx context.Context, target string, timeout time.Duration) (DialOutcome, error)
+
 	// ForwardGroup is the pre-answer routing path for a ring group. Each round is
 	// dialed at once (first answer wins, the rest canceled) and rounds are tried
 	// in order, each bounded by memberTimeout. Unlike Forward, exhausting every
 	// round returns ErrGroupNoAnswer WITHOUT relaying a failure to the caller —
 	// the call is left pre-answer so the group's no-answer outcome can still run.
 	ForwardGroup(ctx context.Context, rounds [][]string, memberTimeout time.Duration) error
+
+	// ForwardGroupOutcome is ForwardGroup without the relay, carrying what each
+	// member did.
+	ForwardGroupOutcome(ctx context.Context, rounds [][]string, memberTimeout time.Duration) (GroupOutcome, error)
 
 	// Dial initiates an outbound call to the target and bridges media. It is the
 	// POST-ANSWER path: the supervisor already owns the media, so the B-leg is

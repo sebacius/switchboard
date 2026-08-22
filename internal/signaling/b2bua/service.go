@@ -74,6 +74,10 @@ type CallService interface {
 	// Not yet implemented - returns ErrNotImplemented.
 	DialParallel(ctx context.Context, targets []*LookupResult, timeout time.Duration, opts ...LegOption) (Leg, error)
 
+	// DialParallelWithOutcomes is DialParallel plus what each target did, so a
+	// caller can tell "everyone was busy" from "nobody answered".
+	DialParallelWithOutcomes(ctx context.Context, targets []*LookupResult, timeout time.Duration, opts ...LegOption) (Leg, []TargetOutcome, error)
+
 	// --- B-leg BYE Handling ---
 
 	// HandleIncomingBYE handles an incoming BYE request for outbound (B-leg) calls.
