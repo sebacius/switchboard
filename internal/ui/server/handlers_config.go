@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -39,7 +40,7 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 
 	activeTab := r.URL.Query().Get("tab")
 	if activeTab == "" {
-		activeTab = "settings"
+		activeTab = "tenants"
 	}
 
 	data := ConfigPageData{
@@ -62,59 +63,13 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleConfigSettingsPartial renders the settings editor partial
-func (s *Server) handleConfigSettingsPartial(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
-	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
-		return
+// fileParam reads which of a tenant's files is being edited, defaulting to the
+// routing table.
+func fileParam(r *http.Request) string {
+	if v := r.URL.Query().Get("file"); v == "flows" {
+		return "flows"
 	}
-
-	content, err := c.GetSettings(r.Context())
-	data := ConfigSettingsData{Server: c.Name()}
-	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load settings: %v", err)
-	} else {
-		data.Content = content
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderConfigSettings(w, data); err != nil {
-		slog.Error("[UI] Failed to render config settings", "error", err)
-	}
-}
-
-// handleConfigSettingsSave saves the settings.md content
-func (s *Server) handleConfigSettingsSave(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	c := s.findClient(r.URL.Query().Get("server"))
-	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid form data", http.StatusBadRequest)
-		return
-	}
-
-	content := r.FormValue("content")
-	data := ConfigSettingsData{Server: c.Name(), Content: content}
-
-	if err := c.PutSettings(r.Context(), content); err != nil {
-		data.Error = fmt.Sprintf("Failed to save settings: %v", err)
-	} else {
-		data.Success = "Settings saved successfully"
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderConfigSettings(w, data); err != nil {
-		slog.Error("[UI] Failed to render config settings", "error", err)
-	}
+	return "routing"
 }
 
 // handleConfigTenantsPartial renders the tenant list partial
@@ -136,6 +91,7 @@ func (s *Server) handleConfigTenantsPartial(w http.ResponseWriter, r *http.Reque
 				Name:     t.Name,
 				Size:     t.Size,
 				Modified: t.Modified,
+				HasFlows: t.HasFlows,
 			})
 		}
 	}
@@ -160,10 +116,11 @@ func (s *Server) handleConfigTenantEdit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	content, err := c.GetTenant(r.Context(), name)
-	data := ConfigTenantEditData{Server: c.Name(), Name: name}
+	file := fileParam(r)
+	content, err := c.GetTenantFile(r.Context(), name, file)
+	data := ConfigTenantEditData{Server: c.Name(), Name: name, File: file}
 	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load tenant: %v", err)
+		data.Error = fmt.Sprintf("Failed to load %s: %v", file, err)
 	} else {
 		data.Content = content
 	}
@@ -214,12 +171,29 @@ func (s *Server) handleConfigTenantSave(w http.ResponseWriter, r *http.Request) 
 
 	name := r.FormValue("name")
 	content := r.FormValue("content")
-	data := ConfigTenantEditData{Server: c.Name(), Name: name, Content: content}
+	file := fileParam(r)
+	if v := r.FormValue("file"); v != "" {
+		file = v
+	}
+	data := ConfigTenantEditData{Server: c.Name(), Name: name, Content: content, File: file}
 
-	if err := c.PutTenant(r.Context(), name, content); err != nil {
-		data.Error = fmt.Sprintf("Failed to save tenant: %v", err)
+	if err := c.PutTenantFile(r.Context(), name, file, content); err != nil {
+		// A refused write carries the individual problems, and showing them
+		// against their paths is the difference between fixing the flow and
+		// guessing at it.
+		var rejected *client.ConfigRejectedError
+		if errors.As(err, &rejected) {
+			data.Error = "Not saved: the configuration would not load."
+			for _, p := range rejected.Problems() {
+				data.Problems = append(data.Problems, ConfigProblemData{
+					Path: p.Path, Message: p.Message,
+				})
+			}
+		} else {
+			data.Error = fmt.Sprintf("Failed to save %s: %v", file, err)
+		}
 	} else {
-		data.Success = "Tenant saved successfully"
+		data.Success = fmt.Sprintf("Saved %s", file)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -311,6 +285,7 @@ func (s *Server) handleConfigTenantDelete(w http.ResponseWriter, r *http.Request
 				Name:     t.Name,
 				Size:     t.Size,
 				Modified: t.Modified,
+				HasFlows: t.HasFlows,
 			})
 		}
 	}

@@ -43,7 +43,7 @@ behind it. A second provider is an implementation of that interface, not a redes
   field, so a gateway serving a reasoning model folds its scratchpad into `content` as
   `<think>` tags or returns it as `reasoning_content`. Both are mapped to `Thinking`
   and never to `Content`.
-- **BREAKING (behaviour, existing path): `<think>` tags are now stripped from Ollama
+- **BREAKING (behavior, existing path): `<think>` tags are now stripped from Ollama
   content too.** The `llm-availability` change measured `qwen3:4b` writing its chain of
   thought into `content` on 4/4 trials *with `think: false`* — a live violation of the
   "Reasoning never reaches TTS" scenario for anyone running that model. One shared

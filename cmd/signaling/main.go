@@ -15,12 +15,18 @@ import (
 	"github.com/sebas/switchboard/internal/logger"
 	"github.com/sebas/switchboard/internal/signaling/app"
 	"github.com/sebas/switchboard/internal/signaling/config"
-	"github.com/sebas/switchboard/internal/signaling/llm"
+	"github.com/sebas/switchboard/internal/signaling/validate"
 )
 
 func main() {
-	// Load configuration. A bad --llm-model is reported here, before the banner
-	// prints values it could not resolve.
+	// Subcommands are dispatched before flag parsing, because the global flag
+	// set belongs to the server and a subcommand needs its own.
+	if len(os.Args) > 1 && os.Args[1] == "validate" {
+		os.Exit(validate.Run(os.Args[2:], os.Stdout))
+	}
+
+	// Load configuration. A bad value is reported here, before the banner prints
+	// values it could not resolve.
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -33,12 +39,9 @@ func main() {
 		{Label: "Listen", Value: fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)},
 		{Label: "Advertise", Value: cfg.AdvertiseAddr},
 		{Label: "RTP Manager", Value: strings.Join(cfg.RTPManagerAddrs, ", ")},
-		{Label: "LLM Provider", Value: string(cfg.LLMProvider)},
-		{Label: "LLM Server", Value: cfg.LLMServerURL},
-		{Label: "Supervisor Model", Value: cfg.LLMModel},
-		{Label: "LLM Auth", Value: llmAuthStatus(cfg.LLMProvider)},
 		{Label: "Policy", Value: cfg.PolicyPath},
 		{Label: "Tenants", Value: cfg.TenantsPath},
+		{Label: "Routing", Value: cfg.RoutingPath},
 		{Label: "Log Level", Value: cfg.LogLevel},
 	})
 
@@ -104,17 +107,4 @@ func logNetworkInterfaces() {
 			slog.Debug("Network interface", "interface", iface.Name, "ip", ip.String())
 		}
 	}
-}
-
-// llmAuthStatus reports whether a credential is available, never what it is.
-// It answers the first question anyone debugging a 401 asks, and leaks nothing:
-// not the key, not a prefix of it, not its length.
-func llmAuthStatus(p llm.Provider) string {
-	if p != llm.ProviderOpenAI {
-		return "not required"
-	}
-	if os.Getenv("OPENAI_API_KEY") != "" {
-		return "OPENAI_API_KEY set"
-	}
-	return "none (unauthenticated)"
 }

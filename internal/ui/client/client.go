@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -222,11 +223,29 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// The body carries WHY, and a refused configuration write puts the
+		// individual problems there. Discarding it would reduce "node greeting
+		// has an unwired timeout exit" to "422".
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 
 	return resp, nil
+}
+
+// HTTPError is a non-2xx response, carrying the body so a caller can read the
+// reason rather than guessing from the status.
+type HTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	if e.Body != "" {
+		return fmt.Sprintf("unexpected status %d: %s", e.StatusCode, e.Body)
+	}
+	return fmt.Sprintf("unexpected status: %d", e.StatusCode)
 }
 
 // post performs an HTTP POST request
@@ -283,8 +302,12 @@ func (c *Client) put(ctx context.Context, path string, body io.Reader) (*http.Re
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// The body carries WHY, and a refused configuration write puts the
+		// individual problems there. Discarding it would reduce "node greeting
+		// has an unwired timeout exit" to "422".
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 
 	return resp, nil
@@ -313,33 +336,6 @@ func (c *Client) postWithBody(ctx context.Context, path string, body io.Reader) 
 
 // --- Configuration Management ---
 
-// GetSettings fetches the settings.md content
-func (c *Client) GetSettings(ctx context.Context) (string, error) {
-	resp, err := c.get(ctx, "/api/v1/config/settings")
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var result types.FileContent
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode settings: %w", err)
-	}
-	return result.Content, nil
-}
-
-// PutSettings updates the settings.md content
-func (c *Client) PutSettings(ctx context.Context, content string) error {
-	body, _ := json.Marshal(types.FileContent{Content: content})
-	resp, err := c.put(ctx, "/api/v1/config/settings", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	return nil
-}
-
-// ListTenants returns all tenant markdown files
 func (c *Client) ListTenants(ctx context.Context) ([]types.TenantFile, error) {
 	resp, err := c.get(ctx, "/api/v1/config/tenants")
 	if err != nil {
@@ -355,8 +351,18 @@ func (c *Client) ListTenants(ctx context.Context) ([]types.TenantFile, error) {
 }
 
 // GetTenant fetches a tenant markdown file by name
+// GetTenantFile fetches one of a tenant's configuration files.
+func (c *Client) GetTenantFile(ctx context.Context, name, file string) (string, error) {
+	return c.getTenantFile(ctx, name, file)
+}
+
+// GetTenant fetches a tenant's routing table.
 func (c *Client) GetTenant(ctx context.Context, name string) (string, error) {
-	resp, err := c.get(ctx, "/api/v1/config/tenants/"+name)
+	return c.getTenantFile(ctx, name, "routing")
+}
+
+func (c *Client) getTenantFile(ctx context.Context, name, file string) (string, error) {
+	resp, err := c.get(ctx, "/api/v1/config/tenants/"+name+"?file="+file)
 	if err != nil {
 		return "", err
 	}
@@ -384,15 +390,49 @@ func (c *Client) CreateTenant(ctx context.Context, name, content string) error {
 }
 
 // PutTenant updates an existing tenant markdown file
+// PutTenant saves a tenant's routing table.
 func (c *Client) PutTenant(ctx context.Context, name, content string) error {
+	return c.PutTenantFile(ctx, name, "routing", content)
+}
+
+// PutTenantFile saves one of a tenant's configuration files.
+//
+// A write that would not load is refused by the server, and the refusal carries
+// the problems. Returning them as a typed error is what lets the editor show
+// which node is wrong instead of a bare "bad request".
+func (c *Client) PutTenantFile(ctx context.Context, name, file, content string) error {
 	body, _ := json.Marshal(types.FileContent{Content: content})
-	resp, err := c.put(ctx, "/api/v1/config/tenants/"+name, bytes.NewReader(body))
+	resp, err := c.put(ctx, "/api/v1/config/tenants/"+name+"?file="+file, bytes.NewReader(body))
 	if err != nil {
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnprocessableEntity {
+			var rejection types.ConfigRejection
+			if json.Unmarshal([]byte(httpErr.Body), &rejection) == nil && len(rejection.Problems) > 0 {
+				return &ConfigRejectedError{Rejection: rejection}
+			}
+		}
 		return err
 	}
 	resp.Body.Close()
 	return nil
 }
+
+// ConfigRejectedError reports a configuration write refused by validation.
+type ConfigRejectedError struct {
+	Rejection types.ConfigRejection
+}
+
+// Error summarizes the problems.
+func (e *ConfigRejectedError) Error() string {
+	if len(e.Rejection.Problems) == 1 {
+		p := e.Rejection.Problems[0]
+		return p.Path + ": " + p.Message
+	}
+	return fmt.Sprintf("%d problems, not saved", len(e.Rejection.Problems))
+}
+
+// Problems returns the individual findings.
+func (e *ConfigRejectedError) Problems() []types.ConfigProblem { return e.Rejection.Problems }
 
 // DeleteTenant deletes a tenant markdown file
 func (c *Client) DeleteTenant(ctx context.Context, name string) error {

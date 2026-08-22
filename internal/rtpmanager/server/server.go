@@ -97,6 +97,7 @@ func (s *Server) CreateSession(ctx context.Context, req *rtpv1.CreateSessionRequ
 		req.RemoteAddr,
 		int(req.RemotePort),
 		req.OfferedCodecs,
+		codecOffersFrom(req.Offered),
 	)
 	if err != nil {
 		slog.Error("[gRPC] CreateSession failed", "error", err)
@@ -108,16 +109,47 @@ func (s *Server) CreateSession(ctx context.Context, req *rtpv1.CreateSessionRequ
 		}, nil
 	}
 
+	if sess.Answer.HasDTMF() {
+		slog.Info("[gRPC] Negotiated DTMF transport",
+			"session_id", sess.ID, "telephone_event_pt", sess.Answer.TelephoneEventPT)
+	} else {
+		// Worth saying out loud: a leg without this cannot collect digits, and a
+		// silent menu is far harder to diagnose than a logged one.
+		slog.Info("[gRPC] No DTMF transport negotiated; digit collection is unavailable on this leg",
+			"session_id", sess.ID)
+	}
+
 	return &rtpv1.CreateSessionResponse{
-		SessionId:     sess.ID,
-		LocalAddr:     sess.LocalAddr,
-		LocalPort:     int32(sess.LocalPort),
-		SelectedCodec: sess.Codec,
-		SdpBody:       sdpBody,
+		SessionId:        sess.ID,
+		LocalAddr:        sess.LocalAddr,
+		LocalPort:        int32(sess.LocalPort),
+		SelectedCodec:    sess.Codec,
+		SdpBody:          sdpBody,
+		TelephoneEventPt: int32(sess.Answer.TelephoneEventPT),
 		Status: &rtpv1.SessionStatus{
 			State: rtpv1.SessionState_SESSION_STATE_CREATED,
 		},
 	}, nil
+}
+
+// codecOffersFrom converts wire offers into the session package's form.
+func codecOffersFrom(offers []*rtpv1.CodecOffer) []session.CodecOffer {
+	if len(offers) == 0 {
+		return nil
+	}
+	out := make([]session.CodecOffer, 0, len(offers))
+	for _, o := range offers {
+		if o == nil {
+			continue
+		}
+		out = append(out, session.CodecOffer{
+			PayloadType:  int(o.PayloadType),
+			EncodingName: o.EncodingName,
+			ClockRate:    int(o.ClockRate),
+			FMTP:         o.Fmtp,
+		})
+	}
+	return out
 }
 
 // DestroySession implements RTPManagerService.DestroySession
@@ -451,4 +483,92 @@ func (s *Server) Close() error {
 	s.bridgeMgr.CloseAll()
 	s.sessionMgr.CloseAll()
 	return nil
+}
+
+// CollectDigits implements RTPManagerService.CollectDigits.
+func (s *Server) CollectDigits(ctx context.Context, req *rtpv1.CollectDigitsRequest) (*rtpv1.CollectDigitsResponse, error) {
+	slog.Info("[gRPC] CollectDigits",
+		"session_id", req.SessionId,
+		"max_digits", req.MaxDigits,
+		"terminators", req.Terminators,
+		"interruptible", req.Interruptible,
+	)
+
+	collectReq := session.CollectRequest{
+		Interruptible:       req.Interruptible,
+		MaxDigits:           int(req.MaxDigits),
+		Terminators:         req.Terminators,
+		FirstDigitTimeoutMs: int(req.FirstDigitTimeoutMs),
+		InterDigitTimeoutMs: int(req.InterDigitTimeoutMs),
+		OverallTimeoutMs:    int(req.OverallTimeoutMs),
+		FlushBuffer:         req.FlushBuffer,
+	}
+
+	// A spoken prompt is synthesized here, before the socket is taken, so the
+	// TTS round trip does not eat into the caller's first-digit budget.
+	if p := req.Prompt; p != nil {
+		switch {
+		case p.Text != "":
+			if s.ttsClient == nil {
+				return collectError(req.SessionId, "TTS server not configured"), nil
+			}
+			audio, err := s.ttsClient.Synthesize(ctx, p.Text, p.Voice)
+			if err != nil {
+				slog.Error("[gRPC] CollectDigits TTS failed", "error", err)
+				return collectError(req.SessionId, err.Error()), nil
+			}
+			collectReq.PromptAudio = audio
+		case len(p.Files) > 0 || p.File != "":
+			files := p.Files
+			if len(files) == 0 {
+				files = []string{p.File}
+			}
+			collectReq.Prompt = &media.PlayRequest{Files: files}
+		}
+	}
+
+	result, err := s.sessionMgr.CollectDigits(ctx, req.SessionId, collectReq)
+	if err != nil {
+		slog.Error("[gRPC] CollectDigits failed", "error", err)
+		return collectError(req.SessionId, err.Error()), nil
+	}
+
+	return &rtpv1.CollectDigitsResponse{
+		SessionId:         req.SessionId,
+		Digits:            result.Digits,
+		Reason:            collectReasonToProto(result.Reason),
+		PromptInterrupted: result.PromptInterrupted,
+	}, nil
+}
+
+func collectError(sessionID, msg string) *rtpv1.CollectDigitsResponse {
+	return &rtpv1.CollectDigitsResponse{
+		SessionId:    sessionID,
+		Reason:       rtpv1.CollectReason_COLLECT_REASON_ERROR,
+		ErrorMessage: msg,
+	}
+}
+
+// collectReasonToProto maps the session package's reason onto the wire enum.
+func collectReasonToProto(r session.CollectReason) rtpv1.CollectReason {
+	switch r {
+	case session.CollectReasonTerminator:
+		return rtpv1.CollectReason_COLLECT_REASON_TERMINATOR
+	case session.CollectReasonMaxDigits:
+		return rtpv1.CollectReason_COLLECT_REASON_MAX_DIGITS
+	case session.CollectReasonInterDigitTimeout:
+		return rtpv1.CollectReason_COLLECT_REASON_INTER_DIGIT_TIMEOUT
+	case session.CollectReasonFirstDigitTimeout:
+		return rtpv1.CollectReason_COLLECT_REASON_FIRST_DIGIT_TIMEOUT
+	case session.CollectReasonNoInput:
+		return rtpv1.CollectReason_COLLECT_REASON_NO_INPUT
+	case session.CollectReasonCanceled:
+		return rtpv1.CollectReason_COLLECT_REASON_CANCELED
+	case session.CollectReasonNoDTMFTransport:
+		return rtpv1.CollectReason_COLLECT_REASON_NO_DTMF_TRANSPORT
+	case session.CollectReasonError:
+		return rtpv1.CollectReason_COLLECT_REASON_ERROR
+	default:
+		return rtpv1.CollectReason_COLLECT_REASON_UNSPECIFIED
+	}
 }

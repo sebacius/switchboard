@@ -3,6 +3,7 @@ package agent
 import (
 	"testing"
 
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/parking"
 )
 
@@ -27,31 +28,31 @@ func (p resolverParking) Get(slotID string) (*parking.ParkSlot, bool) {
 }
 
 // testTable is the routing table these tests resolve against.
-func testTable() *RoutingTable {
-	return &RoutingTable{
+func testTable() *dialplan.RoutingTable {
+	return &dialplan.RoutingTable{
 		Operator:        "user/150",
 		RetrievalPrefix: "*",
-		Extensions: map[string]string{
+		Extensions: dialplan.Entries(map[string]string{
 			"105": "user/105",
 			"106": "user/106", // present in the table, never registered
 			"100": "assistant",
 			"130": "group/claims",
-		},
+		}),
 		SymbolicTargets: map[string]string{"claims": "group/claims"},
-		DIDs: map[string]string{
+		DIDs: dialplan.Entries(map[string]string{
 			"+15558001200": "assistant",
 			"+15558001250": "group/claims",
 			"+15558001210": "user/105",
-		},
-		Groups: map[string]RingGroup{
-			"claims": {Strategy: StrategySequential, Members: []string{"user/105"}},
+		}),
+		Groups: map[string]dialplan.RingGroup{
+			"claims": {Strategy: dialplan.StrategySequential, Members: []string{"user/105"}},
 		},
 	}
 }
 
 func testResolver(park resolverParking) *Resolver {
 	return NewResolver(
-		StaticRouting{"acme": testTable()},
+		dialplan.StaticRouting{"acme": testTable()},
 		resolverDirectory{"105": true, "150": true},
 		park,
 		quietLogger(),
@@ -101,7 +102,7 @@ func TestResolveUnknownTargetHandsOff(t *testing.T) {
 // A tenant with no routing table resolves nothing — the correct degradation, and
 // the reason a fresh deployment still works before anyone writes one.
 func TestResolveTenantWithoutTableHandsOff(t *testing.T) {
-	r := NewResolver(StaticRouting{}, resolverDirectory{"105": true}, nil, quietLogger())
+	r := NewResolver(dialplan.StaticRouting{}, resolverDirectory{"105": true}, nil, quietLogger())
 	if _, ok := r.Resolve(internalCall("105")); ok {
 		t.Fatal("a tenant with no routing table must resolve nothing")
 	}
@@ -128,7 +129,7 @@ func TestResolveExtensionToRingGroup(t *testing.T) {
 		t.Fatalf("expected the claims group, got %+v", dest)
 	}
 	// Defaults are applied at resolution, not left for the ring path to guess.
-	if dest.Group.MemberTimeoutMs != DefaultMemberTimeoutMs || dest.Group.NoAnswer != NoAnswerSupervisor {
+	if dest.Group.MemberTimeoutMs != dialplan.DefaultMemberTimeoutMs {
 		t.Fatalf("group defaults were not applied: %+v", dest.Group)
 	}
 }
@@ -204,5 +205,35 @@ func TestResolveTablesAreDirectionScoped(t *testing.T) {
 	}
 	if _, ok := r.Resolve(internalCall("+15558001210")); ok {
 		t.Fatal("an internal call must not resolve through the DID table")
+	}
+}
+
+// Patterns are the point of the digit map: extension ranges cannot be
+// enumerated. This exercises the resolver end to end rather than the matcher in
+// isolation, so a table that compiles but is never consulted fails here.
+func TestResolvePatternedExtension(t *testing.T) {
+	routing := dialplan.StaticRouting{"acme": {
+		Extensions: dialplan.Entries(map[string]string{
+			"1XX": "user/150", // any 1xx extension reaches the same desk
+			"110": "user/110", // except 110, which is more specific
+		}),
+	}}
+	r := NewResolver(routing, resolverDirectory{"110": true, "150": true}, nil, quietLogger())
+
+	// The literal wins over the pattern that also matches it.
+	dest, ok := r.Resolve(internalCall("110"))
+	if !ok || dest.Target != "user/110" {
+		t.Fatalf("110 should resolve to the literal user/110, got %+v (%v)", dest, ok)
+	}
+
+	// Anything else in the range falls to the pattern.
+	dest, ok = r.Resolve(internalCall("137"))
+	if !ok || dest.Target != "user/150" {
+		t.Fatalf("137 should match the 1XX pattern, got %+v (%v)", dest, ok)
+	}
+
+	// Outside the range nothing resolves.
+	if _, ok := r.Resolve(internalCall("237")); ok {
+		t.Fatal("237 is outside the 1XX range and must not resolve")
 	}
 }

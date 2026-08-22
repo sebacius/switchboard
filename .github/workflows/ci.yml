@@ -29,6 +29,12 @@ jobs:
           go build -o /dev/null ./cmd/signaling/
           go build -o /dev/null ./cmd/rtpmanager/
           go build -o /dev/null ./cmd/ui/
+          go build -o /dev/null ./cmd/flow-smoke/
+
+      # The shipped configuration is part of the product: a flow that does not
+      # load is a deployment that cannot route the calls it promises to.
+      - name: Validate shipped configuration
+        run: go run ./cmd/signaling validate --routing-path resources/tenants --policy-config resources/config/policy.json
 
       - name: Check go mod tidy
         run: |

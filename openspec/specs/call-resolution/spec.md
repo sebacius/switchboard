@@ -89,7 +89,7 @@ The system SHALL resolve a named ring group to its member extensions and ring th
 according to the group's configured strategy. Supported strategies SHALL be `sequential`
 (members tried in configured order) and `round-robin` (starting position advances per
 call across the group's members). The first member to answer SHALL win, and remaining
-legs SHALL be cancelled.
+legs SHALL be canceled.
 
 Each group SHALL carry a per-member ring timeout and a no-answer outcome. When no member
 answers within the group's budget, the call SHALL follow the group's configured
@@ -110,7 +110,7 @@ with the conversation intact.
 #### Scenario: First answer wins
 
 - **WHEN** a group member answers while other legs are still ringing
-- **THEN** the answering leg is bridged to the caller and every other leg is cancelled
+- **THEN** the answering leg is bridged to the caller and every other leg is canceled
 
 #### Scenario: No member answers
 

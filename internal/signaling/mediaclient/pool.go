@@ -714,3 +714,14 @@ type MemberStats struct {
 	DrainState   DrainState
 	SessionCount int
 }
+
+// CollectDigits implements Transport.CollectDigits, routing by session affinity
+// so the collection reaches the manager that owns the socket.
+func (p *Pool) CollectDigits(ctx context.Context, req CollectRequest) (*CollectResult, error) {
+	member, ok := p.getMemberForSession(req.SessionID)
+	if !ok {
+		return nil, fmt.Errorf("no RTP manager found for session %s", req.SessionID)
+	}
+
+	return member.transport.CollectDigits(ctx, req)
+}

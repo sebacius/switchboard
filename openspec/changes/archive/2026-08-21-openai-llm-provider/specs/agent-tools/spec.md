@@ -75,7 +75,7 @@ handles them instead of the caller hearing an unavailability message.
 
 When an assistant turn advertises tool calls, the conversation SHALL contain a result for
 every one of them before the next turn is requested, including calls that were never
-executed because the loop parked or the turn was cancelled.
+executed because the loop parked or the turn was canceled.
 
 An unexecuted call SHALL be answered with a result that says so, rather than being left
 unanswered. A conversation that advertises a call with no matching result is rejected by
@@ -89,9 +89,9 @@ turn the rejection surfaces on a later turn rather than the one that created it.
 - **THEN** the conversation carries a result for every advertised call, and the call
   survives the next turn
 
-#### Scenario: A cancelled turn leaves no unanswered call
+#### Scenario: A canceled turn leaves no unanswered call
 
-- **WHEN** a turn is cancelled part-way through dispatching its tool calls
+- **WHEN** a turn is canceled part-way through dispatching its tool calls
 - **THEN** the calls that did not run are recorded as not executed
 
 ### Requirement: Reasoning is filtered out of content on every provider

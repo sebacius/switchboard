@@ -2,6 +2,7 @@ package sdp
 
 import (
 	"log/slog"
+	"strconv"
 
 	"github.com/pion/sdp/v3"
 )
@@ -12,27 +13,54 @@ type RTPEndpointInfo struct {
 	ServerPort int
 }
 
-// BuildResponseSDP creates an SDP response for media sessions with the selected codec
+// telephoneEventRTPMap is the rtpmap value identifying RFC 4733 DTMF.
+const telephoneEventRTPMap = "telephone-event/8000"
+
+// BuildResponseSDP creates an SDP answer carrying a single codec.
+//
+// Deprecated: use BuildAnswerSDP, which can carry telephone-event alongside the
+// audio codec. Kept so a caller that only knows about audio still works.
 func BuildResponseSDP(serverAddr string, serverPort int, selectedCodec string) []byte {
+	pt, err := strconv.Atoi(selectedCodec)
+	if err != nil {
+		pt = 0
+	}
+	return BuildAnswerSDP(serverAddr, serverPort, pt, 0, "")
+}
+
+// BuildAnswerSDP creates an SDP answer for a negotiated audio codec and,
+// optionally, a telephone-event payload type.
+//
+// The telephone-event payload type is passed EXPLICITLY rather than looked up.
+// Payload types 96-127 are dynamic, so no static table can say what one means:
+// the same 96 is opus in one session and telephone-event in another. Guessing
+// from a table is how an answer ends up advertising opus for a DTMF format —
+// the same root cause as discarding a=rtpmap from the offer.
+//
+// telephoneEventPT of 0 means none was negotiated. telephoneEventFMTP echoes the
+// offerer's fmtp; empty falls back to the conventional "0-15".
+func BuildAnswerSDP(serverAddr string, serverPort, audioPT, telephoneEventPT int, telephoneEventFMTP string) []byte {
 	rtpInfo := &RTPEndpointInfo{
 		ServerAddr: serverAddr,
 		ServerPort: serverPort,
 	}
 
-	return createResponseSDP(rtpInfo, selectedCodec)
+	return createResponseSDP(rtpInfo, audioPT, telephoneEventPT, telephoneEventFMTP)
 }
 
-// createResponseSDP creates an SDP response with the selected codec
-func createResponseSDP(rtpInfo *RTPEndpointInfo, selectedCodec string) []byte {
+// createResponseSDP creates an SDP answer.
+func createResponseSDP(rtpInfo *RTPEndpointInfo, audioPT, telephoneEventPT int, telephoneEventFMTP string) []byte {
 	if rtpInfo == nil {
 		return nil
 	}
 
-	// Use the selected codec (default to PCMU if empty)
-	if selectedCodec == "" {
-		selectedCodec = "0"
+	if audioPT < 0 {
+		audioPT = 0
 	}
-	formats := []string{selectedCodec}
+	formats := []string{strconv.Itoa(audioPT)}
+	if telephoneEventPT > 0 {
+		formats = append(formats, strconv.Itoa(telephoneEventPT))
+	}
 
 	// Create a basic SDP response
 	sessionDesc := &sdp.SessionDescription{
@@ -68,7 +96,7 @@ func createResponseSDP(rtpInfo *RTPEndpointInfo, selectedCodec string) []byte {
 					Protos:  []string{"RTP", "AVP"},
 					Formats: formats,
 				},
-				Attributes: getResponseAttributes(formats),
+				Attributes: getResponseAttributes(audioPT, telephoneEventPT, telephoneEventFMTP),
 			},
 		},
 	}
@@ -83,60 +111,65 @@ func createResponseSDP(rtpInfo *RTPEndpointInfo, selectedCodec string) []byte {
 	return sdpBytes
 }
 
-// GetCodecAttributes returns SDP attributes for codec rtpmap and fmtp
+// GetCodecAttributes returns rtpmap attributes for static payload types.
+//
+// It is only correct for STATIC types (0-95), where the number defines the
+// codec. A dynamic type means whatever the session negotiated, so use
+// codecAttributes, which is told rather than guessing.
 func GetCodecAttributes(formats []string) []sdp.Attribute {
-	// Map of standard codec payload types to rtpmap strings
-	rtpmapMap := map[string]string{
-		"0":   "PCMU/8000",
-		"8":   "PCMA/8000",
-		"18":  "G729/8000",
-		"96":  "opus/48000/2",
-		"97":  "iLBC/8000",
-		"98":  "speex/8000",
-		"101": "telephone-event/8000",
-		"99":  "G723/8000",
-		"100": "G726-32/8000",
+	attrs := []sdp.Attribute{}
+	for _, format := range formats {
+		if rtpmap, ok := staticRTPMap[format]; ok {
+			attrs = append(attrs, sdp.Attribute{Key: "rtpmap", Value: format + " " + rtpmap})
+		}
 	}
+	return append(attrs,
+		sdp.Attribute{Key: "ptime", Value: "20"},
+		sdp.Attribute{Key: "sendrecv"},
+	)
+}
 
+// staticRTPMap maps STATIC payload types to their rtpmap. Dynamic types
+// (96-127) are deliberately absent: they have no fixed meaning, and a table
+// claiming otherwise is how an answer advertises opus for a DTMF format.
+var staticRTPMap = map[string]string{
+	"0":  "PCMU/8000",
+	"8":  "PCMA/8000",
+	"18": "G729/8000",
+	"9":  "G722/8000",
+	"4":  "G723/8000",
+}
+
+// codecAttributes builds the rtpmap/fmtp lines for a negotiated answer.
+func codecAttributes(audioPT, telephoneEventPT int, telephoneEventFMTP string) []sdp.Attribute {
 	attrs := []sdp.Attribute{}
 
-	// Add rtpmap attributes for each codec
-	for _, format := range formats {
-		if rtpmap, ok := rtpmapMap[format]; ok {
-			attrs = append(attrs, sdp.Attribute{
-				Key:   "rtpmap",
-				Value: format + " " + rtpmap,
-			})
-		}
+	audio := strconv.Itoa(audioPT)
+	if rtpmap, ok := staticRTPMap[audio]; ok {
+		attrs = append(attrs, sdp.Attribute{Key: "rtpmap", Value: audio + " " + rtpmap})
 	}
 
-	// Add fmtp for telephone-event
-	for _, format := range formats {
-		if format == "101" {
-			attrs = append(attrs, sdp.Attribute{
-				Key:   "fmtp",
-				Value: "101 0-15",
-			})
+	if telephoneEventPT > 0 {
+		pt := strconv.Itoa(telephoneEventPT)
+		attrs = append(attrs, sdp.Attribute{Key: "rtpmap", Value: pt + " " + telephoneEventRTPMap})
+
+		params := telephoneEventFMTP
+		if params == "" {
+			params = "0-15"
 		}
+		attrs = append(attrs, sdp.Attribute{Key: "fmtp", Value: pt + " " + params})
 	}
 
-	// Add ptime:20 (20ms frames) - standard for VoIP
-	attrs = append(attrs, sdp.Attribute{
-		Key:   "ptime",
-		Value: "20",
-	})
-
-	// Add sendrecv mode
-	attrs = append(attrs, sdp.Attribute{
-		Key: "sendrecv",
-	})
+	// 20ms frames, the VoIP standard.
+	attrs = append(attrs, sdp.Attribute{Key: "ptime", Value: "20"})
+	attrs = append(attrs, sdp.Attribute{Key: "sendrecv"})
 
 	return attrs
 }
 
 // getResponseAttributes returns attributes for SDP response (includes rtcp-mux)
-func getResponseAttributes(formats []string) []sdp.Attribute {
-	attrs := GetCodecAttributes(formats)
+func getResponseAttributes(audioPT, telephoneEventPT int, telephoneEventFMTP string) []sdp.Attribute {
+	attrs := codecAttributes(audioPT, telephoneEventPT, telephoneEventFMTP)
 
 	// Add rtcp-mux (RFC 5761) - means RTCP is on same port as RTP
 	attrs = append(attrs, sdp.Attribute{

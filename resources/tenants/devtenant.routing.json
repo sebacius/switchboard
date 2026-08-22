@@ -1,17 +1,18 @@
 {
-  "_comment": "Routing data for the small local-testing tenant. Deliberately minimal, like devtenant.md itself.",
+  "_comment": "Routing data for the small local-testing tenant. Deliberately minimal. A group no longer carries its own no_answer: what happens when nobody picks up belongs to whatever rang the group.",
 
   "operator": "user/100",
   "retrieval_prefix": "*",
 
-  "_comment_extensions": "600 is the assistant: callers routed there want to talk to the AI, so it hands off to the supervisor instead of dialing.",
+  "_comment_extensions": "Bare destinations are sugar for a one-node dial. 600 used to be the AI receptionist; it is now the engineering group, which is what callers dialing it actually wanted.",
   "extensions": {
     "100": "user/100",
     "101": "user/101",
     "102": "user/102",
     "105": "user/105",
     "110": "user/110",
-    "600": "assistant"
+    "600": "group/engineering",
+    "700": "flow/main-ivr"
   },
 
   "symbolic_targets": {
@@ -22,14 +23,17 @@
     "engineering": "group/engineering"
   },
 
-  "dids": {},
+  "_comment_dids": "Step TWO for an inbound call: what HAPPENS to a call to this number. Step one — which tenant owns it — already happened in resources/config/routes.json, which is why the same number appears in both files answering different questions. A number routed here by step one but absent from this map is still OUR call; it simply matches nothing and reaches the operator.",
+  "dids": {
+    "+15558001200": "flow/main-ivr",
+    "+15558001201": "group/engineering"
+  },
 
   "groups": {
     "engineering": {
       "strategy": "round-robin",
       "members": ["user/101", "user/102"],
-      "member_timeout_ms": 12000,
-      "no_answer": "operator"
+      "member_timeout_ms": 12000
     }
   }
 }

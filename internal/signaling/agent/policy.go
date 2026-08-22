@@ -4,17 +4,23 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 )
 
-// The model is UNTRUSTED. Everything in this file is the deterministic
-// authorization boundary that adjudicates a tool call before it executes
-// (design #10). It NEVER reads prompt/conversation content — the only inputs are
-// the tenant policy config and the symbolic target the model emitted. Prompt
-// injection therefore cannot move any verdict here.
+// CONFIG IS NOT AUTHORITY. Everything in this file is the deterministic
+// authorization boundary that adjudicates a destination before it is dialed.
+//
+// The untrusted input used to be a language model's tool call; it is now a
+// configuration file — an entry mapping, a flow node, or a ring group member.
+// The principle is unchanged: the only inputs to a verdict are the tenant's
+// policy and the symbolic target being asked for. Anyone able to edit a routing
+// or flow file still cannot grant themselves reach this file does not already
+// permit.
 
 // Decision is the verdict of an authorization check: allow or deny, plus a
-// machine-stable reason that is both logged and (on deny) surfaced to the model
-// as the tool result so it can self-correct.
+// machine-stable reason that is logged and, on deny, carried into the call
+// record so a refused destination is auditable.
 type Decision struct {
 	Allowed bool
 	// Reason is a short, stable explanation (e.g. "external dial not enabled for
@@ -49,8 +55,8 @@ type TenantPolicy struct {
 	// explicit empty non-nil slice to bar nothing.
 	BarredPrefixes []string
 
-	// SymbolicTargets maps model-emitted symbolic names (extension names, named
-	// forwards) to concrete dial targets. This is capability narrowing: the model
+	// SymbolicTargets maps symbolic names (extension names, named forwards) to
+	// concrete dial targets. This is capability narrowing: configuration
 	// dials "sales" or "front-desk", never a raw external number. A resolved
 	// target may itself be internal ("user/1001") or external ("+18005551212"),
 	// and external resolutions are still subject to the full COS below.
@@ -88,23 +94,39 @@ var DefaultBarredPrefixes = []string{
 	"+88216", // EMSAT satellite
 }
 
-// Policy is the per-tenant authorization engine. It is constructed per call (it
-// holds the tenant policy and the per-tenant spend counter) and is safe for
-// concurrent use. It NEVER inspects prompt content.
+// Policy is the per-tenant authorization engine. It is constructed per call and
+// is safe for concurrent use. It NEVER inspects prompt content.
+//
+// The spend counter deliberately does NOT live here. A Policy is built per call,
+// so a counter on it resets on every INVITE and a "per day" limit could never be
+// reached — the shipped code had exactly that bug. The counter lives in a
+// SpendLedger shared for the life of the process.
 type Policy struct {
 	tenant string
 	cfg    TenantPolicy
 	log    *slog.Logger
+	spend  *SpendLedger
 
-	mu            sync.Mutex
-	externalUnits int      // spend counter consumed by authorized external dials
-	barred        []string // resolved barred prefixes (cfg or defaults)
+	// decisions accumulates this call's verdicts so they can be attached to its
+	// record. A Policy is built per call, so this is exactly one call's worth.
+	decisionsMu sync.Mutex
+	decisions   []RecordedDecision
+
+	barred []string // resolved barred prefixes (cfg or defaults)
 }
 
-// NewPolicy builds a Policy for one tenant. A nil logger falls back to
-// slog.Default. The barred set is the tenant's explicit list, or the defaults
-// when the tenant left it nil.
+// NewPolicy builds a Policy for one tenant with no shared spend ledger. Every
+// authorization still runs, but the spend breaker cannot accumulate across
+// calls; use NewPolicyWithLedger in anything that places real calls.
 func NewPolicy(tenant string, cfg TenantPolicy, log *slog.Logger) *Policy {
+	return NewPolicyWithLedger(tenant, cfg, nil, log)
+}
+
+// NewPolicyWithLedger builds a Policy that reports its external spend to a
+// ledger shared across calls. A nil logger falls back to slog.Default. The
+// barred set is the tenant's explicit list, or the defaults when the tenant left
+// it nil.
+func NewPolicyWithLedger(tenant string, cfg TenantPolicy, spend *SpendLedger, log *slog.Logger) *Policy {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -115,15 +137,16 @@ func NewPolicy(tenant string, cfg TenantPolicy, log *slog.Logger) *Policy {
 	return &Policy{
 		tenant: tenant,
 		cfg:    cfg,
+		spend:  spend,
 		log:    log.With("tenant", tenant, "component", "tool-policy"),
 		barred: barred,
 	}
 }
 
-// AuthorizeDial adjudicates a dial whose target is a SYMBOLIC name the model
+// AuthorizeDial adjudicates a dial whose target is a SYMBOLIC name the caller
 // emitted through the normal dial tool. It resolves the symbol deterministically
 // and runs the resolved target through the full COS. It returns the resolved
-// concrete target (empty on deny) and the Decision. The model can never express
+// concrete target (empty on deny) and the Decision. Configuration can never express
 // a raw external number here — an unrecognized symbol that is not an internal
 // "user/..." target is denied, which is what makes capability narrowing real.
 func (p *Policy) AuthorizeDial(symbolicTarget string) (resolvedTarget string, d Decision) {
@@ -208,10 +231,15 @@ func (p *Policy) AuthorizeTarget(tool, resolved string) Decision {
 	return d
 }
 
-// authorizeResolved applies COS to a concrete, already-resolved target. Internal
-// targets are always permitted; external targets run default-deny → barred-class
-// → allowlist → spend-breaker.
-func (p *Policy) authorizeResolved(resolved string) Decision {
+// Classify applies Class of Service to a concrete, already-resolved target and
+// returns the verdict WITHOUT consuming spend. Internal targets are always
+// permitted; external targets run default-deny → barred-class → allowlist.
+//
+// The split from Consume is what makes load-time validation possible. Checking
+// every external destination in a tenant's configuration must not spend that
+// tenant's daily budget — a validator that denial-of-services the thing it
+// validates is worse than no validator.
+func (p *Policy) Classify(resolved string) Decision {
 	if isInternalTarget(resolved) {
 		return allow("internal target")
 	}
@@ -234,14 +262,58 @@ func (p *Policy) authorizeResolved(resolved string) Decision {
 		return deny("destination not in tenant allowlist")
 	}
 
-	// Spend circuit breaker: trip when consuming this unit would exceed the cap.
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.externalUnits >= p.cfg.MaxExternalUnitsPerDay {
+	return allow("external destination authorized")
+}
+
+// Consume charges one unit of external spend, returning false when the breaker
+// has tripped. Only an authorized EXTERNAL dial consumes; internal targets cost
+// nothing.
+func (p *Policy) Consume(resolved string) bool {
+	if isInternalTarget(resolved) {
+		return true
+	}
+	if p.spend == nil {
+		// No ledger: nothing accumulates, so nothing can trip.
+		return true
+	}
+	return p.spend.Consume(p.tenant, p.cfg.MaxExternalUnitsPerDay)
+}
+
+// authorizeResolved is Classify followed by Consume: the full check an actual
+// dial must pass.
+func (p *Policy) authorizeResolved(resolved string) Decision {
+	if d := p.Classify(resolved); !d.Allowed {
+		return d
+	}
+	if !p.Consume(resolved) {
 		return deny("tenant external spend limit reached")
 	}
-	p.externalUnits++
 	return allow("external destination authorized")
+}
+
+// RecordedDecision is one authorization verdict, for the call record.
+type RecordedDecision struct {
+	Target  string
+	Allowed bool
+	Reason  string
+}
+
+// recordDecision keeps a verdict for the call record.
+func (p *Policy) recordDecision(resolved string, d Decision) {
+	p.decisionsMu.Lock()
+	defer p.decisionsMu.Unlock()
+	p.decisions = append(p.decisions, RecordedDecision{
+		Target: resolved, Allowed: d.Allowed, Reason: d.Reason,
+	})
+}
+
+// Decisions returns the verdicts made for this call, so they can be written
+// into its record alongside the traversal — the path and why it was allowed to
+// go that way, readable together.
+func (p *Policy) Decisions() []RecordedDecision {
+	p.decisionsMu.Lock()
+	defer p.decisionsMu.Unlock()
+	return append([]RecordedDecision(nil), p.decisions...)
 }
 
 // isInternalTarget reports whether a resolved target is an internal directory
@@ -254,7 +326,10 @@ func (p *Policy) authorizeResolved(resolved string) Decision {
 // AuthorizeTarget before dialing it, so a member that IS external is adjudicated
 // on its own merits rather than inheriting the group's verdict.
 func isInternalTarget(target string) bool {
-	return strings.HasPrefix(target, "user/") || strings.HasPrefix(target, routingGroupPrefix)
+	if _, isGroup := dialplan.IsGroupTarget(target); isGroup {
+		return true
+	}
+	return strings.HasPrefix(target, "user/")
 }
 
 // normalizeDigits strips formatting from a dial string so prefix matching is
@@ -289,14 +364,13 @@ func matchPrefix(digits, raw string, patterns []string) (string, bool) {
 	return "", false
 }
 
-// logDecision emits the authorization verdict for audit. Every verdict —
-// allow and deny — is logged so denied actions are surfaced as fraud signals.
-//
-// TODO(cdr): once the structured call record exists, write (tool, target,
-// resolved, decision, reason) into the CDR here too so denied dials are
-// auditable per-call as potential toll-fraud / injection signals (spec:
-// tool-authorization "Decision logging"). For now slog is the only sink.
+// logDecision emits the authorization verdict for audit. Every verdict — allow
+// and deny — is logged so denied actions are surfaced as fraud signals, and
+// recorded against the call so they are durable rather than living only in
+// process output (spec: tool-authorization "Decision logging").
 func (p *Policy) logDecision(tool, target, resolved string, d Decision) {
+	p.recordDecision(resolved, d)
+
 	verdict := "deny"
 	if d.Allowed {
 		verdict = "allow"

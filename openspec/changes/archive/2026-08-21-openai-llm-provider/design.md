@@ -70,7 +70,7 @@ creates a synchronisation one, which is worse — a wrong prefix fails at boot, 
 disagreeing pair fails on the first call.
 
 **2. An unknown prefix is a hard startup error.** The tempting fallback — "an
-unrecognised prefix is part of an Ollama model name" — silently sends every call in a
+unrecognized prefix is part of an Ollama model name" — silently sends every call in a
 deployment to Ollama under the name `openia/gpt-4o` when someone fat-fingers the
 provider. Refusing to start is the cheaper failure.
 
@@ -166,7 +166,7 @@ neither.
 - **Namespaced Ollama model names break.** Decision 2, accepted deliberately. Mitigated
   by an error message that names the replacement, a test on that message, and a migration
   note. No default or documented example uses one.
-- **`<think>`-stripping changes existing Ollama behaviour.** A model that legitimately
+- **`<think>`-stripping changes existing Ollama behavior.** A model that legitimately
   emitted the literal string `<think>` in speech would now have it swallowed. No model
   does this in practice, and the alternative is a measured leak.
 - **The unanswered-tool-call fix touches the runner**, the most safety-critical file in
@@ -183,7 +183,7 @@ neither.
 ## Migration Plan
 
 1. No action for an existing Ollama deployment whose `--llm-model` has no separator: the
-   default provider, endpoint and behaviour are unchanged.
+   default provider, endpoint and behavior are unchanged.
 2. An operator running a namespaced Ollama model adds the `ollama/` prefix. Startup names
    the exact replacement if they do not.
 3. To move to OpenAI: set `--llm-model openai/<model>` and export `OPENAI_API_KEY`. To use

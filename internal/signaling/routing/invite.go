@@ -2,10 +2,11 @@ package routing
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/emiago/sipgo/sip"
 	psdp "github.com/pion/sdp/v3"
@@ -31,8 +32,8 @@ type InviteHandler struct {
 	sessionRecorder SessionRecorder
 	router          *agent.Router
 	admission       *agent.Admission
-	resolution      *agent.CallResolution
-	runner          *agent.Runner
+	resolution      CallRouter
+	operatorFor     func(agent.CallContext) string
 	locStore        location.LocationStore
 	callService     b2bua.CallService
 	trunk           trunk.Trunk
@@ -48,8 +49,8 @@ func NewInviteHandler(
 	sessionRecorder SessionRecorder,
 	callRouter *agent.Router,
 	admission *agent.Admission,
-	resolution *agent.CallResolution,
-	runner *agent.Runner,
+	resolution CallRouter,
+	operatorFor func(agent.CallContext) string,
 	locStore location.LocationStore,
 	callService b2bua.CallService,
 	sipTrunk trunk.Trunk,
@@ -64,7 +65,7 @@ func NewInviteHandler(
 		router:          callRouter,
 		admission:       admission,
 		resolution:      resolution,
-		runner:          runner,
+		operatorFor:     operatorFor,
 		locStore:        locStore,
 		callService:     callService,
 		trunk:           sipTrunk,
@@ -112,17 +113,21 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 		return
 	}
 
-	// Preflight, pre-answer and without any LLM call: we must know this tenant at
-	// all. The channel limit is NOT charged here — it bounds concurrent
-	// supervised calls, and this call may yet be routed deterministically without
-	// engaging the model. It is applied at the hand-off instead.
-	if pre := h.admission.Preflight(cc); !pre.Admitted {
-		code, reason := admissionStatus(pre.Reason)
-		slog.Warn("Rejecting INVITE at preflight",
-			"tenant", cc.Tenant, "direction", cc.Direction, "reason", pre.Reason, "code", int(code))
+	// Admission, pre-answer and before any media is allocated: we must know this
+	// tenant, and it must be under its channel limit. The slot is taken here
+	// rather than later because what it bounds is physical — an RTP port, a media
+	// session, and a handler goroutine blocked for the life of the call — so a
+	// tenant over its limit must be turned away before it consumes any of them.
+	admitted := h.admission.Admit(cc)
+	if !admitted.Admitted {
+		code, reason := admissionStatus(admitted.Reason)
+		slog.Warn("Rejecting INVITE at admission",
+			"tenant", cc.Tenant, "direction", cc.Direction, "reason", admitted.Reason, "code", int(code))
 		_ = tx.Respond(sip.NewResponseFromRequest(req, code, reason, nil))
 		return
 	}
+	// From here the call owns a channel slot, and every exit path must free it.
+	defer admitted.Release()
 
 	// Create dialog via manager
 	dlg, err := h.dialogMgr.CreateFromInvite(req, tx)
@@ -146,7 +151,7 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	}
 
 	// Extract SDP info from INVITE
-	clientAddr, clientPort, offeredCodecs, err := h.extractSDPInfo(req)
+	clientAddr, clientPort, offeredCodecs, codecOffers, err := h.extractSDPInfo(req)
 	if err != nil {
 		slog.Error("Failed to extract SDP info", "error", err)
 		notAcceptable := sip.NewResponseFromRequest(req, sip.StatusNotAcceptable, "Not Acceptable - invalid SDP", nil)
@@ -162,6 +167,7 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 		RemoteAddr:    clientAddr,
 		RemotePort:    clientPort,
 		OfferedCodecs: offeredCodecs,
+		Offered:       codecOffers,
 	})
 	if err != nil {
 		slog.Error("Failed to create media session", "error", err)
@@ -229,12 +235,27 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	h.routeCall(dlg, session, cc)
 }
 
-// routeCall gives the call to deterministic resolution first and to the
-// supervisor only if resolution declines it. It runs off the SIP transaction
-// goroutine because both paths block for the life of the call.
+// CallRouter is whatever decides where a call goes. It returns true when it has
+// taken the call and the call is finished.
+//
+// The contract is the important half: an implementation BLOCKS for the life of
+// the call, because sipgo terminates the transaction when this handler returns
+// and a terminated transaction silently swallows every later response.
+type CallRouter interface {
+	Handle(ctx context.Context, sess agent.CallSession, cc *agent.CallContext) bool
+}
+
+// operatorDialTimeout bounds the fallback forward to the tenant operator. A
+// zero timeout would let Forward apply its own default; naming it here keeps the
+// fallback's budget visible at the place the decision is made.
+const operatorDialTimeout = 45 * time.Second
+
+// routeCall gives the call to deterministic resolution, and falls back to the
+// tenant operator when nothing claims it. It runs on the SIP transaction
+// goroutine because every path blocks for the life of the call.
 func (h *InviteHandler) routeCall(dlg *dialog.Dialog, session agent.CallSession, cc agent.CallContext) {
 	if h.resolution != nil && h.resolution.Handle(dlg.Context(), session, &cc) {
-		// Resolution took the call and it is over. No LLM request was made.
+		// Resolution took the call and it is over.
 		if !dlg.IsTerminated() {
 			slog.Info("[Routing] Resolved call complete, terminating dialog", "call_id", dlg.CallID)
 			_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
@@ -242,51 +263,40 @@ func (h *InviteHandler) routeCall(dlg *dialog.Dialog, session agent.CallSession,
 		return
 	}
 
-	// Nothing resolved: this call needs the model, so now it costs a channel.
-	decision := h.admission.Admit(cc)
-	if !decision.Admitted {
-		code, reason := admissionStatus(decision.Reason)
-		slog.Warn("Rejecting INVITE at admission",
-			"tenant", cc.Tenant, "direction", cc.Direction, "reason", decision.Reason, "code", int(code))
-		// We have sent a 180 but never a 200, so a final failure response is still
-		// the correct way to end this call.
-		if err := h.dialogMgr.RespondStatus(dlg, code, reason); err != nil {
-			slog.Warn("[Routing] Failed to reject at admission", "call_id", dlg.CallID, "error", err)
+	h.fallbackToOperator(dlg, session, cc)
+}
+
+// fallbackToOperator is what happens when nothing claims a call. Until the flow
+// engine lands this is the whole of the former supervisor's job: send the caller
+// to a human if the tenant named one, and otherwise decline honestly rather than
+// leaving them on 180 forever.
+func (h *InviteHandler) fallbackToOperator(dlg *dialog.Dialog, session agent.CallSession, cc agent.CallContext) {
+	operator := ""
+	if h.operatorFor != nil {
+		operator = h.operatorFor(cc)
+	}
+
+	if operator == "" {
+		slog.Info("[Routing] Nothing resolved and no operator configured",
+			"call_id", dlg.CallID, "tenant", cc.Tenant, "callee", cc.Callee)
+		if err := h.dialogMgr.RespondStatus(dlg, sip.StatusTemporarilyUnavailable,
+			"Temporarily Unavailable - no destination for this call"); err != nil {
+			slog.Warn("[Routing] Failed to decline unresolved call", "call_id", dlg.CallID, "error", err)
 		}
 		_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonError)
 		return
 	}
 
-	h.superviseCall(dlg, session, cc, decision.Release)
-}
+	slog.Info("[Routing] Nothing resolved, forwarding to operator",
+		"call_id", dlg.CallID, "tenant", cc.Tenant, "callee", cc.Callee, "operator", operator)
 
-// superviseCall runs the agent runner for one call and guarantees the dialog is
-// torn down afterwards. The admission slot is released through the runner's
-// teardown funnel, so it is freed exactly once no matter which initiator ends
-// the call (caller BYE, the hangup tool, or a timeout).
-func (h *InviteHandler) superviseCall(dlg *dialog.Dialog, session agent.CallSession, cc agent.CallContext, release func()) {
-	releaseHook := func(reason string) {
-		slog.Debug("[Routing] Releasing admission slot",
-			"call_id", dlg.CallID, "tenant", cc.Tenant, "reason", reason)
-		release()
+	// Forward relays the operator's own status upstream on failure, which is the
+	// honest thing to send a caller we could not place.
+	if err := session.Forward(dlg.Context(), operator, operatorDialTimeout); err != nil {
+		slog.Info("[Routing] Operator forward ended", "call_id", dlg.CallID, "error", err)
 	}
 
-	if err := h.runner.HandleCall(dlg.Context(), session, cc, releaseHook); err != nil {
-		if !errors.Is(err, context.Canceled) {
-			slog.Error("[Routing] Supervisor failed",
-				"call_id", dlg.CallID,
-				"tenant", cc.Tenant,
-				"direction", cc.Direction,
-				"error", err,
-			)
-		}
-	}
-
-	// Belt and braces: the runner's teardown funnel already hung the session up,
-	// but a supervisor that returned before answering (or an early error) can
-	// leave the dialog alive.
 	if !dlg.IsTerminated() {
-		slog.Info("[Routing] Supervisor complete, terminating dialog", "call_id", dlg.CallID)
 		_ = h.dialogMgr.Terminate(dlg.CallID, dialog.ReasonLocalBYE)
 	}
 }
@@ -322,30 +332,38 @@ func fromHost(req *sip.Request) string {
 	return from.Address.Host
 }
 
-// extractSDPInfo parses SDP to get client endpoint and offered codecs
-func (h *InviteHandler) extractSDPInfo(req *sip.Request) (clientAddr string, clientPort int, codecs []string, err error) {
+// extractSDPInfo parses SDP to get the client endpoint and the full codec offer.
+//
+// The rtpmap attributes matter as much as the m-line formats. A bare payload
+// type identifies a static codec, but telephone-event is DYNAMIC: real endpoints
+// offer it anywhere in 96-127, so discarding a=rtpmap makes the peer's DTMF
+// payload type unknowable and RFC 4733 impossible. Assuming 101 works in a lab
+// and fails in the field.
+func (h *InviteHandler) extractSDPInfo(req *sip.Request) (clientAddr string, clientPort int, codecs []string, offers []mediaclient.CodecOffer, err error) {
 	callID := req.CallID()
 
 	if req.Body() == nil {
-		return "", 0, nil, fmt.Errorf("no SDP body in INVITE")
+		return "", 0, nil, nil, fmt.Errorf("no SDP body in INVITE")
 	}
 
 	// Parse SDP
 	sdpObj := &psdp.SessionDescription{}
 	if err := sdpObj.Unmarshal(req.Body()); err != nil {
-		return "", 0, nil, fmt.Errorf("failed to parse SDP: %w", err)
+		return "", 0, nil, nil, fmt.Errorf("failed to parse SDP: %w", err)
 	}
 
 	if len(sdpObj.MediaDescriptions) == 0 {
-		return "", 0, nil, fmt.Errorf("no media descriptions in SDP")
+		return "", 0, nil, nil, fmt.Errorf("no media descriptions in SDP")
 	}
 
 	// Get first media (audio)
 	mediaDesc := sdpObj.MediaDescriptions[0]
 	clientPort = mediaDesc.MediaName.Port.Value
 	codecs = mediaDesc.MediaName.Formats
+	offers = codecOffersFrom(mediaDesc)
 
-	slog.Info("[SDP] Parsed media", "callID", callID, "media", mediaDesc.MediaName.Media, "port", clientPort, "codecs", codecs)
+	slog.Info("[SDP] Parsed media", "callID", callID, "media", mediaDesc.MediaName.Media,
+		"port", clientPort, "codecs", codecs, "offers", len(offers))
 
 	// Get client address from SDP connection information
 	if mediaDesc.ConnectionInformation != nil && mediaDesc.ConnectionInformation.Address != nil {
@@ -355,10 +373,76 @@ func (h *InviteHandler) extractSDPInfo(req *sip.Request) (clientAddr string, cli
 	}
 
 	if clientAddr == "" {
-		return "", 0, nil, fmt.Errorf("no client address in SDP")
+		return "", 0, nil, nil, fmt.Errorf("no client address in SDP")
 	}
 
-	return clientAddr, clientPort, codecs, nil
+	return clientAddr, clientPort, codecs, offers, nil
+}
+
+// codecOffersFrom joins an m-line's formats with the a=rtpmap and a=fmtp
+// attributes that describe them. A format with no rtpmap keeps an empty encoding
+// name: for a static payload type the number itself defines the codec, so the
+// far side needs nothing more.
+func codecOffersFrom(media *psdp.MediaDescription) []mediaclient.CodecOffer {
+	rtpmaps := map[int]mediaclient.CodecOffer{}
+	fmtps := map[int]string{}
+
+	for _, attr := range media.Attributes {
+		switch attr.Key {
+		case "rtpmap":
+			// "101 telephone-event/8000"
+			pt, rest, ok := splitAttrPayload(attr.Value)
+			if !ok {
+				continue
+			}
+			name, rate := rest, 0
+			if slash := strings.Index(rest, "/"); slash >= 0 {
+				name = rest[:slash]
+				// The clock rate may be followed by "/channels".
+				rateStr := rest[slash+1:]
+				if s := strings.Index(rateStr, "/"); s >= 0 {
+					rateStr = rateStr[:s]
+				}
+				rate, _ = strconv.Atoi(rateStr)
+			}
+			rtpmaps[pt] = mediaclient.CodecOffer{PayloadType: pt, EncodingName: name, ClockRate: rate}
+
+		case "fmtp":
+			// "101 0-15"
+			pt, rest, ok := splitAttrPayload(attr.Value)
+			if !ok {
+				continue
+			}
+			fmtps[pt] = rest
+		}
+	}
+
+	offers := make([]mediaclient.CodecOffer, 0, len(media.MediaName.Formats))
+	for _, format := range media.MediaName.Formats {
+		pt, err := strconv.Atoi(format)
+		if err != nil {
+			continue
+		}
+		offer := rtpmaps[pt]
+		offer.PayloadType = pt
+		offer.FMTP = fmtps[pt]
+		offers = append(offers, offer)
+	}
+	return offers
+}
+
+// splitAttrPayload splits "101 telephone-event/8000" into its payload type and
+// the remainder.
+func splitAttrPayload(value string) (int, string, bool) {
+	space := strings.Index(value, " ")
+	if space < 0 {
+		return 0, "", false
+	}
+	pt, err := strconv.Atoi(strings.TrimSpace(value[:space]))
+	if err != nil {
+		return 0, "", false
+	}
+	return pt, strings.TrimSpace(value[space+1:]), true
 }
 
 // classifyAndAuthorize gates an incoming INVITE by source. It returns true when

@@ -45,12 +45,12 @@ blocking operation within a turn (the LLM call, tool handlers, listening) SHALL 
 
 #### Scenario: Teardown cancels the whole call
 
-- **WHEN** the call context is cancelled (BYE/CANCEL/timeout)
+- **WHEN** the call context is canceled (BYE/CANCEL/timeout)
 - **THEN** the in-flight LLM call and any running tool handler abort, and the runner returns
 
 #### Scenario: A turn can be aborted without ending the call
 
-- **WHEN** the turn scope is cancelled (per-turn deadline or runaway breaker)
+- **WHEN** the turn scope is canceled (per-turn deadline or runaway breaker)
 - **THEN** that turn is abandoned but the call and conversation continue
 
 ### Requirement: Idempotent teardown funnel
@@ -84,7 +84,7 @@ the consumer exits.
 
 #### Scenario: Producer exits on cancellation
 
-- **WHEN** the call context is cancelled while a producer is blocked trying to send an event
+- **WHEN** the call context is canceled while a producer is blocked trying to send an event
 - **THEN** the producer observes cancellation and exits without leaking a goroutine
 
 ### Requirement: Runaway-turn breaker

@@ -8,7 +8,7 @@ the **first** separator only, so that a model id containing separators is preser
 intact for the provider that owns it.
 
 An identifier with no prefix SHALL mean the default provider, so a deployment configured
-before this change keeps working unmodified. An unrecognised prefix SHALL be a startup
+before this change keeps working unmodified. An unrecognized prefix SHALL be a startup
 error naming the valid providers, rather than being interpreted as part of a model name:
 sending an entire deployment's calls to the wrong endpoint over a typo is worse than
 refusing to start.

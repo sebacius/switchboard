@@ -13,7 +13,6 @@ All Switchboard services can be configured via environment variables or command-
 | UI Server | 3000 | HTTP | Admin dashboard |
 | TTS (Piper) | 8000 | HTTP | Text-to-speech |
 | ASR (Whisper) | 8001 | HTTP | Speech recognition |
-| Ollama | 11434 | HTTP | LLM inference |
 
 ## Signaling Server
 
@@ -37,139 +36,69 @@ Example with multiple RTP Managers:
 ./switchboard-signaling --rtpmanager "rtpmanager1:9090,rtpmanager2:9090,rtpmanager3:9090"
 ```
 
-### Call Supervisor
-
-Calls that deterministic resolution cannot answer are handled by the LLM
-supervisor (see the tenant routing table above for what resolves without it).
+### Speech
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--llm-model` | `LLM_MODEL` | qwen3:8b | Supervisor model as `[provider/][model]`. Providers: `ollama`, `openai`. No prefix means `ollama`. A bare provider name (`openai`) takes that provider's default model — `gpt-4o` for `openai`, `qwen3:8b` for `ollama` — and its default endpoint. Splits on the **first** slash, so `openai/meta-llama/llama-3.1-70b` works. An unknown prefix is a startup error |
-| `--llm-server` | `LLM_SERVER` | *per provider* | LLM server URL. Defaults to `http://localhost:11434` for `ollama` and `https://api.openai.com` for `openai`. Set it to use an OpenAI-compatible gateway (Groq, vLLM, OpenRouter, LiteLLM) |
-| *(none)* | `OPENAI_API_KEY` | *(empty)* | Credential for the `openai` provider. **Environment only** — never a flag, because flags are visible in `ps` and in the startup banner. Required for `api.openai.com`, optional for a gateway that does not authenticate |
-| `--llm-keep-alive` | `LLM_KEEP_ALIVE` | 30m | How long Ollama holds the model resident after a request (`-1` for indefinitely). **Ollama only** — ignored by `openai`, which warns if you set it explicitly |
-| `--first-turn-timeout` | `FIRST_TURN_TIMEOUT` | 90s | Deadline for the **first** supervisor turn |
-| `--turn-timeout` | `TURN_TIMEOUT` | 30s | Deadline for a **mid-call** supervisor turn |
-| `--tts-voice` | `TTS_VOICE` | *(empty)* | Piper voice for the supervisor (empty uses the RTP manager default) |
+| `--tts-voice` | `TTS_VOICE` | alloy | Default voice for flow prompts that do not name one |
 
-The default model for a bare provider name lives in Switchboard, not in your
-config, so the startup banner prints the **resolved** model. Pin it explicitly
-(`--llm-model openai/gpt-4o`) if you need the model, latency and per-minute cost
-to survive a Switchboard upgrade unchanged.
+Routing needs no external service. The voice is used by `tts` nodes and `ivr`
+prompts; a flow that plays recorded audio files needs no TTS at all.
 
-#### Startup probe and model warm-up
-
-At startup the signaling server checks that the LLM answers and that
-`--llm-model` is available on it, then — for a provider that loads models on
-demand — sends one small request to load the model, logging how long that took.
-
-What it does with what it finds depends on the provider. Ollama cannot run a
-model it has not pulled, so absence from its listing is reported as a warning.
-An OpenAI-compatible listing is advisory (gateways serve models they do not
-enumerate), so absence is noted without claiming the model is unavailable, and no
-warm-up is sent — a hosted provider has no model load to absorb, and the request
-would only be billed. Rejected credentials are reported distinctly from a server
-that never answered, because the two look identical in a log and have completely
-different fixes.
-
-Nothing the probe finds blocks startup:
-
-```
-LLM ready and warmed load_time=6.774s note=this is what the first caller would otherwise have waited inside their turn budget
-```
-
-That number is the deployment's cold cost. Nothing here fails startup — a
-missing model or an unreachable server is a warning, because calls that resolve
-deterministically do not need the model at all:
-
-```
-LLM server is up but does NOT have the configured model; every supervised call will fail.
-Pull it (ollama pull) or fix --llm-model  available=[gemma3:4b qwen3:8b llama3.2:3b]
-
-LLM server did not answer; supervised calls will fail until it does.
-Deterministic routing is unaffected — check --llm-server
-```
-
-#### Why not a smaller model
-
-The obvious lever for first-turn latency is a smaller model. Measured on this
-hardware with `think: false` and the real prompts, it is the wrong one:
-
-| Model | Greeting | "I need to file a claim" | Reasoning in `content` |
-| --- | --- | --- | --- |
-| **qwen3:8b** | 19 tok, no tool | empty content + `dial(claims)` | 0 / 4 trials |
-| qwen3:4b | 1552–4027 tok | `dial(claims)` after 3236–6390 chars of monologue | **4 / 4 trials** |
-| qwen3:0.6b | 10 tok, no tool | **no tool call at all** | 0 / 4 trials |
-
-`qwen3:4b` evaluates the prompt faster (23.8s vs 44.0s cold) but generates so
-much more that the turn takes **148s against the 8b's 56s** — and with
-`think: false` it puts its chain of thought in `content`, which is the field the
-supervisor speaks. `qwen3:0.6b` is fast and quiet but will not dial.
-
-Use `--llm-keep-alive` and the startup warm-up for latency. Change `--llm-model`
-only with the same kind of measurement behind it.
-
-#### Why two turn budgets
-
-They are bounded by different things. The **first** turn runs while the caller
-hears ringback and may include loading a multi-gigabyte model, so its limit is
-caller patience. A **mid-call** turn is a silence with an open mic after the
-caller has stopped speaking, where 30s is already a long time.
-
-A single 30s budget for both is what produced this symptom in the field: a cold
-model took longer than 30s to load and answer, the turn was cancelled, and the
-caller heard "the assistant is unavailable" from a perfectly healthy LLM. Warm-up
-plus `--llm-keep-alive` is the fix; the larger first-turn budget is the safety
-net for a genuine cold start.
-
-If a turn does exceed its budget the log says so specifically, with the elapsed
-time — distinct from the server being unreachable, which is a different problem
-with a different fix.
-| `--policy-config` | `POLICY_CONFIG` | resources/config/policy.json | Class-of-Service and channel-limit configuration |
-
-The signaling server **requires** a reachable LLM server: without a supervisor
-there is nothing to route calls, so it refuses to start rather than running
-unsupervised. It uses Ollama's native `/api/chat` endpoint with `think: false`,
-so `thinking`, `content`, and `tool_calls` come back as separate fields and
-reasoning is never spoken.
-
-### Prompts and Tenants
+### Call Records
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--settings-path` | `SETTINGS_PATH` | resources/config | Directory containing settings.md |
-| `--tenants-path` | `TENANTS_PATH` | resources/tenants | Directory containing tenant .md files |
-| `--routing-path` | `ROUTING_PATH` | (same as `--tenants-path`) | Directory containing `<tenant>.routing.json` files |
+| `--cdr-path` | `CDR_PATH` | *(empty)* | Append-only JSONL call record file. Empty disables recording |
 
-A tenant's prompt is `settings.md` followed by `tenants/<name>.md`. There is no
-default tenant: an unattributable call is rejected rather than supervised by a
-guess.
+Each record carries the traversal — which nodes, in order, with the exit each
+produced and the time spent there — plus the authorization verdicts. Without the
+path, "why did this caller end up with the operator" has no answer.
 
-A tenant is described by **two** files. The `.md` is judgement — identity, tone,
-business facts, escalation language. The `.routing.json` is data — extensions,
-DIDs, ring groups, and the names the model may dial. A tenant with only a routing
-table can be **routed** but not supervised; a tenant with only a prompt can be
-supervised but resolves nothing deterministically.
+### Tenant Configuration
+
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `--tenants-path` | `TENANTS_PATH` | resources/tenants | Directory containing per-tenant configuration |
+| `--routing-path` | `ROUTING_PATH` | (same as `--tenants-path`) | Directory containing `<tenant>.routing.json` and `<tenant>.flows.json` |
+
+A tenant is described by **two** files, loaded and validated as one unit — which
+is what makes cross-file checks meaningful, since a flow may dial a ring group
+the other file defines. There is **no default tenant**.
+
+#### Validating without starting the server
+
+```bash
+switchboard-signaling validate --routing-path resources/tenants
+```
+
+It runs the same checks the loader does — so "validate passes but the server will
+not start" cannot happen — and reports every problem rather than the first, each
+with a path such as `flows.main.nodes.greeting.exits.timeout`. Exit 0 is clean,
+1 means problems, 2 is a usage error.
 
 ### Tenant Routing Table
 
-`<tenant>.routing.json` is what deterministic resolution routes by, and the
-source of the symbolic targets `dial` narrows to. Both read the same file, so a
-name cannot resolve one way for the resolver and another way for the model.
+`<tenant>.routing.json` is what routing runs on, and the source of the symbolic
+targets external dialing narrows to. One file, so a name cannot mean two things.
 
 ```json
 {
   "operator": "user/150",
   "retrieval_prefix": "*",
-  "extensions": { "105": "user/105", "100": "assistant", "130": "group/claims" },
+  "extensions": {
+    "105": "user/105",
+    "100": "flow/main-ivr",
+    "130": "group/claims",
+    "2XX": "user/150"
+  },
   "symbolic_targets": { "sales": "group/sales", "front-desk": "user/150" },
-  "dids": { "+15558001200": "assistant", "+15558001250": "group/claims" },
+  "dids": { "+15558001200": "flow/main-ivr" },
   "groups": {
     "claims": {
       "strategy": "sequential",
       "members": ["user/130", "user/120"],
-      "member_timeout_ms": 15000,
-      "no_answer": "supervisor"
+      "member_timeout_ms": 15000
     }
   }
 }
@@ -177,19 +106,107 @@ name cannot resolve one way for the resolver and another way for the model.
 
 | Field | Meaning |
 |-------|---------|
-| `operator` | Fallback human: where an unknown tool name sends the caller, and the `no_answer: operator` outcome. Empty means those paths keep the call alive instead of transferring — never a hangup |
-| `retrieval_prefix` | Dial prefix for picking up a parked call; the digits after it are the slot ID (`*701` → slot 701). Internal callers only |
-| `extensions` | Dialed extension → destination. `user/NNN` is an endpoint, `group/NAME` a ring group, `assistant` hands off to the supervisor |
-| `symbolic_targets` | Capability narrowing: the only names the model may dial. It can never express a raw number through `dial` |
-| `dids` | Inbound DID → destination **within** the tenant. The DID → *tenant* step happens earlier, in `routes.json`. Matched on digits, so the leading `+` is optional |
-| `groups` | Ring groups. `strategy` is `sequential` or `round-robin`; `member_timeout_ms` bounds one member's ring; `no_answer` is `supervisor`, `operator`, or `hangup` |
+| `operator` | Fallback human: where a call goes when nothing else claims it. Empty means such a call is declined with 480, never hung up on |
+| `retrieval_prefix` | Dial prefix for picking up a parked call (`*701` → slot 701). Internal callers only, and evaluated **before** the entry mapping so no pattern can shadow it |
+| `extensions` | Entry mapping. Keys are literals or digit-map patterns; values are `user/NNN`, `group/NAME`, or `flow/NAME` |
+| `symbolic_targets` | Capability narrowing: the only names a flow may dial externally. A flow can never express a raw number |
+| `dids` | Inbound DID → destination **within** the tenant. The DID → *tenant* step happens earlier, in `routes.json`. Both `+1555…` and `1555…` match |
+| `groups` | Ring groups. `strategy` is `sequential` or `round-robin`; `member_timeout_ms` bounds one member's ring. A group carries **no** no-answer destination — that belongs to whatever rang it, written down in one place |
 
-A missing routing file means nothing resolves deterministically for that tenant
-and every call goes to the supervisor. A **malformed** one is a hard startup
-error — an unparseable table would silently send every call that should have been
-routed in milliseconds to a language model instead.
+#### Entry patterns
 
-Both files reload through `POST /api/v1/config/reload`.
+A digit-map vocabulary, deliberately not regular expressions:
+
+| Symbol | Matches |
+|--------|---------|
+| `X` | 0-9 |
+| `N` | 2-9 |
+| `Z` | 1-9 |
+| `[2-8]`, `[147]` | the listed digits or range |
+| `.` | one or more further digits; **trailing only** |
+| literals | `0-9`, `*`, `#`, `+` |
+
+The most specific match wins, **computed** from how narrow each position's
+accepted set is rather than declared as a priority number:
+
+```
+literal 1  ·  [147] 3  ·  [2-8] 7  ·  N 8  ·  Z 9  ·  X 10  ·  "." unbounded
+```
+
+Comparison is per-position, so two patterns that overlap with neither strictly
+narrower (`NX` and `XN` both match `22`) are a **load error** naming both, not a
+silent tiebreak. The restricted vocabulary exists precisely so specificity is
+well defined, which it is not for regular expressions.
+
+### Tenant Flows
+
+`<tenant>.flows.json` holds the graphs. Optional — a tenant may route entirely by
+direct mapping.
+
+```json
+{
+  "flows": {
+    "main-ivr": {
+      "start": "greeting",
+      "timeout_ms": 300000,
+      "nodes": {
+        "greeting": {
+          "type": "ivr",
+          "entry": {
+            "prompt": { "text": "Press 1 for sales, 2 for claims." },
+            "timeout_ms": 5000, "max_retries": 2,
+            "terminator": "#", "interruptible": true
+          },
+          "exits": {
+            "1": "ring-sales", "2": "ring-claims",
+            "timeout": "operator", "invalid": "operator",
+            "retries_exceeded": "operator"
+          }
+        },
+        "ring-claims": {
+          "type": "dial_user",
+          "entry": { "target": "group/claims", "timeout_ms": 20000 },
+          "exits": { "no_answer": "operator", "busy": "operator",
+                     "rejected": "operator", "unavailable": "operator" }
+        },
+        "operator": {
+          "type": "dial_user",
+          "entry": { "target": "user/150", "timeout_ms": 25000 },
+          "exits": { "no_answer": "bye", "busy": "bye",
+                     "rejected": "bye", "unavailable": "bye" }
+        },
+        "bye": { "type": "hangup", "entry": { "cause": "normal_clearing" } }
+      }
+    }
+  }
+}
+```
+
+Node types: `ivr`, `tts`, `play_audio`, `dial_user`, `dial_external`,
+`transfer`, `hangup`.
+
+Rules the loader enforces:
+
+- **Every non-terminal exit must be wired.** No defaults, so what a caller hears
+  when the line is busy is always written down.
+- **Terminal exits must be absent.** `answered` and `accepted` end the flow; the
+  graph has nothing to say about what follows a connected call.
+- **The inter-node graph must be acyclic**, with repetition confined to
+  `ivr.max_retries`. Every flow therefore provably terminates.
+- **No unreachable nodes**, and every dial target must resolve and pass Class of
+  Service — at load, not at 2am.
+- **Unknown entry fields are rejected**, so `timout_ms` fails at startup rather
+  than silently defaulting a five-second wait to zero.
+
+`ivr.max_retries` bounds re-prompting inside the node. With retries configured an
+exhausted node takes `retries_exceeded`; with `max_retries: 0` the first mistake
+takes `timeout` or `invalid` directly.
+
+A malformed routing file is a hard startup error, and a failed reload leaves the
+previously loaded configuration in force — a bad edit must never strip a live
+tenant's routing. Both files reload through `POST /api/v1/config/reload`, and a
+write through the config API is validated first: an invalid flow is refused with
+the problems attached and never reaches disk.
 
 ### Trunk and DID Routing
 
@@ -198,9 +215,58 @@ Both files reload through `POST /api/v1/config/reload`.
 | `--trunk-config` | `TRUNK_CONFIG` | resources/config/trunk_peers.json | SIP trunk peers |
 | `--routes-path` | `ROUTES_PATH` | resources/config/routes.json | DID → tenant mapping |
 
+An inbound DID is looked up **twice**, and the two lookups answer different
+questions:
+
+| Step | File | Question | Who may edit it |
+|------|------|----------|-----------------|
+| 1 | `routes.json` | **Whose** number is this? DID → tenant | operator only, global |
+| 2 | `<tenant>.routing.json` → `dids` | **What happens** to a call to it? DID → destination | the tenant |
+
+They are separate files for a reason worth keeping. A tenant can edit its own
+routing table through the config API, so if tenants declared their own DIDs, one
+could add another tenant's number and start receiving their calls. The
+number-to-tenant binding lives where no tenant can write it.
+
+```json
+// routes.json — step 1: the number belongs to devtenant
+{ "dids": { "+15558001200": "devtenant", "+1555800XXXX": "devtenant" } }
+
+// devtenant.routing.json — step 2: what devtenant does with it
+"dids": {
+  "+15558001200": "flow/main-ivr",
+  "+15558001201": "group/engineering"
+}
+```
+
+A call to `+15558001200` from a trunk peer is attributed to `devtenant` by step
+1, then enters the main menu by step 2. A call to `+15558009999` is still
+*devtenant's* call — the block in step 1 says so — but matches nothing in step 2,
+so it reaches the tenant operator.
+
+Both steps use the same matcher, so they cannot disagree about whether a number
+matches:
+
+- **Either E.164 form works.** A carrier signaling `15558001200` finds a route
+  written `+15558001200`. Which form a given trunk sends is not something the
+  operator writing this file can know in advance.
+- **Patterns work**, so owning a block is one line rather than ten thousand.
+- **The most specific claim wins**, so carving one number out of a block and
+  handing it to a different tenant works as expected.
+- **Two claims that overlap with neither more specific fail at startup**, naming
+  both tenants. Whose calls those are would otherwise be undefined.
+
+`switchboard-signaling validate` cross-checks the two files: a DID routing to a
+tenant that has no routing file is an **error** (such a call is attributed to a
+tenant that does not exist and rejected with 404), and a tenant handling a
+literal DID that `routes.json` does not send it is a **warning** — it will never
+receive a call on that number. Tenants whose DID keys are patterns are not
+cross-checked, because deciding whether one pattern contains another is a harder
+problem than the warning is worth.
+
 ### Policy Configuration
 
-`policy.json` is the deterministic authorization boundary — the supervisor cannot
+`policy.json` is the deterministic authorization boundary — configuration cannot
 change it, and anything it does not grant is denied. A **missing file is not an
 error**: it yields the safest posture (no external dialing anywhere, default
 channel limit).
@@ -227,7 +293,7 @@ name is exactly the drift the move was meant to end.
 
 | Field | Meaning |
 |-------|---------|
-| `default_channel_limit` | Per-tenant cap on concurrent **supervised** calls when the tenant sets none. Rejects with 486 at the limit; keeps the first-turn LLM call from queueing past SIP Timer B. Deterministically resolved calls do not consume a channel |
+| `default_channel_limit` | Per-tenant cap on concurrent calls when the tenant sets none. Rejects with 486 at the limit. This is capacity control: every call holds an RTP port, a media session and a goroutine for its life, so the slot is taken **before** the media session is created |
 | `channel_limit` | Per-tenant override |
 | `allow_external_dial` | Default-deny gate for any non-`user/` destination |
 | `external_allowlist` | Prefix allowlist, consulted only when external dial is enabled. Empty with external enabled denies everything |
@@ -249,8 +315,7 @@ export PORT=5060
 export BIND=0.0.0.0
 export ADVERTISE=192.168.1.10
 export RTPMANAGER=rtpmanager1:9090,rtpmanager2:9090
-export LLM_SERVER=http://localhost:11434
-export LLM_MODEL=qwen3:8b
+export CDR_PATH=/var/log/switchboard/cdr.jsonl
 export POLICY_CONFIG=/etc/switchboard/policy.json
 export TENANTS_PATH=/etc/switchboard/tenants
 export LOGLEVEL=debug
@@ -263,8 +328,7 @@ export LOGLEVEL=debug
   --bind 0.0.0.0 \
   --advertise 192.168.1.10 \
   --rtpmanager rtpmanager1:9090,rtpmanager2:9090 \
-  --llm-server http://localhost:11434 \
-  --llm-model qwen3:8b \
+  --cdr-path /var/log/switchboard/cdr.jsonl \
   --policy-config /etc/switchboard/policy.json \
   --tenants-path /etc/switchboard/tenants \
   --routing-path /etc/switchboard/tenants \
@@ -289,14 +353,19 @@ export LOGLEVEL=debug
 | `--rtp-max` | `RTP_PORT_MAX` | 20000 | End of RTP port range |
 | `--audio-path` | `AUDIO_PATH` | ./audio | Base path for audio files |
 
-### AI Service Connections
+### Speech Service Connections
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--tts-server` | `TTS_SERVER` | http://localhost:8000 | Piper TTS server URL |
-| `--asr-server` | `ASR_SERVER` | http://localhost:8001 | Whisper ASR server URL |
+| `--tts-server` | `TTS_SERVER` | http://localhost:8000 | TTS server URL (Piper, or any OpenAI-compatible `/v1/audio/speech`) |
+| `--asr-server` | `ASR_SERVER` | http://localhost:8001 | ASR server URL — **currently unused** |
 
-The RTP Manager connects to TTS and ASR services for AI agent calls. TTS converts LLM text responses into audio streamed over RTP. ASR transcribes incoming caller audio into text for the LLM.
+TTS synthesizes `tts` node text and `ivr` prompts into audio streamed over RTP.
+A flow that only plays recorded files, dials, transfers and hangs up needs no
+TTS at all.
+
+The ASR client is dormant — nothing transcribes anything today. It is kept
+because it is exactly the batch API a future voicemail feature needs.
 
 ### Port Range Planning
 
@@ -395,43 +464,41 @@ export UI_LOGLEVEL=info
   --loglevel info
 ```
 
-## AI Services
+## Speech Services
 
-Switchboard integrates three external AI services that the call supervisor depends on. These services are not part of Switchboard itself but must be running and reachable for AI-powered call handling.
+Switchboard needs no external service to route calls. One optional service adds
+voice.
 
 ### Service Overview
 
 | Service | Image | Default Port | Configured On |
 |---------|-------|-------------|---------------|
 | Piper TTS | `ghcr.io/matatonic/openedai-speech` | 8000 | RTP Manager (`TTS_SERVER`) |
-| Whisper ASR | `fedirz/faster-whisper-server:latest-cpu` | 8001 | RTP Manager (`ASR_SERVER`) |
-| Ollama LLM | `ollama/ollama` | 11434 | Signaling (`LLM_SERVER`) |
+| Whisper ASR | `fedirz/faster-whisper-server:latest-cpu` | 8001 | RTP Manager (`ASR_SERVER`) — unused today |
 
-### How They Work Together
+### Running TTS
 
-1. The **ASR** service (on the RTP Manager) transcribes incoming caller audio into text.
-2. The **LLM** service (on the Signaling Server) generates a conversational response from the transcript.
-3. The **TTS** service (on the RTP Manager) converts the LLM response text into audio streamed back over RTP.
+```bash
+docker run -d --name piper-tts -p 8000:8000 ghcr.io/matatonic/openedai-speech
+./switchboard-rtpmanager --tts-server http://localhost:8000
+```
 
-### Running the AI Services
+Audio comes back as WAV, is resampled to 8kHz, encoded to PCMU and streamed as
+20ms RTP frames.
 
-The Go services accept `--llm-server`, `--asr-server`, and `--tts-server` flags pointing at any reachable HTTP endpoint. Bring those services up however suits your environment — see the README for example `docker run` / `ollama serve` commands you can copy-paste — and point Switchboard at the resulting IP and port.
+## Tenant Configuration
 
-## Tenant and Settings Configuration
+Tenant configuration lives in `resources/tenants/`. Each tenant has a routing
+table and, optionally, a flow file — `devtenant.routing.json` and
+`devtenant.flows.json`. The two are loaded and validated together.
 
-### Tenant Configuration
+The repository ships only `devtenant`, a minimal fixture for local testing.
+**There is no default tenant** — a call whose domain matches none is rejected
+with 404, pre-answer. For a worked example see [TENANT-EXAMPLE.md](TENANT-EXAMPLE.md).
 
-Tenant configuration files are stored in `resources/tenants/`. Each tenant has a Markdown prompt
-and a `<tenant>.routing.json` routing table (e.g. `devtenant.md` + `devtenant.routing.json`).
-
-The repository ships only `devtenant`, a minimal fixture for local testing. **There is no default
-tenant** — a call whose domain matches none is rejected with 404, pre-answer and without any LLM
-request. For a fully worked example of a realistic tenant, see
-[TENANT-EXAMPLE.md](TENANT-EXAMPLE.md).
-
-### Settings
-
-Global settings are stored in `resources/config/settings.md`. This file contains system-wide configuration that applies across all tenants.
+Both files are editable through the config API and reload without a restart. A
+write that would not load is refused with the problems attached, so a broken
+flow cannot be saved into a running system.
 
 ## Deployment Patterns
 
@@ -512,7 +579,6 @@ PORT=5060
 BIND=0.0.0.0
 ADVERTISE=192.168.1.10
 RTPMANAGER=localhost:9090
-LLM_SERVER=http://localhost:11434
 LOGLEVEL=info
 ```
 

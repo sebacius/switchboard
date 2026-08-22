@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/parking"
 )
 
@@ -68,23 +69,13 @@ type Destination struct {
 
 	// GroupName and Group describe a DestinationGroup, defaults already applied.
 	GroupName string
-	Group     RingGroup
+	Group     dialplan.RingGroup
 
 	// Slot is the parking slot for DestinationRetrieve, digits only.
 	Slot string
 
 	// Reason explains the outcome, resolved or not. It is always set.
 	Reason string
-
-	// Assistant marks the one hand-off that is a positive answer rather than an
-	// absence of one: the routing table says this target IS the supervisor. The
-	// caller asked for the assistant and should be talked to, not routed.
-	//
-	// The runner needs this because the model cannot infer it. The tenant's
-	// routing table is not in the prompt — that is the point of having one — so
-	// without being told, the model sees a callee it has no mapping for and tries
-	// to dial it, which the policy then denies.
-	Assistant bool
 }
 
 // handOff builds a declining result with its reason.
@@ -102,7 +93,7 @@ type ParkingLookup interface {
 // Resolver answers the deterministic routing question for one call. It holds no
 // per-call state and is safe for concurrent use.
 type Resolver struct {
-	routing RoutingSource
+	routing dialplan.RoutingSource
 	dir     Directory
 	parking ParkingLookup
 	log     *slog.Logger
@@ -111,7 +102,7 @@ type Resolver struct {
 // NewResolver builds a Resolver. A nil routing source or directory disables
 // deterministic resolution entirely (everything hands off), which is the correct
 // degradation: the supervisor still works, calls are just slower.
-func NewResolver(routing RoutingSource, dir Directory, park ParkingLookup, log *slog.Logger) *Resolver {
+func NewResolver(routing dialplan.RoutingSource, dir Directory, park ParkingLookup, log *slog.Logger) *Resolver {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -148,7 +139,7 @@ func (r *Resolver) Resolve(cc CallContext) (Destination, bool) {
 
 	// 1. Call retrieval (*7XX). Internal callers only: an outside caller who
 	//    guessed a slot number must not be able to pick up a held call.
-	if prefix := table.retrievalPrefix(); strings.HasPrefix(callee, prefix) {
+	if prefix := table.RetrievalPrefixOrDefault(); strings.HasPrefix(callee, prefix) {
 		if cc.Direction != DirectionInternal {
 			return handOff("call retrieval is internal-only"), false
 		}
@@ -185,20 +176,12 @@ func (r *Resolver) resolveRetrieval(callee, prefix string) (Destination, bool) {
 	}, true
 }
 
-// resolveDestination interprets a routing-table value: the assistant sentinel, a
-// ring group, or a concrete endpoint.
-func (r *Resolver) resolveDestination(table *RoutingTable, dest string) (Destination, bool) {
+// resolveDestination interprets a routing-table value: a ring group or a
+// concrete endpoint.
+func (r *Resolver) resolveDestination(table *dialplan.RoutingTable, dest string) (Destination, bool) {
 	dest = strings.TrimSpace(dest)
 
-	if dest == RoutingTargetAssistant {
-		// The mapping IS the assistant. This is a resolved answer — it just
-		// happens to be "the supervisor takes this call".
-		d := handOff("routing table maps this target to the assistant")
-		d.Assistant = true
-		return d, false
-	}
-
-	if name, isGroup := IsGroupTarget(dest); isGroup {
+	if name, isGroup := dialplan.IsGroupTarget(dest); isGroup {
 		group, ok := table.Group(name)
 		if !ok {
 			// The loader validates group references, so reaching here means the
@@ -245,42 +228,13 @@ func (r *Resolver) isRegistered(target string) bool {
 // lookupDestination reads the right table for the call's direction, matching a
 // DID both literally and by its digits so "+15558001200" and "15558001200" are
 // the same number.
-func lookupDestination(table *RoutingTable, dir Direction, callee string) (string, bool) {
+func lookupDestination(table *dialplan.RoutingTable, dir Direction, callee string) (string, bool) {
 	if dir == DirectionInbound {
-		if dest, ok := table.DIDs[callee]; ok {
-			return dest, true
-		}
-		wanted := didDigits(callee)
-		if wanted == "" {
-			return "", false
-		}
-		for did, dest := range table.DIDs {
-			if didDigits(did) == wanted {
-				return dest, true
-			}
-		}
-		return "", false
+		// MatchDID handles the leading-'+' inconsistency itself.
+		return table.MatchDID(callee)
 	}
 
-	dest, ok := table.Extensions[callee]
-	return dest, ok
-}
-
-// didDigits reduces a DID to bare digits so "+15558001200" and "15558001200"
-// compare equal. Carriers are inconsistent about the leading +, and a tenant
-// writing its table one way while its carrier signals the other would send every
-// inbound call to the model instead of to the person it was dialed for.
-//
-// This is deliberately NOT policy's normalizeDigits, which preserves a leading +
-// because the barred-prefix patterns are written in E.164.
-func didDigits(did string) string {
-	var b strings.Builder
-	for _, r := range did {
-		if r >= '0' && r <= '9' {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
+	return table.MatchExtension(callee)
 }
 
 // LogDecision records what resolution decided for a call. It is deliberately one

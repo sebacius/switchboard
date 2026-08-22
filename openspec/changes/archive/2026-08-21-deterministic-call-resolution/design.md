@@ -159,7 +159,7 @@ server rather than globally. Sharing it needs the durable store that does not ex
 It exists solely to catch an internal first turn that returned prose instead of a dial. With
 internal routing resolved before the model is consulted, that path no longer exists. Tuning
 it would preserve a 2-round-trip turn to patch a decision the model should not be making.
-The scripted tests covering it are removed with it; the behaviour they protected is now
+The scripted tests covering it are removed with it; the behavior they protected is now
 covered by resolver tests.
 
 **6. Unknown tool → deterministic operator transfer** (`agent/tools.go:143-147`).
@@ -243,7 +243,7 @@ a performance optimisation, not a new trust path" true.
 7. Verify: unit tests → `agent-smoke` → the end-to-end SIP group, including the four
    scenarios the archived change left at `[~]`.
 8. Rollback: `git revert`. The only stateful artefacts are config files; keeping the old
-   `policy.json` alongside the revert restores the previous behaviour. No data migration.
+   `policy.json` alongside the revert restores the previous behavior. No data migration.
 
 ## Open Questions
 

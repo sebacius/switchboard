@@ -28,7 +28,7 @@
 - [x] 4.2 Implement the `sequential` strategy: members in configured order, each for `member_timeout_ms`
 - [x] 4.3 Implement the `round-robin` strategy with a per-(tenant, group) in-memory cursor that advances per call
 - [x] 4.4 Implement `no_answer` outcomes — `supervisor` (hand off with context intact), `operator`, `hangup` — and the group ring budget
-- [x] 4.5 Ensure group legs are cancelled and released through the existing teardown funnel on caller CANCEL/BYE mid-ring
+- [x] 4.5 Ensure group legs are canceled and released through the existing teardown funnel on caller CANCEL/BYE mid-ring
 
 ## 5. Runner changes
 
@@ -53,7 +53,7 @@
 
 - [x] 8.1 Resolver unit tests for each resolvable shape and each non-resolvable case in the `call-resolution` spec, including `*7XX` from a non-internal caller and an unregistered extension
 - [x] 8.2 Test that a resolved destination outside the tenant allowlist is denied by `Policy.AuthorizeDial` and no INVITE leaves the system
-- [x] 8.3 Ring group tests: sequential order, round-robin cursor advancing across calls, first-answer-wins cancelling the losers, and each `no_answer` outcome
+- [x] 8.3 Ring group tests: sequential order, round-robin cursor advancing across calls, first-answer-wins canceling the losers, and each `no_answer` outcome
 - [x] 8.4 Admission-split tests: a tenant at its channel limit still routes a resolvable extension call (no 486, no slot), while a hand-off at the limit still gets 486
 - [x] 8.5 Test that a tenant with an empty prompt but a populated routing table routes extensions, and that the same tenant rejects a call needing the supervisor
 - [x] 8.6 Test the unknown-tool operator transfer and the no-operator fallback
@@ -131,7 +131,7 @@ call 4 → user/920, user/921, user/922      (cursor wrapped)
 ```
 
 **9.5 COS deny — PARTIAL.** The resolution half is verified live: an extension
-mapped in the tenant's own routing table to `+18005551212`, dialled internally
+mapped in the tenant's own routing table to `+18005551212`, dialed internally
 with `allow_external_dial:false`, produced
 `resolved=false ... destination +18005551212 is not registered` and no INVITE
 left the box. The half in the task as written — the *model* asking to dial an

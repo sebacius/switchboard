@@ -47,6 +47,15 @@ service RTPManagerService {
   // Listen captures incoming RTP audio until silence is detected,
   // then transcribes it using the configured ASR server (Whisper).
   rpc Listen(ListenRequest) returns (ListenResponse);
+
+  // CollectDigits plays an optional prompt and collects DTMF digits.
+  //
+  // Prompt and collection are ONE call on purpose. Split into "play" then
+  // "collect", a digit pressed between them lands in neither and is lost, and
+  // inter-digit timing measured across gRPC round trips to a possibly-remote
+  // manager is timing of the network rather than of the caller. Keeping both
+  // next to the socket is what makes barge-in and type-ahead work at all.
+  rpc CollectDigits(CollectDigitsRequest) returns (CollectDigitsResponse);
 }
 
 // Session Management
@@ -59,8 +68,33 @@ message CreateSessionRequest {
   string remote_addr = 2;
   int32 remote_port = 3;
 
-  // Codecs offered by remote party (payload type strings: "0", "8", etc.)
+  // Codecs offered by remote party (payload type strings: "0", "8", etc.).
+  // Superseded by `offered`, which carries what each payload type MEANS.
+  // Retained so an older signaling server still negotiates audio correctly.
   repeated string offered_codecs = 4;
+
+  // Full codec offer including rtpmap. Bare payload-type numbers are not enough
+  // for dynamic types: telephone-event is a dynamic payload type, so 101 in one
+  // offer and 96 in another can name the same thing, and only the rtpmap says
+  // which. Without this, DTMF cannot be negotiated at all.
+  repeated CodecOffer offered = 5;
+}
+
+// CodecOffer is one m-line format together with the rtpmap that gives it
+// meaning.
+message CodecOffer {
+  // Payload type from the m= line.
+  int32 payload_type = 1;
+
+  // Encoding name from a=rtpmap, e.g. "PCMU" or "telephone-event". Empty for a
+  // static payload type carrying no rtpmap, where the number defines the codec.
+  string encoding_name = 2;
+
+  // Clock rate from a=rtpmap, e.g. 8000.
+  int32 clock_rate = 3;
+
+  // Format parameters from a=fmtp, e.g. "0-15" for telephone-event.
+  string fmtp = 4;
 }
 
 message CreateSessionResponse {
@@ -79,6 +113,11 @@ message CreateSessionResponse {
 
   // Status
   SessionStatus status = 6;
+
+  // Negotiated telephone-event payload type, or 0 when the offer contained none.
+  // Zero means this leg has no RFC 4733 transport, so digit collection on it
+  // must report that rather than waiting for digits that cannot arrive.
+  int32 telephone_event_pt = 7;
 }
 
 message DestroySessionRequest {
@@ -197,6 +236,11 @@ message UpdateSessionRemoteRequest {
   string session_id = 1;
   string remote_addr = 2;
   int32 remote_port = 3;
+
+  // Codecs the callee answered with, for a B-leg created before its remote was
+  // known. Carries the same rtpmap detail as the offer so a bridged leg's
+  // telephone-event payload type is knowable.
+  repeated CodecOffer answered = 4;
 }
 
 message UpdateSessionRemoteResponse {
@@ -235,6 +279,82 @@ message ListenRequest {
   int32 max_duration_ms = 2;     // Maximum recording duration (default 10000ms)
   int32 silence_timeout_ms = 3;  // Stop after this much silence (default 1500ms)
   int32 silence_threshold = 4;   // Energy threshold for silence detection (default auto)
+}
+
+// Digit Collection
+
+// PromptSpec is what the caller hears. One shared shape so a menu needs no
+// separate node in front of it just to say something.
+message PromptSpec {
+  // Text to synthesise via TTS.
+  string text = 1;
+  // Voice for synthesis; empty uses the server default.
+  string voice = 2;
+  // Single audio file, relative to the audio directory.
+  string file = 3;
+  // Playlist of audio files, played in order.
+  repeated string files = 4;
+}
+
+message CollectDigitsRequest {
+  string session_id = 1;
+
+  // Prompt to play while collecting. Omit to collect without speaking.
+  PromptSpec prompt = 2;
+
+  // Interruptible lets the first digit stop the prompt (barge-in).
+  bool interruptible = 3;
+
+  // MaxDigits ends collection once this many are gathered. Zero means one.
+  int32 max_digits = 4;
+
+  // Terminators end collection early, e.g. "#".
+  string terminators = 5;
+
+  // FirstDigitTimeoutMs bounds the wait for the first digit, measured from the
+  // END of the prompt. InterDigitTimeoutMs bounds each subsequent gap, and
+  // OverallTimeoutMs bounds the whole operation.
+  int32 first_digit_timeout_ms = 6;
+  int32 inter_digit_timeout_ms = 7;
+  int32 overall_timeout_ms = 8;
+
+  // FlushBuffer discards digits pressed before this collection started. A node
+  // re-prompting after invalid input sets it: the caller's earlier digits
+  // answered a question that has since changed.
+  bool flush_buffer = 9;
+}
+
+// CollectReason says why collection ended. A flow routes timeout separately
+// from invalid input, so "nothing was pressed" and "something was, but not
+// enough" must be distinguishable.
+enum CollectReason {
+  COLLECT_REASON_UNSPECIFIED = 0;
+  // A terminator digit was pressed.
+  COLLECT_REASON_TERMINATOR = 1;
+  // max_digits was reached.
+  COLLECT_REASON_MAX_DIGITS = 2;
+  // The gap after at least one digit expired.
+  COLLECT_REASON_INTER_DIGIT_TIMEOUT = 3;
+  // The wait for the first digit expired, with nothing pressed.
+  COLLECT_REASON_FIRST_DIGIT_TIMEOUT = 4;
+  // Nothing was pressed and no prompt was configured to wait after.
+  COLLECT_REASON_NO_INPUT = 5;
+  // The call ended or the context was cancelled.
+  COLLECT_REASON_CANCELED = 6;
+  // This leg negotiated no telephone-event, so no digit could ever arrive.
+  // Distinct from silence, because the flow must degrade rather than wait.
+  COLLECT_REASON_NO_DTMF_TRANSPORT = 7;
+  COLLECT_REASON_ERROR = 8;
+}
+
+message CollectDigitsResponse {
+  string session_id = 1;
+  // Digits collected, excluding any terminator.
+  string digits = 2;
+  CollectReason reason = 3;
+  // PromptInterrupted reports whether a digit cut the prompt short.
+  bool prompt_interrupted = 4;
+  string error_message = 5;
 }
 
 message ListenResponse {

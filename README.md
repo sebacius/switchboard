@@ -7,7 +7,9 @@
 
 ## About
 
-Switchboard is a **full-stack VoIP server and AI-driven call routing engine**. It handles the complete telephony lifecycle — SIP registrations, presence, inbound and outbound calls, call bridging, parking, and transfers — while using a small LLM to make intelligent routing decisions based on tenant-specific configuration. It separates signaling and media into independently scalable components, using SIP for call control, RTP for media transport, and gRPC to coordinate services. At its core, Switchboard replaces static IVR trees with a smart AI routing that understands context and makes decisions like a human receptionist would.
+Switchboard is a **full-stack VoIP server and deterministic call routing engine**. It handles the complete telephony lifecycle — SIP registrations, presence, inbound and outbound calls, call bridging, parking, and transfers — and routes every call through a validated **flow graph**: IVR menus, prompts, transfers, and conditional dialing, expressed as data. It separates signaling and media into independently scalable components, using SIP for call control, RTP for media transport, and gRPC to coordinate services.
+
+Routing needs no model, no GPU, and no network egress. Every flow is checked at startup and is **provably terminating**, so a misconfigured menu is a startup error rather than a caller stuck in a loop at 2am.
 
 Switchboard is **Kubernetes-native by design**. Live media re-anchoring allows active calls to be migrated between RTP Manager pods mid-call, making graceful drain, rolling updates, and autoscaling possible without dropping calls.
 
@@ -33,11 +35,9 @@ flowchart LR
     Sig2 --> RTP3
   end
 
-  subgraph AI["AI Services"]
+  subgraph AI["Speech Services (optional)"]
     direction TB
-    LLM["Ollama<br/>(LLM)"]
     TTS["Piper<br/>(TTS)"]
-    ASR["Whisper<br/>(ASR)"]
   end
 
   %% Edges
@@ -48,14 +48,9 @@ flowchart LR
   Clients <-->|"RTP"| RTP1
   Clients <-->|"RTP"| RTP2
   Clients <-->|"RTP"| RTP3
-  Sig1 -->|"HTTP"| LLM
-  Sig2 -->|"HTTP"| LLM
   RTP1 -->|"HTTP"| TTS
-  RTP1 -->|"HTTP"| ASR
   RTP2 -->|"HTTP"| TTS
-  RTP2 -->|"HTTP"| ASR
   RTP3 -->|"HTTP"| TTS
-  RTP3 -->|"HTTP"| ASR
 
   %% Styling
   classDef clients fill:#0b3d91,stroke:#0b3d91,color:#ffffff,stroke-width:2px;
@@ -69,7 +64,7 @@ flowchart LR
   class Sig1,Sig2 signaling;
   class RTP1,RTP2,RTP3 media;
   class UI ui;
-  class TTS,ASR,LLM ai;
+  class TTS ai;
   class Core,AI plane;
 
   %% Internal: Sig1 → RTP1,2,3
@@ -90,10 +85,9 @@ flowchart LR
   linkStyle 10 stroke:#00a86b,stroke-width:2px;
   linkStyle 11 stroke:#00a86b,stroke-width:2px;
   linkStyle 12 stroke:#00a86b,stroke-width:2px;
-  %% Sig1, Sig2 → LLM
   linkStyle 13 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
   linkStyle 14 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
-  %% RTP → TTS, ASR
+  %% RTP → TTS
   linkStyle 15 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
   linkStyle 16 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
   linkStyle 17 stroke:#e11d48,stroke-width:2px,stroke-dasharray: 5 5;
@@ -123,402 +117,269 @@ make run
 
 ## How It Works
 
-Every INVITE — internal, inbound, and outbound — is handed to a single **LLM
-supervisor**. There is no dialplan and no fast-path matcher: the model decides
-what happens to each call, inside a deterministic boundary that decides what it
-is *allowed* to do.
-
-The defining constraint is that **the model is untrusted**. Caller speech becomes
-prompt text, and a `dial` can reach a trunk and cost money, so every security,
-cost, and correctness decision lives in deterministic Go around a zero-authority
-model — never in the prompt.
+Switchboard never answers a call in order to route it, and never consults a
+model to decide where it goes.
 
 ### The call path
 
 ```mermaid
-flowchart TB
-    Call["INVITE"] --> Ingress["Ingress gate<br/>registered user or trunk peer?"]
-    Ingress --> Router["Router<br/>direction + tenant<br/>(no default tenant)"]
-    Router --> Preflight["Preflight<br/>do we know this tenant?"]
-    Preflight --> Resolve["Deterministic resolution<br/>one correct destination?"]
-    Resolve -->|"registered extension"| Forward["Forward the INVITE<br/>caller hears real ringback"]
-    Resolve -->|"ring group"| Group["Sequential / round-robin<br/>first answer wins"]
-    Resolve -->|"*NNN occupied slot"| Pickup["Unpark and bridge"]
-    Resolve -->|"nothing resolved"| Admission["Admission<br/>prompt? channel free?"]
-    Admission --> Registry["Per-call tool registry<br/>built from (tenant, direction)"]
-    Registry --> Supervisor["Supervisor runner<br/>native tool calling"]
-    Supervisor -->|"dial (not answered)"| Forward
-    Supervisor -->|"speak / gather"| Answer["200 OK<br/>supervisor owns the media"]
-
-    style Call fill:#0b3d91,stroke:#0b3d91,color:#fff
-    style Ingress fill:#6a00ff,stroke:#6a00ff,color:#fff
-    style Router fill:#6a00ff,stroke:#6a00ff,color:#fff
-    style Preflight fill:#6a00ff,stroke:#6a00ff,color:#fff
-    style Resolve fill:#00a86b,stroke:#00a86b,color:#fff
-    style Group fill:#00a86b,stroke:#00a86b,color:#fff
-    style Pickup fill:#00a86b,stroke:#00a86b,color:#fff
-    style Admission fill:#ff7a00,stroke:#ff7a00,color:#fff
-    style Registry fill:#ff7a00,stroke:#ff7a00,color:#fff
-    style Supervisor fill:#e11d48,stroke:#e11d48,color:#fff
-    style Forward fill:#00a86b,stroke:#00a86b,color:#fff
-    style Answer fill:#00a86b,stroke:#00a86b,color:#fff
+flowchart TD
+    INVITE["INVITE"] --> Gate["Ingress gate<br/>unknown source 403 · unmapped DID 603"]
+    Gate --> Route["Router<br/>direction + tenant, no default"]
+    Route --> Admit["Admission<br/>tenant known? channel free?"]
+    Admit -->|"no"| Reject["404 / 486<br/>before any media is allocated"]
+    Admit -->|"yes"| Media["Media session + 180 Ringing<br/>no 183, no 200"]
+    Media --> Engine["Flow engine"]
+    Engine -->|"*NNN occupied slot"| Unpark["Unpark + bridge"]
+    Engine -->|"bare destination"| Forward["Forward<br/>relays the endpoint's own 180/200"]
+    Engine -->|"flow/..."| Graph["Walk the graph"]
+    Engine -->|"nothing matched"| Operator["Tenant operator, else 480"]
 ```
 
-Everything before the supervisor is deterministic and runs **before** any model
-call and **before** the call is answered:
+Everything is deterministic. There is no fallback that behaves differently, no
+service that can be down, and nothing that costs money per call.
 
-1. **Ingress gate** — an INVITE must come from a registered directory user or a
-   configured trunk peer. Anything else is 403. (Requires the SIP trunk: see
-   `resources/config/trunk_peers.json` and `routes.json`.)
-2. **Router** — classifies direction and resolves the tenant. Internal and
-   outbound take the tenant from the From-host's leftmost label; inbound takes it
-   from the DID table. **There is no default tenant** — an unattributable call is
-   404, not a guess.
-3. **Preflight** — do we know this tenant at all? A tenant is known by its prompt,
-   its routing table, or both.
-4. **Resolution** — if the dialed target has exactly one correct destination, it
-   is executed here and the model is never called. Four shapes qualify and no
-   others: a registered directory extension, a `*NNN` pickup of an occupied
-   parking slot from an internal caller, an inbound DID with a mapping, and a
-   named ring group. Everything else — anything needing judgement about intent,
-   wording, or business context — goes to the supervisor.
-5. **Admission** — reached only when nothing resolved. The tenant must have a
-   non-empty prompt and a free channel; at the limit the call gets 486 Busy. The
-   channel limit bounds concurrent **supervised** calls, so a resolved extension
-   dial never consumes one.
+1. **Ingress gate** — the source must be a registered user or a configured trunk
+   peer. An unmapped DID is declined; there is no default tenant.
+2. **Router** — classifies the call as `internal`, `inbound` or `outbound` and
+   attributes it to a tenant.
+3. **Admission** — the tenant must be known, and under its channel limit. The
+   slot is taken **before** the media session, because what it bounds is
+   physical: an RTP port, a media session, and a goroutine held for the life of
+   the call.
+4. **Flow engine** — call retrieval first, then the entry mapping. A bare
+   destination is a one-node dial; a `flow/` entry walks the graph.
 
-Resolution is not a dialplan and not a bypass. Its destinations go through the
-same `Policy.AuthorizeDial` a model-issued dial does, with the same decision
-logging — the routing table is data, never authority. And because a resolved call
-makes no LLM request, an Ollama outage degrades to "the AI receptionist is
-unavailable" while extension dialing, pickup, and queues keep working.
+### Flows
 
-### The model is checked and warmed at startup
+A flow is a directed graph of nodes. Every node has the same shape — a type, a
+type-specific `entry`, and `exits` mapping outcome names to other nodes.
 
-The signaling server verifies the LLM answers and that the configured model is
-pulled, then loads it before any caller arrives, logging what that cost:
+| type | what it does | exits |
+|---|---|---|
+| `ivr` | plays a prompt and collects a digit | one per digit, `timeout`, `invalid`, `retries_exceeded` |
+| `tts` | speaks text | `done` |
+| `play_audio` | plays a file | `done` |
+| `dial_user` | dials an extension or ring group | `answered`*, `no_answer`, `busy`, `rejected`, `unavailable` |
+| `dial_external` | dials a symbolic external destination | `answered`*, `no_answer`, `busy`, `denied`, `failed` |
+| `transfer` | blind transfer | `accepted`*, `failed` |
+| `hangup` | ends the call | terminal |
 
-```
-LLM ready and warmed load_time=6.774s
-```
+`*` terminal — the flow ends, the legs bridge, and the cursor is released.
+Terminal exits cannot be declared in configuration: the graph has nothing to say
+about what happens after a call is connected.
 
-Neither check can fail startup. A missing model or a dead LLM is a warning,
-because a call the tenant's routing table resolves needs no model at all — that
-is the point of putting resolution first. Every chat request carries
-`keep_alive` (default 30m) so the model stays resident between calls; Ollama's
-own 5-minute default is shorter than the gap between calls on a quiet PBX, which
-means the first call of the day would otherwise pay the load inside the caller's
-turn budget.
+**Exit names are fixed in code, not configuration.** That is what makes a typo
+like `no-answer` a startup error instead of a silently dead branch found during
+an outage. Every non-terminal exit must be wired, so what a caller hears when
+the line is busy is always written down.
 
-### The supervisor answers only when it means to
+### Every flow provably terminates
 
-The INVITE handler **never** sends a 200 OK. The first turn decides:
+Two rules, both enforced at load:
 
-| First turn returns | What happens |
-| --- | --- |
-| `dial` (call not answered) | The INVITE is **forwarded**. 180 goes upstream, the target's own 200 — or its 486/480 — is relayed back. The caller hears the real phone ring. |
-| Spoken text | 200 OK. The supervisor owns the media, speaks via TTS, and enters the listen/speak loop. |
-| `dial` (already answered) | The outbound leg is bridged into the media the supervisor already owns. |
+- The inter-node graph is **acyclic**.
+- Repetition lives **inside** a node, bounded by a counter (`ivr.max_retries`),
+  which contributes no edge to the graph.
 
-Answering means "the AI handles this leg's media itself". A staff member dialing
-an extension is therefore a **pure forward** with no AI in the audio path — which
-is why the tenant prompt tells the model to route an internal call silently, with
-a tool call and no text.
-
-### Authorization: the model asks, the policy decides
-
-Two independent layers, neither of which the model can talk its way past:
-
-**Affordance removal (per-call registry).** The tool set is built per call from
-`(tenant, direction)`. An **inbound** caller's registry contains **no
-external-dial tool at all** — there is nothing to authorize because there is
-nothing to call. `unpark` is likewise internal-only, so an outside caller cannot
-guess a slot number and pick up a colleague's held call.
-
-**Class of Service (`resources/config/policy.json`).** Every consequential call
-is adjudicated before it executes:
-
-- **Capability narrowing** — the model emits *symbolic* targets (`sales`,
-  `front-desk`) that a deterministic resolver maps to real destinations. It cannot
-  express a raw `+1900…` through the normal `dial` tool at all.
-- **Default-deny external** with a prefix allowlist, plus barred classes
-  (premium-rate, satellite, IRSF-heavy country codes) that are denied
-  unconditionally.
-- **Spend circuit breaker** per tenant.
-- **Decision logging** for every verdict — a denied external dial is a fraud
-  signal.
-
-A missing `policy.json` is the safest posture, not an error: no external dialing
-anywhere.
-
-### Tools
-
-`dial`, `hangup`, `play_audio`, `park`, `unpark`. Speech is implicit — ordinary
-text is spoken, listening is the runner's job. Each handler returns a
-disposition the dispatch loop acts on: `Continue`, `Terminal`, or `Parked` (the
-loop holds the call without driving further turns; the handler never blocks).
-
-### Providers and native tool calling
-
-The supervisor speaks to one of two providers, selected by a prefix on
-`--llm-model`:
-
-```bash
---llm-model qwen3:8b                       # no prefix means ollama
---llm-model ollama/qwen3:8b                # the same, written explicitly
---llm-model openai                         # openai with its default model (gpt-4o)
---llm-model openai/gpt-4o                  # the same, pinned explicitly
---llm-model openai/meta-llama/llama-3.1-70b \
-  --llm-server https://gateway.internal    # any OpenAI-compatible server
-```
-
-Naming a provider with no model picks that provider's default — `openai` is
-`gpt-4o`, `ollama` is `qwen3:8b` — and its default endpoint, so `--llm-model
-openai` plus `OPENAI_API_KEY` is a complete configuration. The banner always
-prints the **resolved** model, because that default lives in this repo: bumping it
-would change the model, latency and per-minute cost of any deployment using the
-short form. Pin the model explicitly if that matters to you.
-
-The value splits on the **first** slash only, so a model id that contains slashes
-survives intact. An unrecognised prefix is a startup error naming the valid
-providers, not a guess — sending an entire deployment's calls to the wrong
-endpoint over a typo is worse than refusing to start. The cost is that a
-namespaced Ollama model (`hf.co/user/repo`) now needs the explicit `ollama/`
-prefix; the error says so, with the exact string that works.
-
-`--llm-server` defaults per provider (`http://localhost:11434` for ollama,
-`https://api.openai.com` for openai) and is always honoured when set, which is
-what makes Groq, vLLM, OpenRouter and LiteLLM work through the same code path.
-The API key is read from **`OPENAI_API_KEY` in the environment only** — never a
-flag, because flags are visible in `ps` and in the startup banner. It is required
-for `api.openai.com` and optional for a gateway that does not authenticate.
-
-**Ollama** uses the native **`/api/chat`** endpoint with `think: false`, which
-returns `thinking`, `content`, and `tool_calls` as *separate fields*. `think:
-false` is effectively forced by the latency budget: a thinking pass costs seconds,
-and the first turn runs *inside the INVITE transaction*.
-
-**OpenAI** uses `/v1/chat/completions`, which has no separate reasoning field.
-That is exactly why it was avoided originally, so the leak is handled explicitly
-rather than assumed away: reasoning arriving as `reasoning_content`/`reasoning`,
-or folded into content as `<think>` tags, is routed to `thinking` and never to
-`content`. Only `content` is ever spoken.
-
-Content is **filtered rather than trusted on both providers**. `think: false` is a
-request, not a guarantee — `qwen3:4b` was measured writing its chain of thought
-into `content` on every trial — so the same filter runs on the Ollama path too. It
-fails closed: an unterminated `<think>` with no closer, which is what a
-token-truncated response looks like, is treated as reasoning through to the end.
-
-A reasoning model (`o1`, `o3`, `gpt-5`) works but is a poor fit: its latency
-routinely exceeds the mid-call turn budget. Prefer a non-reasoning model for the
-supervisor.
-
-No third-party LLM library is used — both clients are `net/http`.
-
-### The runner: one loop, three nested scopes
+Together they make every flow terminating by construction. A priority-ordered
+dialplan cannot offer this: a `Goto` loop is discovered in production, while an
+inter-node cycle is rejected at startup with the path named.
 
 ```
-callCtx          ← BYE / CANCEL / timeout → idempotent teardown funnel
-  └─ turnCtx     ← runaway breaker / per-turn deadline → abort one turn
-       └─ playbackCtx ← barge-in → cancel TTS only, the turn survives
+$ make validate
+error: acme: flows.main
+  flow contains a cycle: greeting -> menu -> greeting. Flows must be acyclic so
+  every call is guaranteed to terminate; repetition belongs inside a node,
+  bounded by a counter such as ivr.max_retries
 ```
 
-One dispatch loop drains one events channel; producers write with a select that
-also observes cancellation, and **the channel is never closed**. Everything that
-blocks inside a turn — the LLM call, each tool handler, `Listen` — honors its own
-scope, because the loop's top-level select only sees cancellation *between* turns.
+### Answering, and what the caller hears
 
-Two safety mechanisms fall out of this shape:
+Switchboard does not answer a call to route it. A dial reached **before** any
+media node forwards the INVITE, so the caller hears the destination's own
+ringback and can still receive its real final response. Once a node plays media
+the call is answered, and later dials bridge into media the system already owns.
 
-- **Idempotent teardown.** Caller BYE, the `hangup` tool, and a context timeout
-  all converge on one `teardown(reason)` guarded by `sync.Once`. It releases the
-  admission slot, cancels an orphaned outbound leg, and branches on whether we
-  ever answered — pre-answer aborts send **487** and CANCEL the B-leg, post-answer
-  aborts send BYE.
-- **Runaway-turn breaker.** Turns are *reactive* (caller input, human-rate-limited)
-  or *autonomous* (a tool result re-prompting the model, rate-limited by nothing).
-  Consecutive autonomous turns are bounded: a soft cap stops re-prompting, a hard
-  cap speaks a deterministic message and hangs up. Any caller input resets it.
+A dial that fails inside a flow relays **nothing**. What the caller hears is the
+graph's decision, made by whatever node the failure exit leads to — because once
+a 486 reaches the caller, their call is over and no later node can run.
 
-### AI Services
+### Entry patterns
 
-The supervisor connects three external services:
+Extension ranges, DID blocks and number plans cannot be enumerated, so entry
+mappings support patterns using a digit-map vocabulary — `X`=0-9, `N`=2-9,
+`Z`=1-9, `[2-8]` sets, a trailing `.`, and literals. Deliberately not regex.
 
-- **LLM** (Ollama or OpenAI) — the supervisor, default model `qwen3:8b` on Ollama
-- **ASR** (Whisper) — Speech-to-text for caller input
-- **TTS** (Piper) — Text-to-speech for agent responses
+When two patterns match, the more specific wins, and specificity is **computed**
+from how narrow each position is rather than declared:
+
+```
+literal 1  ·  [147] 3  ·  [2-8] 7  ·  N 8  ·  Z 9  ·  X 10  ·  "." unbounded
+```
+
+`N` beats `Z` because 8 < 9. Nothing declares a priority integer — hand-
+maintained priorities were the actual defect in the dialplan this replaces.
+Comparison is a per-position vector, so `NX` and `XN`, which both match `22`
+with neither narrower, are rejected at load rather than silently tie-broken.
+
+### Authorization: the config asks, the policy decides
+
+Configuration is **not** authority. Every destination a flow produces — each
+`dial_user`, `dial_external` and `transfer` target, and each ring group member
+individually — is adjudicated by the tenant's Class of Service before anything
+is dialed. Someone who can edit a flow file still cannot grant themselves a
+trunk.
+
+`dial_external` accepts **symbolic names only**, and no matched digit string can
+become a dial target. Pattern matching selects *what to run*; it never supplies
+*where to dial*.
+
+| Control | Effect |
+|---|---|
+| Default-deny external | A tenant reaches no external destination unless enabled |
+| Allowlist | With external enabled, only listed prefixes pass |
+| Barred classes | Premium-rate, satellite and high-risk ranges blocked unconditionally |
+| Symbolic narrowing | Only names the tenant defined are externally dialable |
+| Spend breaker | Per-tenant daily cap on external calls |
+
+Class of Service is checked at **load** as well as at call time, so a flow that
+could never place its call is caught before a caller finds out. That check is
+side-effect free, so validating a configuration cannot spend the tenant's budget.
+
+### DTMF
+
+Digits arrive by RFC 4733 in the media path, or by SIP INFO for endpoints
+without it. The telephone-event payload type is **echoed from the offer**, never
+assumed — it is a dynamic type, and real endpoints use anything in 96-127.
+
+A prompt and its collection are one operation. Split into "play" then "collect",
+a digit pressed in between lands in neither and is lost; keeping them together
+also lets the first digit cut the prompt short. Digits buffer for the whole
+session, so a caller who dials through a menu keeps everything they pressed.
+
+A leg that negotiated no telephone-event says so immediately rather than waiting
+for digits that cannot arrive, and the flow degrades by a declared exit.
+
+### Call records
+
+`--cdr-path` writes one JSON object per call: the traversal, with the exit each
+node produced and the time spent there, plus the authorization verdicts.
+
+```json
+{"call_id":"...","tenant":"acme","flow":"main-ivr",
+ "path":"greeting -> ring-claims -> to-operator",
+ "hops":[{"node":"greeting","type":"ivr","exit":"2","duration_ms":4200,"detail":"digits 2"},
+         {"node":"ring-claims","type":"dial_user","exit":"busy","detail":"busy (486 Busy Here)"}],
+ "outcome":"answered"}
+```
+
+Without the path, "why did this caller end up with the operator" has no answer.
+
+### Speech services
+
+Routing needs nothing external. One optional service adds voice:
+
+- **TTS** (Piper, or any OpenAI-compatible `/v1/audio/speech`) — synthesizes
+  `tts` node text and `ivr` prompts. Without it, flows can still play recorded
+  audio files, dial, transfer and hang up.
+
+An **ASR** client also ships and is currently unused: nothing transcribes
+anything now that the supervisor is gone. It is kept because it is exactly the
+batch API a future voicemail feature needs, and it costs nothing dormant.
 
 ```mermaid
 sequenceDiagram
     participant Caller
     participant Signaling
     participant RTP as RTP Manager
-    participant ASR as Whisper (ASR)
     participant TTS as Piper (TTS)
-    participant LLM as Ollama (LLM)
 
-    Caller->>Signaling: SIP INVITE
-    Note over Signaling: ingress → router → admission (no 200 OK yet)
-    Signaling->>RTP: CreateSession (gRPC)
-    Signaling->>LLM: /api/chat (system + tools, think:false)
-
-    alt First turn returns dial
-        LLM-->>Signaling: tool_calls: dial
-        Signaling->>Caller: 180 Ringing
-        Signaling->>Caller: relay target's 200 (or 486/480)
-        Note over Signaling: pure forward — no AI in the audio path
-    else First turn returns text
-        LLM-->>Signaling: content
-        Signaling->>Caller: 200 OK + SDP
-        Signaling->>TTS: Synthesize greeting
-        TTS-->>RTP: Audio
-        RTP-->>Caller: RTP (greeting)
-
-        loop Conversation
-            Caller-->>RTP: RTP (speech)
-            RTP->>ASR: Transcribe audio
-            ASR-->>Signaling: Text
-            Signaling->>LLM: /api/chat (history + tools)
-            LLM-->>Signaling: content and/or tool_calls
-            Signaling->>TTS: Synthesize content only
-            TTS-->>RTP: Audio
-            RTP-->>Caller: RTP (response)
-        end
-
-        Note over Signaling: hangup tool → teardown
-        Signaling->>Caller: BYE
-    end
+    Caller->>Signaling: INVITE
+    Signaling->>RTP: CreateSession
+    RTP-->>Signaling: SDP + negotiated DTMF payload type
+    Note over Signaling: flow enters an ivr node
+    Signaling->>RTP: CollectDigits(prompt, timeouts)
+    RTP->>TTS: synthesise prompt
+    TTS-->>RTP: WAV
+    RTP-->>Caller: RTP audio
+    Caller-->>RTP: RFC 4733 digit
+    RTP-->>Signaling: digits + reason
+    Note over Signaling: take the exit the digit names
 ```
 
 ### Tenant Configuration
 
-The supervisor uses a two-layer prompt system, both layers live-reloadable
-through the config API:
+A tenant is described by two files in `resources/tenants/`, plus a block in
+`policy.json`:
 
-1. **Settings** (`resources/config/settings.md`) — Shared across all tenants. Defines the tool contract, the per-direction rules ("route, don't greet" for internal calls), and prompt hardening.
-2. **Tenant config** (`resources/tenants/<name>.md`) — Loaded per call. Contains the complete business knowledge base: identity, departments, staff directory, routing rules, hours, escalation paths, scripted responses. Selected by the **resolved tenant**, not by a route parameter.
+1. **`<tenant>.routing.json`** — the entry mapping (patterns and literals),
+   extensions, DIDs, ring groups, the operator, and the symbolic targets that
+   are the only externally dialable names.
+2. **`<tenant>.flows.json`** — the graphs. Optional; a tenant may route entirely
+   by direct mapping.
+3. **`policy.json` → `tenants.<name>`** — authorization only: what is permitted,
+   never what a name means.
 
-A tenant is described by three files: a Markdown prompt (judgement — identity, tone, business
-facts, escalation), a `<tenant>.routing.json` table (data — extensions, DIDs, ring groups, and the
-names the model may dial), and a block in `policy.json` (authorization — what is permitted).
-Routing data is deliberately kept out of the prompt so a call to a known extension is connected
-without waiting on a model.
+The two tenant files are loaded and validated **as one unit**, so a flow can
+never reference a ring group the other file just removed. Both are editable
+through the config API, and a write that would not load is refused with the
+problems attached — nothing reaches disk unless it passes.
 
-See [`docs/TENANT-EXAMPLE.md`](docs/TENANT-EXAMPLE.md) for a fully worked example of all three.
-`resources/tenants/` ships only `devtenant`, a minimal fixture for local testing — there is no
-default tenant, and a call matching none is rejected.
+There is **no default tenant**. A call whose domain matches none is rejected
+(404), an unmapped DID is declined (603), and an unknown source is refused
+(403).
 
-A tenant with no file is **not admissible** — it cannot inherit `settings.md` and
-quietly become a generic receptionist. That is the "no default tenant" rule.
+See [`docs/TENANT-EXAMPLE.md`](docs/TENANT-EXAMPLE.md) for a worked example.
+`resources/tenants/` ships only `devtenant`, a minimal fixture for local testing.
 
-Treat `tenant.md` as **semi-public**: a caller may be able to coax it out of the
-model, so it must never contain secrets.
+### Trying a flow without SIP
 
-### Running with AI Services
-
-Switchboard talks to LLM, ASR, and TTS over HTTP. It doesn't care how you bring those up — install them however you like and point Switchboard at their endpoints with `--llm-server`, `--asr-server`, and `--tts-server`.
-
-The fastest path is the bundled compose file, which starts Ollama, Whisper, and Piper on the ports Switchboard defaults to:
-
-```bash
-make services-up        # starts Ollama (:11434), Whisper (:8001), Piper (:8000)
-                        # and pulls the LLM model on first run
-
-go run cmd/rtpmanager/main.go &
-go run cmd/signaling/main.go &
-go run cmd/ui/main.go
-
-# Call extension 600 from a SIP client to reach the AI agent
-```
-
-Override the models via env vars (e.g. `OLLAMA_MODEL=llama3.2:3b WHISPER_MODEL=Systran/faster-whisper-base make services-up`). `make services-down` stops them; `make services-logs` tails output. Models persist in named volumes across restarts.
-
-If you'd rather run the services manually (e.g. on a different host, with GPUs, or a different image):
+`flow-smoke` walks a graph against a fake call and prints the traversal, which
+is far faster than placing a call to find out what a menu does:
 
 ```bash
-# 1. Ollama (LLM) — install from https://ollama.com
-ollama serve &
-ollama pull qwen3:8b
-
-# 2. Whisper (ASR) — https://github.com/fedirz/faster-whisper-server
-docker run -d --name whisper-asr -p 8001:8000 \
-  -e WHISPER__MODEL=Systran/faster-whisper-tiny \
-  fedirz/faster-whisper-server:latest-cpu
-
-# 3. Piper TTS — https://github.com/matatonic/openedai-speech
-docker run -d --name piper-tts -p 8000:8000 \
-  ghcr.io/matatonic/openedai-speech
-
-# 4. Point Switchboard at non-default hosts/ports if needed
-go run cmd/rtpmanager/main.go \
-  --asr-server http://localhost:8001 \
-  --tts-server http://localhost:8000 &
-
-go run cmd/signaling/main.go \
-  --llm-server http://localhost:11434 \
-  --llm-model qwen3:8b &
-
-# ...or point the supervisor at OpenAI instead of a local model. The key comes
-# from the environment; there is deliberately no flag for it.
-OPENAI_API_KEY=sk-... go run cmd/signaling/main.go --llm-model openai &
-
-# ...or pin the model rather than taking the default
-OPENAI_API_KEY=sk-... go run cmd/signaling/main.go --llm-model openai/gpt-4o &
-
-# ...or at any OpenAI-compatible gateway (Groq, vLLM, OpenRouter, LiteLLM)
-go run cmd/signaling/main.go \
-  --llm-model openai/llama-3.3-70b-versatile \
-  --llm-server https://api.groq.com/openai &
-
-go run cmd/ui/main.go
-
-# 5. Register a softphone and dial another registered extension
+make flow-smoke DIALED=700 DIGITS=2
 ```
 
-The AI services can run on any reachable host — replace `localhost` with the IP of wherever you started them.
+```
+dialing "700" as internal for tenant devtenant
 
-The signaling server **requires** an LLM: without a supervisor there is
-nothing to route calls, so it refuses to start rather than running unsupervised.
-It does not require the LLM to be *reachable* — a deployment whose model is down
-still starts and still routes every call deterministic resolution can resolve.
+flow "main-ivr", 2 hop(s)
+  1. greeting         (ivr)          --2--> digits 2
+  2. ring-engineering (dial_user)    --answered--> bridged to user/101
 
-### Trying the supervisor without SIP
+path: greeting -> ring-engineering
+outcome: answered
+```
 
-`cmd/agent-smoke` drives the real runner against a real LLM with a fake call
-session, so you can watch routing decisions without softphones, RTP, ASR, or TTS.
-Its `--model` takes the same `[provider/]model` form as `--llm-model`.
-Stdin becomes caller speech; tool dispatches and TTS print with a `>>>` prefix.
+### Running with TTS
 
 ```bash
-# Internal call: expect an immediate ">>> forward user/105" and no spoken text
-go run ./cmd/agent-smoke --direction internal --caller 102 --callee 105
+# Piper TTS — https://github.com/matatonic/openedai-speech
+docker run -d --name piper-tts -p 8000:8000 ghcr.io/matatonic/openedai-speech
 
-# Inbound call: expect a greeting, then intent routing as you type
-go run ./cmd/agent-smoke --direction inbound --caller +15551234567 --callee 5558001200
+# Point the RTP manager at it
+./switchboard-rtpmanager --tts-server http://localhost:8000
 
-# Against OpenAI rather than a local model
-OPENAI_API_KEY=sk-... go run ./cmd/agent-smoke --model openai/gpt-4o \
-  --direction inbound --caller +15551234567 --callee 5558001200
+# Register a softphone and dial 700 to reach the example menu
 ```
-
-Use `--verbose` to surface the model's `thinking` field on stderr — it must never
-appear in a `>>> tts:` line.
 
 ### Configuration Files
 
 | File | Purpose |
 | --- | --- |
-| `resources/config/settings.md` | Shared supervisor instructions: tool contract, per-direction rules, prompt hardening |
-| `resources/tenants/<name>.md` | Per-tenant **judgement**: identity, tone, business facts, escalation language. No routing data |
-| `resources/tenants/<name>.routing.json` | Per-tenant **routing data**: extensions, DIDs, ring groups, and the symbolic names the model may dial. Read by both the resolver and capability narrowing, so a name cannot mean two things |
-| `resources/config/policy.json` | Class of Service and capacity only: channel limits, external allowlist, barred prefixes, spend breaker. A leftover `symbolic_targets` key here is a hard startup error — it moved to the routing file |
+| `resources/tenants/<name>.routing.json` | Entry mapping (patterns + literals), extensions, DIDs (**what happens** to a call to a number this tenant owns), ring groups, operator, and the symbolic names that are externally dialable |
+| `resources/tenants/<name>.flows.json` | Flow graphs: menus, prompts, transfers. Optional |
+| `resources/config/policy.json` | Class of Service and capacity only: channel limits, external allowlist, barred prefixes, spend breaker. A leftover `symbolic_targets` key is a hard startup error — it belongs in the routing file |
 | `resources/config/trunk_peers.json` | SIP trunk peers — the ingress gate matches inbound INVITEs against these |
-| `resources/config/routes.json` | DID → tenant mapping for inbound calls |
+| `resources/config/routes.json` | **Whose** number is this — DID → tenant, global and not tenant-editable. What then happens to the call is the tenant's `dids` block |
 
 ## Vision & Roadmap
 
-Switchboard aims to replace static IVR trees and rigid call routing with an AI engine that reads natural language configuration and makes decisions like a human receptionist would.
+Switchboard replaces static, priority-ordered dialplans with a flow graph that
+is validated at startup and provably terminates — and keeps conversation out of
+the PBX, where it does not belong.
 
 ### What Works Today
 
@@ -528,18 +389,20 @@ Switchboard aims to replace static IVR trees and rigid call routing with an AI e
 - RTP media bridging between sessions
 - Basic admin dashboard with live updates
 - Multiple RTP Manager load balancing with session affinity
-- **Live media re-anchoring** — sessions can be migrated between RTP Managers mid-call (both IVR and bridged calls), enabling graceful drain and zero-downtime updates
+- **Live media re-anchoring** — sessions can be migrated between RTP Managers mid-call, enabling graceful drain and zero-downtime updates
 - RTP Manager drain API (graceful and aggressive modes) with per-session migration
-- **LLM supervisor on every call** — no dialplan, no fast-path matcher
-  - Deferred answer: `dial` forwards the INVITE (real ringback), speech answers and takes the media
-  - Native Ollama `/api/chat` tool calling with `think: false`, so reasoning never reaches TTS
-  - Per-call tool registry scoped by `(tenant, direction)` — inbound gets no external dial
-  - Deterministic tool authorization: Class of Service, symbolic-target narrowing, barred prefixes, spend breaker
-  - Per-tenant admission with channel limits (486 at the limit) and no default tenant
-  - Idempotent teardown funnel, nested call/turn/playback scopes, runaway-turn breaker
-- Speech recognition via Whisper ASR server (batch transcription)
-- Text-to-speech playback through TTS server
-- Per-tenant LLM personalities loaded from markdown files
+- **Deterministic flow graphs on every call** — no model, no GPU, no network egress
+  - Closed node vocabulary with exit names fixed in code, so an unwired or misspelled exit fails at startup
+  - Acyclic inter-node graphs with counter-bounded retries: every flow provably terminates
+  - Digit-map entry patterns with computed specificity; ambiguity is a load error
+  - Deferred answer: a dial before any media node forwards and relays real ringback
+  - Typed dial outcomes, so busy routes differently from no-answer
+  - Class of Service enforced at load *and* at call time; symbolic-only external targets
+  - Per-tenant admission with channel limits, taken before any media is allocated
+- **DTMF** — RFC 4733 with the payload type echoed from the offer, SIP INFO fallback, type-ahead buffering
+- Text-to-speech playback through a TTS server
+- `validate` subcommand and `flow-smoke` harness
+- Append-only call records carrying the traversal and authorization verdicts
 
 ### What Doesn't Work Yet
 
@@ -548,8 +411,11 @@ Switchboard aims to replace static IVR trees and rigid call routing with an AI e
 - SRTP/TLS (plaintext only)
 - Most SIP edge cases (re-INVITE, UPDATE, REFER, etc.)
 - Proper error handling in many places
-- Barge-in — the caller cannot interrupt the AI mid-sentence; the `playbackCtx` scope exists for it, but it needs speech-onset detection from the media layer
-- Mid-call tools (transfer, recording control, conference, mute)
+- **Voicemail and call recording** — nothing writes audio to disk
+- In-band DTMF tone detection (RFC 4733 and SIP INFO only)
+- DTMF on a bridged leg — the bridge relays bytes without parsing them
+- Attended transfer (blind only)
+- Queues, callbacks, and park-as-a-node
 
 ### What Might Be Wrong
 
@@ -560,23 +426,39 @@ Switchboard aims to replace static IVR trees and rigid call routing with an AI e
 
 ### Where We're Headed
 
-**Context enrichment before the supervisor.** The deterministic pre-LLM layer (ingress → router → admission) is the right place to make HTTP requests, query databases, and inspect SIP headers, so the supervisor starts its first turn already knowing who the caller is. That layer is deterministic and fast; the supervisor is flexible and intelligent. Each does what it's best at.
+**E911 — the next change, and a prerequisite for production traffic.** Nothing
+currently special-cases `911`. A tenant with the default `allow_external_dial:
+false` cannot dial it at all, and a perfectly reasonable `"9."` outbound pattern
+silently swallows it. Kari's Law requires direct 911 dialing without a prefix
+plus on-site notification, and RAY BAUM'S Act requires a dispatchable location.
+Emergency routing must bypass Class of Service entirely and be un-configurable —
+it cannot be something a tenant can misconfigure. The validator currently warns
+about pattern shadowing; that is a guardrail, not a solution.
 
-**Barge-in.** The runner already isolates TTS playback in its own `playbackCtx`, so cancelling a prompt mid-utterance without disturbing the turn or the call is a solved problem structurally. What is missing is the trigger: the media layer needs to expose speech-onset/VAD so a contentless interrupt event can fire the cancel.
+**Voicemail.** The `voicemail` node was deliberately cut from the flow
+vocabulary because recording forces a media-plane refactor: there is no
+persistent per-session RTP socket, so a recorder cannot coexist with playback.
+The ASR client is already the batch API transcription needs.
 
-**Small, focused models.** We deliberately use small LLMs (8B parameters) for routing decisions. The AI engine is not meant to be a general-purpose chatbot — it's a decision-making engine that operates within the boundaries of a tenant's configuration. Small models are faster, cheaper, and more predictable. We accept that they may occasionally make odd decisions, but the bounded context (tenant config + settings) keeps them on track.
+**Barge-in beyond menus.** The first digit already cuts an `ivr` prompt short,
+because collection owns the socket while the prompt plays. Interrupting a `tts`
+node needs the same socket ownership generalised.
 
-**Known trade-offs.** AI routing will sometimes do unexpected things. We mitigate this by keeping the model small, the configuration explicit, and the action set limited. The tenant markdown file is the guardrail — if the AI doesn't know something, it should say so and take a safe default action (take a message, transfer to a general queue). Over time, we'll add monitoring and feedback loops to catch and correct bad decisions.
+**Conversational AI as an external agent.** The LLM supervisor was removed from
+the call path, not from the product. Conversation belongs behind a destination —
+reached like any other endpoint, with its own realtime-voice stack — rather than
+inside a PBX that must answer an INVITE in milliseconds. A flow can dial it; the
+PBX need not know what it is.
 
-**Recording and real-time transcription.** Call recording with automatic transcription is planned. Real-time transcription will allow live captions and enable features like supervisor monitoring and compliance tooling.
+**Recording and real-time transcription**, once the media plane supports it.
 
-**Barging and supervisor tools.** Call barging (listen, whisper, barge-in) will give supervisors the ability to monitor and intervene in live calls. Combined with real-time transcription, this enables a full contact center toolkit.
+**WebRTC gateway.** Browser-based agents, supervisors, and click-to-call.
 
-**WebRTC gateway.** A WebRTC gateway will allow browser-based communication — agents, supervisors, and end users connecting directly from a web browser without a SIP client. This opens up softphone UIs, click-to-call, and embedded voice widgets.
+**Smart autoscaling and zero-downtime updates.** Live media re-anchoring already
+works; the missing piece is orchestration that drains pods and scales on load.
 
-**Smart autoscaling and zero-downtime updates.** Live media re-anchoring already works today — the missing piece is an intelligent orchestration layer that signals RTP Manager pods to drain, waits for sessions to migrate, and scales the pool up or down based on load. The goal is daytime updates with no call drops: the system tells a pod to drain, sessions re-anchor to healthy pods, and the empty pod gets replaced. This is a natural extension of the drain API that already exists.
-
-**MCP (Model Context Protocol) support.** MCP integration will allow the AI engine to use external tools during a call — looking up customer records, checking order status, querying CRMs — giving the LLM access to live data rather than relying solely on the static tenant configuration file.
+**MCP control plane.** Programmatic access to configuration and live call state,
+so flows and tenants can be managed by tooling rather than by editing files.
 
 ## Documentation
 

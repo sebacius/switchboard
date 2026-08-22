@@ -99,6 +99,7 @@ func (t *GRPCTransport) CreateSession(ctx context.Context, info SessionInfo) (*S
 		RemoteAddr:    info.RemoteAddr,
 		RemotePort:    int32(info.RemotePort),
 		OfferedCodecs: info.OfferedCodecs,
+		Offered:       toProtoOffers(info.Offered),
 	}
 
 	resp, err := t.client.CreateSession(ctx, req)
@@ -116,12 +117,30 @@ func (t *GRPCTransport) CreateSession(ctx context.Context, info SessionInfo) (*S
 	t.mu.Unlock()
 
 	return &SessionResult{
-		SessionID:     resp.SessionId,
-		LocalAddr:     resp.LocalAddr,
-		LocalPort:     int(resp.LocalPort),
-		SDPBody:       resp.SdpBody,
-		SelectedCodec: resp.SelectedCodec,
+		SessionID:        resp.SessionId,
+		LocalAddr:        resp.LocalAddr,
+		LocalPort:        int(resp.LocalPort),
+		SDPBody:          resp.SdpBody,
+		SelectedCodec:    resp.SelectedCodec,
+		TelephoneEventPT: int(resp.TelephoneEventPt),
 	}, nil
+}
+
+// toProtoOffers converts the client's codec offers onto the wire.
+func toProtoOffers(offers []CodecOffer) []*rtpv1.CodecOffer {
+	if len(offers) == 0 {
+		return nil
+	}
+	out := make([]*rtpv1.CodecOffer, 0, len(offers))
+	for _, o := range offers {
+		out = append(out, &rtpv1.CodecOffer{
+			PayloadType:  int32(o.PayloadType),
+			EncodingName: o.EncodingName,
+			ClockRate:    int32(o.ClockRate),
+			Fmtp:         o.FMTP,
+		})
+	}
+	return out
 }
 
 // DestroySession implements Transport.DestroySession
@@ -310,11 +329,12 @@ func (t *GRPCTransport) CreateSessionPendingRemote(ctx context.Context, callID s
 	t.mu.Unlock()
 
 	return &SessionResult{
-		SessionID:     resp.SessionId,
-		LocalAddr:     resp.LocalAddr,
-		LocalPort:     int(resp.LocalPort),
-		SDPBody:       resp.SdpBody,
-		SelectedCodec: resp.SelectedCodec,
+		SessionID:        resp.SessionId,
+		LocalAddr:        resp.LocalAddr,
+		LocalPort:        int(resp.LocalPort),
+		SDPBody:          resp.SdpBody,
+		SelectedCodec:    resp.SelectedCodec,
+		TelephoneEventPT: int(resp.TelephoneEventPt),
 	}, nil
 }
 
@@ -437,4 +457,62 @@ func (t *GRPCTransport) GetSessionID(callID string) (string, bool) {
 	defer t.mu.RUnlock()
 	sessionID, ok := t.callToSession[callID]
 	return sessionID, ok
+}
+
+// CollectDigits implements Transport.CollectDigits.
+func (t *GRPCTransport) CollectDigits(ctx context.Context, req CollectRequest) (*CollectResult, error) {
+	grpcReq := &rtpv1.CollectDigitsRequest{
+		SessionId:           req.SessionID,
+		Interruptible:       req.Interruptible,
+		MaxDigits:           int32(req.MaxDigits),
+		Terminators:         req.Terminators,
+		FirstDigitTimeoutMs: int32(req.FirstDigitTimeoutMs),
+		InterDigitTimeoutMs: int32(req.InterDigitTimeoutMs),
+		OverallTimeoutMs:    int32(req.OverallTimeoutMs),
+		FlushBuffer:         req.FlushBuffer,
+	}
+	if p := req.Prompt; p != nil {
+		grpcReq.Prompt = &rtpv1.PromptSpec{
+			Text:  p.Text,
+			Voice: p.Voice,
+			File:  p.File,
+			Files: p.Files,
+		}
+	}
+
+	resp, err := t.client.CollectDigits(ctx, grpcReq)
+	if err != nil {
+		return nil, fmt.Errorf("CollectDigits RPC failed: %w", err)
+	}
+
+	return &CollectResult{
+		Digits:            resp.Digits,
+		Reason:            collectReasonFromProto(resp.Reason),
+		PromptInterrupted: resp.PromptInterrupted,
+		Err:               resp.ErrorMessage,
+	}, nil
+}
+
+// collectReasonFromProto maps the wire enum onto the client's reason.
+func collectReasonFromProto(r rtpv1.CollectReason) CollectReason {
+	switch r {
+	case rtpv1.CollectReason_COLLECT_REASON_TERMINATOR:
+		return CollectReasonTerminator
+	case rtpv1.CollectReason_COLLECT_REASON_MAX_DIGITS:
+		return CollectReasonMaxDigits
+	case rtpv1.CollectReason_COLLECT_REASON_INTER_DIGIT_TIMEOUT:
+		return CollectReasonInterDigitTimeout
+	case rtpv1.CollectReason_COLLECT_REASON_FIRST_DIGIT_TIMEOUT:
+		return CollectReasonFirstDigitTimeout
+	case rtpv1.CollectReason_COLLECT_REASON_NO_INPUT:
+		return CollectReasonNoInput
+	case rtpv1.CollectReason_COLLECT_REASON_CANCELED:
+		return CollectReasonCanceled
+	case rtpv1.CollectReason_COLLECT_REASON_NO_DTMF_TRANSPORT:
+		return CollectReasonNoDTMFTransport
+	case rtpv1.CollectReason_COLLECT_REASON_ERROR:
+		return CollectReasonError
+	default:
+		return CollectReasonUnspecified
+	}
 }

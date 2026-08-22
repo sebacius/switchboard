@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/emiago/sipgo"
@@ -12,11 +11,13 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/agent"
 	"github.com/sebas/switchboard/internal/signaling/api"
 	"github.com/sebas/switchboard/internal/signaling/b2bua"
+	"github.com/sebas/switchboard/internal/signaling/cdr"
 	"github.com/sebas/switchboard/internal/signaling/config"
 	"github.com/sebas/switchboard/internal/signaling/dialog"
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/drain"
 	"github.com/sebas/switchboard/internal/signaling/filemanager"
-	"github.com/sebas/switchboard/internal/signaling/llm"
+	"github.com/sebas/switchboard/internal/signaling/flow"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 	"github.com/sebas/switchboard/internal/signaling/parking"
@@ -36,6 +37,7 @@ type SwitchBoard struct {
 	byeHandler      *routing.BYEHandler
 	ackHandler      *routing.ACKHandler
 	cancelHandler   *routing.CANCELHandler
+	infoHandler     *routing.INFOHandler
 	dialogMgr       dialog.DialogStore
 	transport       mediaclient.Transport
 	callService     b2bua.CallService
@@ -141,30 +143,28 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	parkAdapter := parking.NewAPIAdapter(parkService)
 	apiServer.SetParkProvider(parkAdapter)
 
-	// Load tenant prompts (settings.md + tenants/*.md). They are the supervisor's
-	// system instruction AND admission's preflight input: a tenant with no prompt
-	// is not admissible, so a load failure here means no calls, not silent
-	// unsupervised ones.
-	prompts, err := agent.NewPromptStore(cfg.SettingsPath, cfg.TenantsPath)
-	if err != nil {
-		slog.Warn("Tenant prompts loaded with errors; unloaded tenants will be rejected",
-			"settings", cfg.SettingsPath, "tenants", cfg.TenantsPath, "error", err)
-	}
-	slog.Info("Tenant prompts loaded", "tenants", prompts.Tenants())
-
 	// Load per-tenant routing tables (<tenant>.routing.json). This is the data
-	// deterministic resolution routes BY, and the source of the symbolic targets
-	// the model may dial — one file so the two cannot disagree. A malformed table
-	// IS fatal: starting without it would silently send every call that should
-	// have been routed in 0ms to a language model instead.
-	routingStore, err := agent.NewRoutingStore(cfg.RoutingPath)
+	// routing runs on, and the source of the symbolic targets a flow may dial —
+	// one file so the two cannot disagree. A malformed table IS fatal: it is the
+	// only thing that knows where a call should go, so starting without it would
+	// mean answering calls we cannot route.
+	routingStore, err := dialplan.NewRoutingStore(cfg.RoutingPath)
 	if err != nil {
 		_ = ua.Close()
 		locStore.Close()
 		_ = mediaTransport.Close()
 		return nil, fmt.Errorf("failed to load tenant routing tables: %w", err)
 	}
-	slog.Info("Tenant routing tables loaded", "path", cfg.RoutingPath, "tenants", routingStore.Tenants())
+	flowTenants := make([]string, 0)
+	for _, tenant := range routingStore.Tenants() {
+		if set, ok := routingStore.TenantFlows(tenant); ok {
+			flowTenants = append(flowTenants, fmt.Sprintf("%s:%v", tenant, set.Names()))
+		}
+	}
+	slog.Info("Tenant routing loaded",
+		"path", cfg.RoutingPath,
+		"tenants", routingStore.Tenants(),
+		"flows", flowTenants)
 
 	// Load Class-of-Service + capacity policy. A missing file is the safe
 	// default: no external dialing anywhere, default channel limit per tenant.
@@ -181,49 +181,10 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		"tenants", len(policyCfg.Tenants),
 	)
 
-	// Create the tool-calling LLM client. The supervisor cannot run without one,
-	// so a misconfigured provider is a hard failure rather than a silently
-	// unsupervised switch.
-	//
-	// The API key is read here, from the environment, and never travels through
-	// cfg: that struct is echoed by the startup banner and passed around freely.
-	// For the same reason it is not a flag — flags are visible in ps.
-	chatClient, err := llm.New(llm.Config{
-		Provider:  cfg.LLMProvider,
-		ServerURL: cfg.LLMServerURL,
-		Model:     cfg.LLMModel,
-		KeepAlive: cfg.LLMKeepAlive,
-		APIKey:    os.Getenv("OPENAI_API_KEY"),
-		// The transport deadline must outlast the largest turn budget, or it
-		// fires first and --first-turn-timeout silently does nothing.
-		Timeout: cfg.FirstTurnTimeout + 30*time.Second,
-	})
-	if err != nil {
-		_ = ua.Close()
-		locStore.Close()
-		_ = mediaTransport.Close()
-		return nil, fmt.Errorf("LLM supervisor: %w", err)
-	}
-	logArgs := []any{"provider", cfg.LLMProvider, "server", cfg.LLMServerURL, "model", cfg.LLMModel}
-	if cfg.LLMProvider == llm.ProviderOllama {
-		logArgs = append(logArgs, "keep_alive", cfg.LLMKeepAlive)
-	}
-	slog.Info("LLM supervisor configured", logArgs...)
-	if cfg.KeepAliveIgnoredWarning != "" {
-		slog.Warn(cfg.KeepAliveIgnoredWarning)
-	}
-
-	// Check the model is reachable and pulled, then load it — in the background,
-	// because a cold multi-gigabyte load takes minutes and the SIP stack must not
-	// wait on it. Nothing here can fail the boot: a deployment whose LLM is down
-	// still routes every call its tenant routing tables resolve.
-	go llm.ProbeAndWarm(context.Background(), chatClient, cfg.LLMModel, slog.Default())
-
 	// Create file manager for config API
 	fileMgr := filemanager.New(filemanager.Config{
-		SettingsDir:      cfg.SettingsPath,
 		TenantsDir:       cfg.TenantsPath,
-		SettingsReloader: filemanager.MultiReloader{prompts, routingStore},
+		SettingsReloader: routingStore,
 	})
 	apiServer.SetFileProvider(fileMgr)
 
@@ -266,26 +227,30 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	sipTrunk := trunk.NewStaticTrunk(trunkPeers, "")
 	slog.Info("Trunk loaded", "peers", trunkPeers.Count(), "dids", didRoutes.Count())
 
-	// Deterministic pre-LLM layers: the router classifies direction and resolves
-	// the tenant (no default), and admission enforces preflight + per-tenant
-	// channel limits before the INVITE is answered.
+	// The router classifies direction and resolves the tenant (no default);
+	// admission enforces tenant preflight and the per-tenant channel limit
+	// before the INVITE is answered.
 	directory := agent.DirectoryFromLocation(locStore)
 	callRouter := agent.NewRouter(directory, sipTrunk, didRoutes)
-	admission := agent.NewAdmission(prompts, routingStore, policyCfg.DefaultChannelLimit, policyCfg.ChannelLimits())
+	admission := agent.NewAdmission(routingStore, policyCfg.DefaultChannelLimit, policyCfg.ChannelLimits())
 
-	// buildPolicy is shared by deterministic resolution and the supervisor so a
-	// destination is adjudicated identically however it was chosen. The symbolic
+	// buildPolicy is shared by every path that can produce a destination, so one
+	// is adjudicated identically however it was chosen. The symbolic
 	// targets come from the tenant's routing table — policy.json no longer
 	// carries them, and refuses to start if it still does.
+	// The spend ledger is process-wide on purpose. A Policy is built per call, so
+	// a counter living on it reset every INVITE and the daily cap could never be
+	// reached; sharing the ledger is what makes max_external_units_per_day mean
+	// what it says.
+	spendLedger := agent.NewSpendLedger()
 	buildPolicy := func(cc agent.CallContext) *agent.Policy {
-		return agent.NewPolicy(cc.Tenant,
-			policyCfg.TenantPolicyFor(cc.Tenant, agent.SymbolicTargetsFor(routingStore, cc.Tenant)),
-			slog.Default())
+		return agent.NewPolicyWithLedger(cc.Tenant,
+			policyCfg.TenantPolicyFor(cc.Tenant, dialplan.SymbolicTargetsFor(routingStore, cc.Tenant)),
+			spendLedger, slog.Default())
 	}
 
-	// operatorFor is the tenant's fallback human, read from the same routing table
-	// the resolver uses. The executor needs it so an unknown tool name transfers
-	// the caller instead of hanging up on them.
+	// operatorFor is the tenant's fallback human, read from the same routing
+	// table the resolver uses: where a call goes when nothing else claims it.
 	operatorFor := func(cc agent.CallContext) string {
 		table, ok := routingStore.TenantRouting(cc.Tenant)
 		if !ok {
@@ -294,35 +259,32 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		return table.Operator
 	}
 
-	// Deterministic resolution runs BEFORE the supervisor. A call with exactly
-	// one correct destination — a registered extension, a *7XX pickup, a mapped
-	// DID, a ring group — is executed here and never reaches the model.
-	callResolution := agent.NewCallResolution(agent.CallResolutionConfig{
+	// A call with exactly one correct destination — a registered extension, a
+	// *7XX pickup, a mapped DID, a ring group — is executed directly.
+	// Call records answer "why did this caller end up there", which needs the
+	// path rather than only the outcome. A record that cannot be written must
+	// never take the call with it, so a failure here warns and carries on.
+	var traceSink flow.TraceSink
+	if cfg.CDRPath != "" {
+		sink, err := cdr.NewJSONLSink(cfg.CDRPath)
+		if err != nil {
+			slog.Warn("Call records disabled", "path", cfg.CDRPath, "error", err)
+		} else {
+			slog.Info("Call records enabled", "path", cfg.CDRPath)
+			traceSink = flow.CDRTrace{Sink: sink, Log: slog.Default()}
+		}
+	}
+
+	// The flow engine routes every call: single-hop destinations directly, and
+	// anything mapped to a flow through its graph.
+	flowEngine := flow.New(flow.Config{
+		Routing:     routingStore,
+		Flows:       routingStore,
 		Resolver:    agent.NewResolver(routingStore, directory, parkService, slog.Default()),
 		Parking:     parkService,
 		BuildPolicy: buildPolicy,
+		Trace:       traceSink,
 		Logger:      slog.Default(),
-	})
-
-	// The supervisor runner. The tool registry is built PER CALL from
-	// (tenant, direction) — an inbound caller is never offered external dial —
-	// and every consequential call is adjudicated by that tenant's policy.
-	runner := agent.NewRunner(agent.RunnerConfig{
-		Prompts:          prompts,
-		Model:            cfg.LLMModel,
-		Voice:            cfg.TTSVoice,
-		Chat:             chatClient,
-		Logger:           slog.Default(),
-		TurnTimeout:      cfg.TurnTimeout,
-		FirstTurnTimeout: cfg.FirstTurnTimeout,
-		BuildExecutor: func(cc agent.CallContext) agent.ToolExecutor {
-			policy := buildPolicy(cc)
-			registry := agent.BuildRegistry(cc, policy, agent.RegistryDeps{
-				Parking: parkService,
-				Logger:  slog.Default(),
-			})
-			return agent.NewCallExecutor(registry, policy, operatorFor(cc))
-		},
 	})
 
 	// Create SIP method handlers
@@ -334,13 +296,18 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		apiServer,
 		callRouter,
 		admission,
-		callResolution,
-		runner,
+		flowEngine,
+		operatorFor,
 		locStore,
 		callService,
 		sipTrunk,
 		didRoutes,
 	)
+	// SIP INFO carries DTMF for endpoints with no RFC 4733. The sink is wired in
+	// group 10 with the flow engine; registering the method now means an INFO
+	// gets a 200 rather than a 501 in the meantime.
+	infoHandler := routing.NewINFOHandler(dialogMgr, nil)
+
 	byeHandler := routing.NewBYEHandler(dialogMgr, callService)
 	ackHandler := routing.NewACKHandler(dialogMgr)
 	cancelHandler := routing.NewCANCELHandler(dialogMgr)
@@ -357,6 +324,7 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 		byeHandler:      byeHandler,
 		ackHandler:      ackHandler,
 		cancelHandler:   cancelHandler,
+		infoHandler:     infoHandler,
 		dialogMgr:       dialogMgr,
 		transport:       mediaTransport,
 		callService:     callService,
@@ -394,8 +362,9 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	uas.OnRequest(sip.BYE, proxy.handleBYE)
 	uas.OnRequest(sip.ACK, proxy.handleACK)
 	uas.OnRequest(sip.CANCEL, proxy.handleCANCEL)
+	uas.OnRequest(sip.INFO, proxy.handleINFO)
 
-	slog.Info("SIP handlers registered", "methods", "REGISTER, INVITE, BYE, ACK, CANCEL")
+	slog.Info("SIP handlers registered", "methods", "REGISTER, INVITE, BYE, ACK, CANCEL, INFO")
 	slog.Info("Configuration", "port", cfg.Port, "bind", cfg.BindAddr, "realm", realm)
 
 	return proxy, nil
@@ -443,6 +412,10 @@ func (p *SwitchBoard) handleACK(req *sip.Request, tx sip.ServerTransaction) {
 
 func (p *SwitchBoard) handleCANCEL(req *sip.Request, tx sip.ServerTransaction) {
 	p.cancelHandler.HandleCANCEL(req, tx)
+}
+
+func (p *SwitchBoard) handleINFO(req *sip.Request, tx sip.ServerTransaction) {
+	p.infoHandler.HandleINFO(req, tx)
 }
 
 func (p *SwitchBoard) Close() error {

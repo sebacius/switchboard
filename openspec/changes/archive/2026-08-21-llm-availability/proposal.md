@@ -33,7 +33,7 @@ the cold start, and nothing makes the cause legible:
   resident between calls.
 - **A real readiness check.** `Client.Ready()` contacts `/api/tags` instead of
   inspecting its own configuration.
-- **BREAKING (behaviour): the first turn gets its own budget**, default 90s,
+- **BREAKING (behavior): the first turn gets its own budget**, default 90s,
   separate from the mid-call turn budget which stays at 30s. The two are bounded
   by different things: the first turn runs while the caller hears ringback and
   may include a model load, whereas a mid-call turn is a silence with an open
@@ -51,7 +51,7 @@ the cold start, and nothing makes the cause legible:
 
 ### New Capabilities
 
-<!-- None: this is supervisor behaviour, not a new capability. -->
+<!-- None: this is supervisor behavior, not a new capability. -->
 
 ### Modified Capabilities
 

@@ -138,3 +138,15 @@ func (e *LookupError) Error() string {
 func (e *LookupError) Unwrap() error {
 	return e.Cause
 }
+
+// TargetOutcome records what one target of a parallel dial did. Ringing four
+// phones and reporting only "nobody answered" throws away the difference
+// between four busy signals and four unregistered handsets, which is exactly
+// the difference an operator reading a call record wants.
+type TargetOutcome struct {
+	Target    string
+	Answered  bool
+	SIPCode   int
+	SIPReason string
+	Err       error
+}

@@ -67,8 +67,6 @@ func NewServer(cfg *config.Config) (*Server, error) {
 
 	// Configuration management
 	mux.HandleFunc("/admin/config", s.handleConfigPage)
-	mux.HandleFunc("/admin/config/partials/settings", s.handleConfigSettingsPartial)
-	mux.HandleFunc("/admin/config/settings/save", s.handleConfigSettingsSave)
 	mux.HandleFunc("/admin/config/partials/tenants", s.handleConfigTenantsPartial)
 	mux.HandleFunc("/admin/config/tenants/edit", s.handleConfigTenantEdit)
 	mux.HandleFunc("/admin/config/tenants/new", s.handleConfigTenantNew)

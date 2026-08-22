@@ -31,14 +31,17 @@ type CallSession interface {
 	PlayAudio(ctx context.Context, file string) error
 	PlayTTS(ctx context.Context, text, voice string) error
 	StopAudio() error
-	Listen(ctx context.Context, maxDurationMs, silenceTimeoutMs int) (text string, err error)
 
-	// Answer model (design #7). The INVITE handler never answers; the supervisor
-	// decides. Answering means "the AI handles this leg's media itself".
+	// CollectDigits plays a prompt and collects DTMF digits in one operation, so
+	// a digit pressed during the prompt is not lost between two calls.
+	CollectDigits(ctx context.Context, req CollectRequest) (CollectResult, error)
 
-	// Answer sends the 200 OK with the supervisor's SDP, taking ownership of the
+	// Answer model. The INVITE handler never answers in order to route; a call
+	// is answered only when something needs to own its media.
+
+	// Answer sends the 200 OK with the held-back SDP, taking ownership of the
 	// media. It is idempotent: a second call is a no-op returning nil. Every
-	// media operation (PlayTTS/PlayAudio/Listen) requires an answered leg.
+	// media operation (PlayTTS/PlayAudio) requires an answered leg.
 	Answer(ctx context.Context) error
 
 	// MarkRinging records that a 180 Ringing has already been sent for this leg,
@@ -59,12 +62,20 @@ type CallSession interface {
 	// code. Returns an error if the target could not be reached.
 	Forward(ctx context.Context, target string, timeout time.Duration) error
 
+	// ForwardOutcome is Forward without the upstream relay: it reports what
+	// happened and sends the caller nothing, so a flow decides what they hear.
+	ForwardOutcome(ctx context.Context, target string, timeout time.Duration) (DialOutcome, error)
+
 	// ForwardGroup is the pre-answer routing path for a ring group. Each round is
 	// dialed at once (first answer wins, the rest canceled) and rounds are tried
 	// in order, each bounded by memberTimeout. Unlike Forward, exhausting every
 	// round returns ErrGroupNoAnswer WITHOUT relaying a failure to the caller —
 	// the call is left pre-answer so the group's no-answer outcome can still run.
 	ForwardGroup(ctx context.Context, rounds [][]string, memberTimeout time.Duration) error
+
+	// ForwardGroupOutcome is ForwardGroup without the relay, carrying what each
+	// member did.
+	ForwardGroupOutcome(ctx context.Context, rounds [][]string, memberTimeout time.Duration) (GroupOutcome, error)
 
 	// Dial initiates an outbound call to the target and bridges media. It is the
 	// POST-ANSWER path: the supervisor already owns the media, so the B-leg is
@@ -317,43 +328,6 @@ func (s *sessionImpl) StopAudio() error {
 	}
 
 	return s.transport.StopAudio(s.ctx, sessionID)
-}
-
-// Listen captures audio from the caller and returns transcribed text.
-func (s *sessionImpl) Listen(ctx context.Context, maxDurationMs, silenceTimeoutMs int) (string, error) {
-	s.mu.Lock()
-	sessionID := s.sessionID
-	s.mu.Unlock()
-
-	if sessionID == "" {
-		return "", fmt.Errorf("no RTP session established")
-	}
-
-	s.logger.Debug("[Session] Listening for audio",
-		"call_id", s.callID,
-		"max_duration_ms", maxDurationMs,
-		"silence_timeout_ms", silenceTimeoutMs,
-	)
-
-	listenReq := mediaclient.ListenRequest{
-		SessionID:        sessionID,
-		MaxDurationMs:    maxDurationMs,
-		SilenceTimeoutMs: silenceTimeoutMs,
-	}
-
-	result, err := s.transport.Listen(ctx, listenReq)
-	if err != nil {
-		return "", fmt.Errorf("listen failed: %w", err)
-	}
-
-	s.logger.Debug("[Session] Listen complete",
-		"call_id", s.callID,
-		"text", result.Text,
-		"duration_ms", result.DurationMs,
-		"timeout", result.Timeout,
-	)
-
-	return result.Text, nil
 }
 
 // Dial initiates an outbound call and bridges on answer.

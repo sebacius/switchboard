@@ -22,7 +22,6 @@ type Templates struct {
 	parkedCallsPartial *template.Template
 	// Configuration templates
 	configPage       *template.Template
-	configSettings   *template.Template
 	configTenants    *template.Template
 	configTenantEdit *template.Template
 	configDialplan   *template.Template
@@ -203,11 +202,6 @@ func NewTemplates() (*Templates, error) {
 		return nil, err
 	}
 
-	t.configSettings, err = template.New("config_settings.html").ParseFS(templatesFS, "templates/config_settings.html")
-	if err != nil {
-		return nil, err
-	}
-
 	t.configTenants, err = template.New("config_tenants.html").ParseFS(templatesFS, "templates/config_tenants.html")
 	if err != nil {
 		return nil, err
@@ -287,19 +281,14 @@ type ConfigPageData struct {
 	Backends       []BackendInfo
 }
 
-// ConfigSettingsData holds data for the settings editor
-type ConfigSettingsData struct {
-	Server  string
-	Content string
-	Success string
-	Error   string
-}
-
 // TenantFileData holds tenant file info for display
 type TenantFileData struct {
 	Name     string
 	Size     int64
 	Modified string
+	// HasFlows reports whether the tenant has a flow graph. Flows are optional,
+	// so the list says which tenants have one rather than implying all do.
+	HasFlows bool
 }
 
 // ConfigTenantsData holds data for the tenant list
@@ -311,14 +300,26 @@ type ConfigTenantsData struct {
 }
 
 // ConfigTenantEditData holds data for the tenant editor
+// ConfigProblemData is one validation problem shown against its path.
+type ConfigProblemData struct {
+	Path    string
+	Message string
+}
+
 type ConfigTenantEditData struct {
 	Server  string
 	Name    string
 	Content string
-	IsNew   bool
-	Success string
-	Error   string
+	// File is "routing" or "flows".
+	File     string
+	IsNew    bool
+	Success  string
+	Error    string
+	Problems []ConfigProblemData
 }
+
+// IsFlows reports whether the flow graph is being edited, for the template.
+func (d ConfigTenantEditData) IsFlows() bool { return d.File == "flows" }
 
 // ConfigDialplanData holds data for the dialplan editor
 type ConfigDialplanData struct {
@@ -333,11 +334,6 @@ type ConfigDialplanData struct {
 // RenderConfig renders the config page
 func (t *Templates) RenderConfig(w io.Writer, data ConfigPageData) error {
 	return t.configPage.Execute(w, data)
-}
-
-// RenderConfigSettings renders the settings editor partial
-func (t *Templates) RenderConfigSettings(w io.Writer, data ConfigSettingsData) error {
-	return t.configSettings.Execute(w, data)
 }
 
 // RenderConfigTenants renders the tenant list partial

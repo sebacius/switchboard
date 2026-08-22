@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pion/rtp"
+	"github.com/sebas/switchboard/internal/rtpmanager/dtmf"
 	"github.com/sebas/switchboard/internal/rtpmanager/media"
 	"github.com/sebas/switchboard/internal/rtpmanager/portpool"
 	"github.com/sebas/switchboard/internal/rtpmanager/sdp"
@@ -18,14 +20,23 @@ import (
 
 // Session represents an active media session
 type Session struct {
-	ID           string
-	CallID       string
-	LocalAddr    string
-	LocalPort    int
-	RTCPPort     int
-	RemoteAddr   string
-	RemotePort   int
-	Codec        string
+	ID         string
+	CallID     string
+	LocalAddr  string
+	LocalPort  int
+	RTCPPort   int
+	RemoteAddr string
+	RemotePort int
+	Codec      string
+	// Answer is what negotiation decided, including the DTMF payload type. Codec
+	// above remains the audio codec as a string, for the API and logs.
+	Answer AnswerSpec
+
+	// Digits holds keys pressed but not yet consumed. It exists for the whole
+	// session, not just during a collection, so a caller who dials through a
+	// menu does not lose the digits pressed between nodes.
+	Digits *dtmf.Buffer
+
 	State        rtpv1.SessionState
 	CreatedAt    time.Time
 	ctx          context.Context
@@ -56,7 +67,7 @@ func NewManager(portPool *portpool.PortPool, mediaService *media.LocalService, a
 }
 
 // CreateSession creates a new media session
-func (m *Manager) CreateSession(callID, remoteAddr string, remotePort int, offeredCodecs []string) (*Session, []byte, error) {
+func (m *Manager) CreateSession(callID, remoteAddr string, remotePort int, offeredCodecs []string, offers []CodecOffer) (*Session, []byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -64,7 +75,7 @@ func (m *Manager) CreateSession(callID, remoteAddr string, remotePort int, offer
 	if sessionID, exists := m.callToSession[callID]; exists {
 		if sess, ok := m.sessions[sessionID]; ok {
 			slog.Warn("[SessionMgr] Session already exists for call", "call_id", callID, "session_id", sessionID)
-			sdpBody := sdp.BuildResponseSDP(m.advertiseAddr, sess.LocalPort, sess.Codec)
+			sdpBody := sdp.BuildAnswerSDP(m.advertiseAddr, sess.LocalPort, sess.Answer.AudioPT, sess.Answer.TelephoneEventPT, sess.Answer.TelephoneEventFMTP)
 			return sess, sdpBody, nil
 		}
 	}
@@ -75,18 +86,13 @@ func (m *Manager) CreateSession(callID, remoteAddr string, remotePort int, offer
 		return nil, nil, fmt.Errorf("failed to allocate ports: %w", err)
 	}
 
-	// Negotiate codec (only PCMU supported)
-	selectedCodec := ""
-	for _, codec := range offeredCodecs {
-		if codec == "0" { // PCMU
-			selectedCodec = "0"
-			break
-		}
-	}
-	if selectedCodec == "" {
+	// One negotiation for both leg kinds — see negotiate.go.
+	answer, err := Negotiate(offers, offeredCodecs)
+	if err != nil {
 		m.portPool.Release(rtpPort)
-		return nil, nil, fmt.Errorf("no supported codec offered (PCMU required)")
+		return nil, nil, err
 	}
+	selectedCodec := strconv.Itoa(answer.AudioPT)
 
 	// Create session
 	ctx, cancel := context.WithCancel(context.Background())
@@ -99,6 +105,8 @@ func (m *Manager) CreateSession(callID, remoteAddr string, remotePort int, offer
 		RemoteAddr:   remoteAddr,
 		RemotePort:   remotePort,
 		Codec:        selectedCodec,
+		Answer:       answer,
+		Digits:       dtmf.NewBuffer(),
 		State:        rtpv1.SessionState_SESSION_STATE_CREATED,
 		CreatedAt:    time.Now(),
 		ctx:          ctx,
@@ -110,7 +118,7 @@ func (m *Manager) CreateSession(callID, remoteAddr string, remotePort int, offer
 	m.callToSession[callID] = sess.ID
 
 	// Build SDP
-	sdpBody := sdp.BuildResponseSDP(m.advertiseAddr, rtpPort, selectedCodec)
+	sdpBody := sdp.BuildAnswerSDP(m.advertiseAddr, rtpPort, answer.AudioPT, answer.TelephoneEventPT, answer.TelephoneEventFMTP)
 
 	slog.Info("[SessionMgr] Session created",
 		"session_id", sess.ID,
@@ -174,7 +182,7 @@ func (m *Manager) GetSessionEndpoint(sessionID string) (localAddr string, localP
 
 // CreateSessionPendingRemote creates a session without remote endpoint info.
 // Used for B2BUA B-leg where remote is set later via UpdateRemoteEndpoint.
-func (m *Manager) CreateSessionPendingRemote(callID string, offeredCodecs []string) (*Session, []byte, error) {
+func (m *Manager) CreateSessionPendingRemote(callID string, offeredCodecs []string, offers []CodecOffer) (*Session, []byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -182,7 +190,7 @@ func (m *Manager) CreateSessionPendingRemote(callID string, offeredCodecs []stri
 	if sessionID, exists := m.callToSession[callID]; exists {
 		if sess, ok := m.sessions[sessionID]; ok {
 			slog.Warn("[SessionMgr] Session already exists for call", "call_id", callID, "session_id", sessionID)
-			sdpBody := sdp.BuildResponseSDP(m.advertiseAddr, sess.LocalPort, sess.Codec)
+			sdpBody := sdp.BuildAnswerSDP(m.advertiseAddr, sess.LocalPort, sess.Answer.AudioPT, sess.Answer.TelephoneEventPT, sess.Answer.TelephoneEventFMTP)
 			return sess, sdpBody, nil
 		}
 	}
@@ -193,18 +201,13 @@ func (m *Manager) CreateSessionPendingRemote(callID string, offeredCodecs []stri
 		return nil, nil, fmt.Errorf("failed to allocate ports: %w", err)
 	}
 
-	// Negotiate codec (only PCMU supported)
-	selectedCodec := ""
-	for _, codec := range offeredCodecs {
-		if codec == "0" { // PCMU
-			selectedCodec = "0"
-			break
-		}
-	}
-	if selectedCodec == "" {
+	// One negotiation for both leg kinds — see negotiate.go.
+	answer, err := Negotiate(offers, offeredCodecs)
+	if err != nil {
 		m.portPool.Release(rtpPort)
-		return nil, nil, fmt.Errorf("no supported codec offered (PCMU required)")
+		return nil, nil, err
 	}
+	selectedCodec := strconv.Itoa(answer.AudioPT)
 
 	// Create session with empty remote endpoint (pending)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -217,6 +220,8 @@ func (m *Manager) CreateSessionPendingRemote(callID string, offeredCodecs []stri
 		RemoteAddr:   "", // Empty - to be set later
 		RemotePort:   0,  // Empty - to be set later
 		Codec:        selectedCodec,
+		Answer:       answer,
+		Digits:       dtmf.NewBuffer(),
 		State:        rtpv1.SessionState_SESSION_STATE_PENDING_REMOTE,
 		CreatedAt:    time.Now(),
 		ctx:          ctx,
@@ -228,7 +233,7 @@ func (m *Manager) CreateSessionPendingRemote(callID string, offeredCodecs []stri
 	m.callToSession[callID] = sess.ID
 
 	// Build SDP (for outgoing INVITE)
-	sdpBody := sdp.BuildResponseSDP(m.advertiseAddr, rtpPort, selectedCodec)
+	sdpBody := sdp.BuildAnswerSDP(m.advertiseAddr, rtpPort, answer.AudioPT, answer.TelephoneEventPT, answer.TelephoneEventFMTP)
 
 	slog.Info("[SessionMgr] Session created (pending remote)",
 		"session_id", sess.ID,

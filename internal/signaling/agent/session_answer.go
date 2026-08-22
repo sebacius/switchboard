@@ -102,21 +102,47 @@ func (s *sessionImpl) setAnswered(v bool) {
 	s.mu.Unlock()
 }
 
-// Forward is the pre-answer routing path. It relays 180 Ringing upstream so the
-// caller's phone generates ringback, dials the target, and only on answer does
-// it send our 200 OK and bridge the two legs. A target that rejects or times out
-// has its status relayed to the caller instead of being masked by an AI apology.
+// Forward is the pre-answer routing path, relaying the target's own final status
+// upstream when the dial fails. It is the right primitive for a LAST attempt —
+// the caller deserves the callee's real 486 rather than an apology — and the
+// wrong one inside a flow, where the graph decides what happens next.
 //
-// The B-leg handle is retained for the duration so that a caller CANCEL during
-// ringing tears down the orphaned outbound leg (the forward-then-CANCEL race).
+// See ForwardOutcome for the non-relaying form.
 func (s *sessionImpl) Forward(ctx context.Context, target string, timeout time.Duration) error {
+	outcome, err := s.forward(ctx, target, timeout)
+	if err != nil {
+		return err
+	}
+	if outcome.Answered() {
+		return nil
+	}
+	return s.relayForwardFailure(target, outcome.Err)
+}
+
+// ForwardOutcome is Forward without the relay: it reports what happened and
+// sends the caller NOTHING, so a flow can route busy somewhere different from
+// no-answer.
+//
+// This distinction is load-bearing. Once a 486 reaches the caller their call is
+// over, so a node wiring "no_answer" to a colleague is impossible if the dial
+// already answered on its behalf. Relaying becomes the graph's decision, made by
+// whatever node the failure exit leads to.
+func (s *sessionImpl) ForwardOutcome(ctx context.Context, target string, timeout time.Duration) (DialOutcome, error) {
+	return s.forward(ctx, target, timeout)
+}
+
+// forward performs the dial and reports the outcome. The returned error is
+// reserved for "this could not be attempted at all" — a missing B2BUA, or a
+// forward after the call was already answered — as opposed to a dial that was
+// attempted and did not connect, which is an outcome rather than an error.
+func (s *sessionImpl) forward(ctx context.Context, target string, timeout time.Duration) (DialOutcome, error) {
 	if s.callService == nil {
-		return &DialError{Target: target, Cause: fmt.Errorf("B2BUA CallService not configured"), SIPCode: 501}
+		return DialOutcome{}, &DialError{Target: target, Cause: fmt.Errorf("B2BUA CallService not configured"), SIPCode: 501}
 	}
 	if s.HasAnswered() {
 		// Programming error: the caller should have chosen Dial. Fail loudly
 		// rather than sending a second 200 OK.
-		return &DialError{Target: target, Cause: fmt.Errorf("forward after answer")}
+		return DialOutcome{}, &DialError{Target: target, Cause: fmt.Errorf("forward after answer")}
 	}
 	if timeout <= 0 {
 		timeout = forwardRingTimeout
@@ -125,9 +151,8 @@ func (s *sessionImpl) Forward(ctx context.Context, target string, timeout time.D
 	s.logger.Info("[Session] Forwarding (pre-answer)", "call_id", s.callID, "target", target, "timeout", timeout)
 
 	// Relay 180 upstream so the caller hears ringback while we dial — unless the
-	// INVITE handler already rang to hold the transaction open across the first
-	// turn, in which case a second 180 would be redundant. A failure here is not
-	// fatal; the forward can still complete.
+	// INVITE handler already rang to hold the transaction open, in which case a
+	// second 180 would be redundant. A failure here is not fatal.
 	s.ringOnce()
 
 	callerName := s.callerName
@@ -145,10 +170,13 @@ func (s *sessionImpl) Forward(ctx context.Context, target string, timeout time.D
 		b2bua.WithCallerName(callerName),
 	)
 	if err != nil {
-		return s.relayForwardFailure(target, err)
+		return classifyDialError(target, err), nil
 	}
 
-	return s.completeForward(ctx, bLeg, target)
+	if err := s.completeForward(ctx, bLeg, target); err != nil {
+		return classifyDialError(target, err), nil
+	}
+	return DialOutcome{Result: DialAnswered, Target: target}, nil
 }
 
 // completeForward is everything that happens once some outbound leg has
@@ -202,29 +230,42 @@ func (s *sessionImpl) completeForward(ctx context.Context, bLeg b2bua.Leg, targe
 	return nil
 }
 
-// ForwardGroup rings a ring group pre-answer. Each round is dialed at once
-// (first answer wins, the rest are canceled) and rounds are tried in order,
-// each bounded by memberTimeout.
-//
-// The critical difference from Forward: a group that nobody answers returns
-// ErrGroupNoAnswer WITHOUT relaying a failure status to the caller. The call is
-// left pre-answer and unanswered, so the group's no-answer outcome — hand the
-// call to the supervisor, try the operator, or hang up deliberately — is still
-// available. Relaying a 480 here would end the call before the tenant's
-// configured fallback ever ran.
+// ForwardGroup rings a group and relays the outcome upstream if nobody answers.
+// Like Forward, it is the right primitive for a last attempt and the wrong one
+// inside a flow; see ForwardGroupOutcome.
 func (s *sessionImpl) ForwardGroup(ctx context.Context, rounds [][]string, memberTimeout time.Duration) error {
+	outcome, err := s.forwardGroup(ctx, rounds, memberTimeout)
+	if err != nil {
+		return err
+	}
+	if outcome.Answered() {
+		return nil
+	}
+	if outcome.Result == DialNoAnswer {
+		// Preserved for callers that branch on it.
+		return ErrGroupNoAnswer
+	}
+	return outcome.Error()
+}
+
+// ForwardGroupOutcome rings a group and reports what happened, relaying nothing.
+// The per-member detail is what lets a call record say "all four were busy"
+// rather than the far less useful "nobody answered".
+func (s *sessionImpl) ForwardGroupOutcome(ctx context.Context, rounds [][]string, memberTimeout time.Duration) (GroupOutcome, error) {
+	return s.forwardGroup(ctx, rounds, memberTimeout)
+}
+
+func (s *sessionImpl) forwardGroup(ctx context.Context, rounds [][]string, memberTimeout time.Duration) (GroupOutcome, error) {
 	if s.callService == nil {
-		return &DialError{Cause: fmt.Errorf("B2BUA CallService not configured"), SIPCode: 501}
+		return GroupOutcome{}, &DialError{Cause: fmt.Errorf("B2BUA CallService not configured"), SIPCode: 501}
 	}
 	if s.HasAnswered() {
-		return &DialError{Cause: fmt.Errorf("forward group after answer")}
+		return GroupOutcome{}, &DialError{Cause: fmt.Errorf("forward after answer")}
 	}
 	if memberTimeout <= 0 {
 		memberTimeout = forwardRingTimeout
 	}
 
-	// Ring the caller before the first round so they hear ringback for the whole
-	// group, not just the member that eventually answers.
 	s.ringOnce()
 
 	callerName := s.callerName
@@ -232,9 +273,10 @@ func (s *sessionImpl) ForwardGroup(ctx context.Context, rounds [][]string, membe
 		callerName = s.callerID
 	}
 
+	var members []DialOutcome
 	for i, round := range rounds {
 		if err := ctx.Err(); err != nil {
-			return err
+			return GroupOutcome{Members: members}, err
 		}
 
 		var candidates []*b2bua.LookupResult
@@ -243,9 +285,13 @@ func (s *sessionImpl) ForwardGroup(ctx context.Context, rounds [][]string, membe
 			if err != nil || !result.HasContacts() {
 				// A member with no live registration is skipped, not fatal: a
 				// group exists precisely so one absent person does not black-hole
-				// the caller.
+				// the caller. It is still recorded, because "three of four phones
+				// were not registered" is worth knowing.
 				s.logger.Debug("[Session] Ring group member unreachable",
 					"call_id", s.callID, "target", target, "error", err)
+				members = append(members, DialOutcome{
+					Result: DialUnavailable, Target: target, Err: err,
+				})
 				continue
 			}
 			candidates = append(candidates, result)
@@ -257,22 +303,70 @@ func (s *sessionImpl) ForwardGroup(ctx context.Context, rounds [][]string, membe
 		s.logger.Info("[Session] Ringing group round",
 			"call_id", s.callID, "round", i+1, "of", len(rounds), "members", len(candidates))
 
-		bLeg, err := s.callService.DialParallel(ctx, candidates, memberTimeout,
+		bLeg, outcomes, err := s.callService.DialParallelWithOutcomes(ctx, candidates, memberTimeout,
 			b2bua.WithALegSessionID(s.sessionID),
 			b2bua.WithALegCallID(s.callID),
 			b2bua.WithCallerID(s.callerID),
 			b2bua.WithCallerName(callerName),
 		)
+		for _, o := range outcomes {
+			if o.Answered {
+				members = append(members, DialOutcome{Result: DialAnswered, Target: o.Target})
+				continue
+			}
+			member := classifyDialError(o.Target, o.Err)
+			if o.SIPCode > 0 {
+				member.SIPCode, member.SIPReason = o.SIPCode, o.SIPReason
+			}
+			members = append(members, member)
+		}
+
 		if err != nil {
 			s.logger.Debug("[Session] Ring group round unanswered",
 				"call_id", s.callID, "round", i+1, "error", err)
 			continue
 		}
 
-		return s.completeForward(ctx, bLeg, strings.Join(round, ","))
+		target := strings.Join(round, ",")
+		if err := s.completeForward(ctx, bLeg, target); err != nil {
+			out := classifyDialError(target, err)
+			return GroupOutcome{DialOutcome: out, Members: members}, nil
+		}
+		return GroupOutcome{
+			DialOutcome: DialOutcome{Result: DialAnswered, Target: target},
+			Members:     members,
+		}, nil
 	}
 
-	return ErrGroupNoAnswer
+	return GroupOutcome{
+		DialOutcome: DialOutcome{Result: summariseGroup(members), Target: "group"},
+		Members:     members,
+	}, nil
+}
+
+// summariseGroup reduces per-member outcomes to the exit the group as a whole
+// should take. Busy wins over no-answer when every member was busy, because
+// "they are all on the phone" and "nobody is there" deserve different handling.
+func summariseGroup(members []DialOutcome) DialResult {
+	if len(members) == 0 {
+		return DialUnavailable
+	}
+	all := func(r DialResult) bool {
+		for _, m := range members {
+			if m.Result != r {
+				return false
+			}
+		}
+		return true
+	}
+	switch {
+	case all(DialBusy):
+		return DialBusy
+	case all(DialUnavailable):
+		return DialUnavailable
+	default:
+		return DialNoAnswer
+	}
 }
 
 // relayForwardFailure maps an outbound dial failure onto the caller's INVITE

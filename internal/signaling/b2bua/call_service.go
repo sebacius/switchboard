@@ -2,6 +2,7 @@ package b2bua
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -250,8 +251,21 @@ func (s *callService) DialAndBridge(ctx context.Context, legA Leg, target string
 // up explicitly. Without the second path a caller could be left connected to a
 // phone nobody is on.
 func (s *callService) DialParallel(ctx context.Context, targets []*LookupResult, timeout time.Duration, opts ...LegOption) (Leg, error) {
+	leg, _, err := s.DialParallelWithOutcomes(ctx, targets, timeout, opts...)
+	return leg, err
+}
+
+// DialParallelWithOutcomes is DialParallel plus what each individual target did.
+//
+// The per-target detail already existed and was discarded; a caller that rings a
+// group needs it to tell "everyone was busy" from "nobody answered", and a call
+// record is far more useful with it than without. Winner selection and the
+// cancellation of losing legs are deliberately untouched: that race window is
+// the most delicate code here, so outcomes are collected alongside it rather
+// than woven into it.
+func (s *callService) DialParallelWithOutcomes(ctx context.Context, targets []*LookupResult, timeout time.Duration, opts ...LegOption) (Leg, []TargetOutcome, error) {
 	if len(targets) == 0 {
-		return nil, &DialError{Cause: ErrNoContacts}
+		return nil, nil, &DialError{Cause: ErrNoContacts}
 	}
 	if timeout == 0 {
 		timeout = s.cfg.DefaultDialTimeout
@@ -334,7 +348,10 @@ func (s *callService) DialParallel(ctx context.Context, targets []*LookupResult,
 	var winner Leg
 	var winnerTarget string
 	var firstErr error
+	var outcomes []TargetOutcome
 	for r := range results {
+		outcomes = append(outcomes, outcomeFor(r.target, r.err, r.leg != nil))
+
 		if r.leg == nil {
 			if firstErr == nil {
 				firstErr = r.err
@@ -358,11 +375,21 @@ func (s *callService) DialParallel(ctx context.Context, targets []*LookupResult,
 		if firstErr == nil {
 			firstErr = ErrDialTimeout
 		}
-		return nil, firstErr
+		return nil, outcomes, firstErr
 	}
 
 	slog.Info("[CallService] DialParallel answered", "winner", winnerTarget, "candidates", len(targets))
-	return winner, nil
+	return winner, outcomes, nil
+}
+
+// outcomeFor records what one target did.
+func outcomeFor(target string, err error, answered bool) TargetOutcome {
+	out := TargetOutcome{Target: target, Answered: answered, Err: err}
+	var dialErr *DialError
+	if errors.As(err, &dialErr) {
+		out.SIPCode, out.SIPReason = dialErr.SIPCode, dialErr.SIPReason
+	}
+	return out
 }
 
 // --- B-leg BYE Handling ---

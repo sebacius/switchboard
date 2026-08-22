@@ -15,10 +15,30 @@
                 </h2>
             </div>
             <p class="text-sm text-slate-400 ml-7">
-                {{if .IsNew}}Create a new tenant knowledge base file{{else}}Editing {{.Name}}.md{{end}}
+                {{if .IsNew}}Create a new tenant routing table{{else}}Editing {{.Name}}{{if .IsFlows}}.flows.json{{else}}.routing.json{{end}}{{end}}
             </p>
         </div>
     </div>
+
+    {{if not .IsNew}}
+    <div class="mb-4 flex items-center space-x-2">
+        <button hx-get="/admin/config/tenants/edit?server={{.Server}}&name={{.Name}}&file=routing"
+                hx-target="#config-content"
+                hx-swap="innerHTML"
+                class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors {{if .IsFlows}}bg-slate-700 text-slate-300 hover:bg-slate-600{{else}}bg-blue-500/20 text-blue-300 border border-blue-500/30{{end}}">
+            Routing table
+        </button>
+        <button hx-get="/admin/config/tenants/edit?server={{.Server}}&name={{.Name}}&file=flows"
+                hx-target="#config-content"
+                hx-swap="innerHTML"
+                class="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors {{if .IsFlows}}bg-blue-500/20 text-blue-300 border border-blue-500/30{{else}}bg-slate-700 text-slate-300 hover:bg-slate-600{{end}}">
+            Flows
+        </button>
+        <span class="text-xs text-slate-500 ml-2">
+            {{if .IsFlows}}Menus, prompts and transfers{{else}}Extensions, DIDs, ring groups and named targets{{end}}
+        </span>
+    </div>
+    {{end}}
 
     {{if .Success}}
     <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm">
@@ -38,6 +58,22 @@
     </div>
     {{end}}
 
+    {{if .Problems}}
+    <div class="mb-4 rounded-lg bg-red-500/10 border border-red-500/30 overflow-hidden">
+        <div class="px-4 py-2 bg-red-500/20 text-red-200 text-sm font-medium">
+            Nothing was saved. Fix these and try again:
+        </div>
+        <ul class="divide-y divide-red-500/20">
+            {{range .Problems}}
+            <li class="px-4 py-2.5">
+                <code class="text-xs text-red-300/80 font-mono">{{.Path}}</code>
+                <p class="text-sm text-red-200 mt-0.5">{{.Message}}</p>
+            </li>
+            {{end}}
+        </ul>
+    </div>
+    {{end}}
+
     <form hx-post="{{if .IsNew}}/admin/config/tenants/create?server={{.Server}}{{else}}/admin/config/tenants/save?server={{.Server}}{{end}}"
           hx-target="#config-content"
           hx-swap="innerHTML">
@@ -54,6 +90,7 @@
         {{else}}
         <input type="hidden" name="name" value="{{.Name}}">
         {{end}}
+        <input type="hidden" name="file" value="{{if .IsFlows}}flows{{else}}routing{{end}}">
 
         <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
             <div class="flex items-center justify-between px-4 py-3 bg-slate-700/50 border-b border-slate-700">
@@ -61,14 +98,14 @@
                     <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                     </svg>
-                    <span class="text-sm font-medium text-slate-300">{{if .IsNew}}new-tenant.md{{else}}{{.Name}}.md{{end}}</span>
+                    <span class="text-sm font-medium text-slate-300">{{if .IsNew}}new-tenant.routing.json{{else}}{{.Name}}{{if .IsFlows}}.flows.json{{else}}.routing.json{{end}}{{end}}</span>
                 </div>
-                <span class="text-xs text-slate-500">Markdown</span>
+                <span class="text-xs text-slate-500">JSON &middot; validated on save</span>
             </div>
             <textarea name="content"
                       rows="35"
                       class="w-full bg-slate-900 text-slate-200 font-mono text-sm p-4 focus:outline-none resize-y border-none"
-                      placeholder="Enter tenant knowledge base content..."
+                      placeholder="{{if .IsFlows}}{&quot;flows&quot;: { ... }}{{else}}{&quot;operator&quot;: &quot;user/100&quot;, &quot;extensions&quot;: { ... }}{{end}}"
                       spellcheck="false">{{.Content}}</textarea>
         </div>
 

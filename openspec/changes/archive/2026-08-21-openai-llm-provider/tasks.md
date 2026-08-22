@@ -1,4 +1,4 @@
-## 1. Contract additions (no behaviour change, ships green against Ollama)
+## 1. Contract additions (no behavior change, ships green against Ollama)
 
 - [x] 1.1 Add `ID string \`json:"id,omitempty"\`` to `llm.ToolCall` and `ToolCallID string \`json:"tool_call_id,omitempty"\`` to `llm.NativeMessage` in `internal/signaling/llm/native.go` — per design.md decision #7
 - [x] 1.2 Set `ToolCallID: call.ID` alongside the existing `ToolName` at `internal/signaling/agent/runner.go:413`
@@ -7,9 +7,9 @@
 
 ## 2. Answer every advertised tool call
 
-- [x] 2.1 In `runner.go` `executeTools`, backfill a synthetic `{Role:"tool", ToolName, ToolCallID, Content:"not executed: ..."}` for each call not dispatched before the parked (`:419`) and cancelled (`:396`) early returns — per design.md decision #9
+- [x] 2.1 In `runner.go` `executeTools`, backfill a synthetic `{Role:"tool", ToolName, ToolCallID, Content:"not executed: ..."}` for each call not dispatched before the parked (`:419`) and canceled (`:396`) early returns — per design.md decision #9
 - [x] 2.2 Test: a turn emitting two tool calls where the first parks leaves a result for both, and a second turn still succeeds (single-turn tests cannot observe this)
-- [x] 2.3 Test: a turn cancelled mid-dispatch records the undispatched calls as not executed
+- [x] 2.3 Test: a turn canceled mid-dispatch records the undispatched calls as not executed
 
 ## 3. Package restructure (pure refactor, no new provider)
 
