@@ -221,7 +221,7 @@ func (s *Server) handleConfigTenantSave(w http.ResponseWriter, r *http.Request) 
 	}
 
 	name := r.FormValue("name")
-	content := r.FormValue("content")
+	content := normalizeContent(r.FormValue("content"))
 	file := fileParam(r)
 	if v := r.FormValue("file"); v != "" {
 		file = v
@@ -262,7 +262,7 @@ func (s *Server) handleConfigTenantCreate(w http.ResponseWriter, r *http.Request
 	}
 
 	name := r.FormValue("name")
-	content := r.FormValue("content")
+	content := normalizeContent(r.FormValue("content"))
 
 	if name == "" {
 		data := ConfigTenantEditData{Server: c.Name(), IsNew: true, Content: content, Error: "Tenant name is required"}
@@ -401,6 +401,22 @@ func applyGlobalWriteError(data *ConfigGlobalEditData, err error, prefix string)
 		return
 	}
 	data.Error = fmt.Sprintf("%s: %v", prefix, err)
+}
+
+// normalizeContent undoes what a browser does to a textarea on submit.
+//
+// HTML form submission encodes textarea content with CRLF line endings, so
+// saving a file through the editor would otherwise rewrite every line of a
+// checked-in JSON file the first time anyone opened it. The trailing newline is
+// restored for the same reason: a file that ends without one reads as a
+// one-line diff on every tool that touches it.
+func normalizeContent(content string) string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return content
 }
 
 // problemData converts wire problems for the templates.

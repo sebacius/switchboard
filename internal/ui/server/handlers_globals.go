@@ -80,7 +80,7 @@ func (s *Server) handleConfigGlobalSave(w http.ResponseWriter, r *http.Request) 
 	}
 
 	name := r.FormValue("name")
-	content := r.FormValue("content")
+	content := normalizeContent(r.FormValue("content"))
 	data := ConfigGlobalEditData{Server: c.Name(), Name: name, Content: content}
 
 	// Re-fetch the description so the page keeps its title and its restart

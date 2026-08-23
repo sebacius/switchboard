@@ -216,7 +216,47 @@ A malformed routing file is a hard startup error, and a failed reload leaves the
 previously loaded configuration in force — a bad edit must never strip a live
 tenant's routing. Both files reload through `POST /api/v1/config/reload`, and a
 write through the config API is validated first: an invalid flow is refused with
-the problems attached and never reaches disk.
+the problems attached and never reaches disk. A finding of severity `warning`
+does not block the write — it would make the editor stricter than the loader —
+and comes back with the successful response instead.
+
+### Editing configuration over the API
+
+| Route | What it addresses | Activation |
+|-------|-------------------|------------|
+| `GET\|POST /api/v1/config/tenants` | list, create | `reload` |
+| `GET\|PUT\|DELETE /api/v1/config/tenants/{name}?file=routing\|flows` | one tenant file | `reload` |
+| `GET /api/v1/config/files` | the deployment-wide files | — |
+| `GET\|PUT /api/v1/config/files/{policy\|routes\|trunk_peers}` | one of them | **`restart`** |
+| `GET /api/v1/config/status` | what on disk is not yet in force | — |
+| `GET /api/v1/config/audio` | audio the flows name, joined with what the player has | — |
+| `POST /api/v1/config/reload` | activate tenant files | — |
+
+The deployment-wide files are addressed by NAME against a closed allowlist, never
+by path. All three are read once at startup — the policy overrides, the DID table
+and the peer store are captured by value at construction — so **a reload does not
+activate them**; the reload response says as much rather than answering "ok".
+
+Writing them requires `--allow-global-config-writes` (default off). `policy.json`
+decides which tenant may dial out and how much, and the API has no
+authentication, so making the authorization boundary editable is an operator's
+decision. Reading is always allowed.
+
+### Walking a flow without placing a call
+
+| Route | Purpose |
+|-------|---------|
+| `GET /api/v1/flow/tenants` | the tenants currently loaded, with their flow names |
+| `POST /api/v1/flow/simulate` | walk one fake call and return the traversal |
+
+These read the **loaded** configuration, while every `/config` route reads disk —
+which is why they live under a different prefix. `make flow-smoke` and the UI's
+Test a Call tab both go through the same code (`internal/signaling/flow/flowsim`).
+
+A simulation is inert: it builds its own engine with no parking service and no
+resolver, so `*NNN` retrieval returns before it can touch a real parked call, and
+a ledger-free policy, so an authorized external destination costs nothing against
+the tenant's daily cap. Nothing is dialed and no RTP is allocated.
 
 ### Trunk and DID Routing
 
