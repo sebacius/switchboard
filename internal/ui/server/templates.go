@@ -29,6 +29,7 @@ type Templates struct {
 	configGlobals    *template.Template
 	configGlobalEdit *template.Template
 	reloadBanner     *template.Template
+	configAudio      *template.Template
 	flowTest         *template.Template
 	flowTestResult   *template.Template
 }
@@ -229,6 +230,11 @@ func NewTemplates() (*Templates, error) {
 	}
 
 	t.reloadBanner, err = template.New("config_reload_banner.html").ParseFS(templatesFS, "templates/config_reload_banner.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.configAudio, err = template.New("config_audio.html").ParseFS(templatesFS, "templates/config_audio.html")
 	if err != nil {
 		return nil, err
 	}
@@ -462,6 +468,11 @@ func (t *Templates) RenderConfigGlobals(w io.Writer, data ConfigGlobalsData) err
 // RenderConfigGlobalEdit renders the deployment-wide file editor.
 func (t *Templates) RenderConfigGlobalEdit(w io.Writer, data ConfigGlobalEditData) error {
 	return t.configGlobalEdit.Execute(w, data)
+}
+
+// RenderConfigAudio renders the audio inventory.
+func (t *Templates) RenderConfigAudio(w io.Writer, data ConfigAudioData) error {
+	return t.configAudio.Execute(w, data)
 }
 
 // RenderFlowTest renders the simulator form.

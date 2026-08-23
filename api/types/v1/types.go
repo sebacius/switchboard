@@ -176,6 +176,55 @@ type ReloadResult struct {
 	NotReloaded []string `json:"not_reloaded"`
 }
 
+// --- Audio inventory ---
+
+// AudioRef is one place a flow names an audio file.
+type AudioRef struct {
+	Tenant   string `json:"tenant"`
+	Flow     string `json:"flow"`
+	Node     string `json:"node"`
+	NodeType string `json:"node_type"`
+	File     string `json:"file"`
+}
+
+// AudioFile is one file the player holds, with who asks for it.
+type AudioFile struct {
+	Name          string     `json:"name"`
+	SizeBytes     int64      `json:"size_bytes"`
+	ModifiedUnix  int64      `json:"modified_unix"`
+	Playable      bool       `json:"playable"`
+	SampleRate    uint32     `json:"sample_rate"`
+	Channels      uint32     `json:"channels"`
+	BitsPerSample uint32     `json:"bits_per_sample"`
+	DurationMs    int64      `json:"duration_ms"`
+	Problem       string     `json:"problem"`
+	ReferencedBy  []AudioRef `json:"referenced_by"`
+}
+
+// UnresolvedAudio is a file a flow names that the player does not have.
+type UnresolvedAudio struct {
+	File string `json:"file"`
+	// State is "missing" when the player answered and did not have it, and
+	// "unknown" when the player could not be asked at all. The difference
+	// matters: one is a broken flow, the other is a broken lookup.
+	State        string     `json:"state"`
+	ReferencedBy []AudioRef `json:"referenced_by"`
+}
+
+// AudioListing is the join of what the flows ask for and what the player has.
+type AudioListing struct {
+	Source     string `json:"source"`
+	BasePath   string `json:"base_path"`
+	WorkingDir string `json:"working_dir"`
+	Truncated  bool   `json:"truncated"`
+	// Error is set when the player could not be reached at all.
+	Error          string            `json:"error"`
+	ResolutionNote string            `json:"resolution_note"`
+	Files          []AudioFile       `json:"files"`
+	Unresolved     []UnresolvedAudio `json:"unresolved"`
+	Unreferenced   []string          `json:"unreferenced"`
+}
+
 // --- Flow simulation ---
 
 // LoadedTenant is one tenant the signaling server is currently routing for.

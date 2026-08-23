@@ -528,6 +528,21 @@ func (c *Client) ConfigStatus(ctx context.Context) (types.ConfigStatus, error) {
 	return status, nil
 }
 
+// ListAudio joins the audio the flows name with what the player actually has.
+func (c *Client) ListAudio(ctx context.Context) (types.AudioListing, error) {
+	resp, err := c.get(ctx, "/api/v1/config/audio")
+	if err != nil {
+		return types.AudioListing{}, err
+	}
+	defer resp.Body.Close()
+
+	var listing types.AudioListing
+	if err := json.NewDecoder(resp.Body).Decode(&listing); err != nil {
+		return types.AudioListing{}, fmt.Errorf("decode audio listing: %w", err)
+	}
+	return listing, nil
+}
+
 // --- Flow simulation ---
 
 // LoadedTenants lists the tenants the signaling server is routing for right

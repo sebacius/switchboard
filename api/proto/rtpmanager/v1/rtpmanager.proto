@@ -25,6 +25,13 @@ service RTPManagerService {
   // Health checks if the service is operational.
   rpc Health(HealthRequest) returns (HealthResponse);
 
+  // ListAudio describes the audio files this manager can play.
+  //
+  // The signaling server has no audio directory of its own — a flow names a
+  // file and this service opens it — so "does the file a flow asks for exist,
+  // and will it play" can only be answered here.
+  rpc ListAudio(ListAudioRequest) returns (ListAudioResponse);
+
   // UpdateSessionRemote updates the remote endpoint for an existing session.
   // Used for B2BUA: B-leg session is created without remote info, then updated
   // when the 200 OK with SDP arrives from the callee.
@@ -191,6 +198,43 @@ message PlayTTSRequest {
   string session_id = 1;
   string text = 2;       // Text to synthesize
   string voice = 3;      // Voice name (e.g., "alloy", "echo", "nova")
+}
+
+// Audio Inventory
+
+message ListAudioRequest {}
+
+// AudioFileInfo describes one file and whether it will actually play.
+//
+// The classification comes from what the player does, not from a general idea
+// of what a WAV is: the loader rejects anything but 16-bit PCM, and resamples
+// everything that is not already 8 kHz mono.
+message AudioFileInfo {
+  // Name is the path relative to the audio directory.
+  string name = 1;
+  int64 size_bytes = 2;
+  int64 modified_unix = 3;
+  // Playable is false when the player would refuse the file outright.
+  bool playable = 4;
+  uint32 sample_rate = 5;
+  uint32 channels = 6;
+  uint32 bits_per_sample = 7;
+  int64 duration_ms = 8;
+  // Problem says why it will not play, or why it will sound different than
+  // expected. Empty means the file is exactly what the player wants.
+  string problem = 9;
+}
+
+message ListAudioResponse {
+  // BasePath is the configured audio directory.
+  string base_path = 1;
+  // WorkingDir is the process's working directory. It is reported because a
+  // flow's file name is resolved against base_path, and an operator comparing
+  // the two is the fastest way to explain a file that is present but silent.
+  string working_dir = 2;
+  repeated AudioFileInfo files = 3;
+  // Truncated reports that the listing hit its cap.
+  bool truncated = 4;
 }
 
 // Health Check

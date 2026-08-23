@@ -196,6 +196,13 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	apiServer.SetFileProvider(fileMgr)
 	apiServer.SetAllowGlobalConfigWrites(cfg.AllowGlobalConfigWrites)
 
+	// Audio inventory: the flow references come from here, the files from the
+	// RTP manager. Neither half is useful alone.
+	apiServer.SetAudioProvider(&audioProvider{
+		routing: routingStore,
+		lister:  mediaTransport,
+	})
+
 	// Flow simulation reads the loaded configuration and nothing else: no
 	// parking service, no spend ledger, no live engine. routingStore and
 	// policyCfg are shared READ-ONLY — nothing mutates policyCfg after
@@ -495,4 +502,26 @@ func (p *flowSimProvider) LoadedTenants() api.LoadedTenants {
 		})
 	}
 	return out
+}
+
+// audioProvider joins what the flows ask for with what the player has.
+type audioProvider struct {
+	routing *dialplan.RoutingStore
+	lister  mediaclient.AudioLister
+}
+
+func (p *audioProvider) AudioReferences() []dialplan.AudioRef {
+	var refs []dialplan.AudioRef
+	for _, tenant := range p.routing.Tenants() {
+		set, ok := p.routing.TenantFlows(tenant)
+		if !ok {
+			continue
+		}
+		refs = append(refs, dialplan.AudioReferences(tenant, set)...)
+	}
+	return refs
+}
+
+func (p *audioProvider) ListAudio(ctx context.Context) (mediaclient.AudioListing, error) {
+	return p.lister.ListAudio(ctx)
 }

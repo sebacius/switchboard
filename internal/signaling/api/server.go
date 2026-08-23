@@ -63,6 +63,7 @@ type Server struct {
 	// editor.
 	allowGlobalWrites bool
 
+	audio   AudioProvider
 	flowSim FlowSimProvider
 	// simSlots bounds simultaneous simulations; see simConcurrency.
 	simSlots   chan struct{}
@@ -124,6 +125,7 @@ func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog
 	mux.HandleFunc("/api/v1/config/files", s.handleConfigFileList)
 	mux.HandleFunc("/api/v1/config/files/", s.handleConfigFile)
 	mux.HandleFunc("/api/v1/config/status", s.handleConfigStatus)
+	mux.HandleFunc("/api/v1/config/audio", s.handleConfigAudio)
 
 	// Flow simulation, against the LOADED configuration
 	mux.HandleFunc("/api/v1/flow/tenants", s.handleFlowTenants)

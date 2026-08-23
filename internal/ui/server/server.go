@@ -77,6 +77,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	mux.HandleFunc("/admin/config/globals/edit", s.handleConfigGlobalEdit)
 	mux.HandleFunc("/admin/config/globals/save", s.handleConfigGlobalSave)
 	mux.HandleFunc("/admin/config/partials/reload-banner", s.handleReloadBanner)
+	mux.HandleFunc("/admin/config/partials/audio", s.handleConfigAudioPartial)
 	mux.HandleFunc("/admin/config/partials/flowtest", s.handleFlowTestPartial)
 	mux.HandleFunc("/admin/config/flowtest/run", s.handleFlowTestRun)
 	mux.HandleFunc("/admin/config/reload", s.handleConfigReload)

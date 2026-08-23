@@ -48,6 +48,8 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Query().Get("tab") {
 	case "globals":
 		activeTab = "globals"
+	case "audio":
+		activeTab = "audio"
 	case "flowtest":
 		activeTab = "flowtest"
 	}
