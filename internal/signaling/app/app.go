@@ -185,8 +185,15 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	fileMgr := filemanager.New(filemanager.Config{
 		TenantsDir:       cfg.TenantsPath,
 		SettingsReloader: routingStore,
+		// The deployment-wide files. Only the tenant files reload; these three
+		// are captured by value at construction below, so a saved edit waits for
+		// a restart and the API says so.
+		PolicyPath:     cfg.PolicyPath,
+		RoutesPath:     cfg.RoutesPath,
+		TrunkPeersPath: cfg.TrunkConfigPath,
 	})
 	apiServer.SetFileProvider(fileMgr)
+	apiServer.SetAllowGlobalConfigWrites(cfg.AllowGlobalConfigWrites)
 
 	// Create resolver registry for dial targets
 	resolver := b2bua.NewTargetResolver()

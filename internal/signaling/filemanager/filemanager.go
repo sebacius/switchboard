@@ -90,12 +90,27 @@ const (
 type Config struct {
 	TenantsDir       string           // directory containing per-tenant configuration files
 	SettingsReloader SettingsReloader // optional, for refreshing cached configuration
+
+	// The deployment-wide files. Each is optional: an empty path means this
+	// server was not given that file, and the API says so rather than inventing
+	// a location to write to.
+	PolicyPath     string
+	RoutesPath     string
+	TrunkPeersPath string
 }
 
 // FileManager provides safe file operations for tenant configuration.
 type FileManager struct {
 	tenantsDir       string
 	settingsReloader SettingsReloader
+
+	policyPath     string
+	routesPath     string
+	trunkPeersPath string
+
+	// startedAt stamps the process, so a global file modified since then is
+	// known to be waiting on a restart.
+	startedAt time.Time
 }
 
 var tenantNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_\-\.&]*$`)
@@ -105,6 +120,10 @@ func New(cfg Config) *FileManager {
 	return &FileManager{
 		tenantsDir:       cfg.TenantsDir,
 		settingsReloader: cfg.SettingsReloader,
+		policyPath:       cfg.PolicyPath,
+		routesPath:       cfg.RoutesPath,
+		trunkPeersPath:   cfg.TrunkPeersPath,
+		startedAt:        time.Now(),
 	}
 }
 
@@ -114,6 +133,9 @@ func New(cfg Config) *FileManager {
 var (
 	ErrNotFound      = errors.New("not found")
 	ErrAlreadyExists = errors.New("already exists")
+	// ErrNotConfigured means this server was given no path for the file, so
+	// there is nothing to read and nowhere to write.
+	ErrNotConfigured = errors.New("not configured on this server")
 )
 
 // writeFileAtomic writes through a temp file in the SAME directory and renames.

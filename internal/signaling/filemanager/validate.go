@@ -24,7 +24,11 @@ import (
 
 // ValidationError reports why a write was refused.
 type ValidationError struct {
-	Tenant   string
+	// Tenant is empty for a deployment-wide file.
+	Tenant string
+	// File names which file was refused: a tenant's "routing"/"flows", or one of
+	// the global kinds.
+	File     string
 	Problems dialplan.Problems
 }
 

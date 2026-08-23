@@ -40,6 +40,14 @@ type Config struct {
 	// deployments that mount them separately.
 	RoutingPath string
 
+	// AllowGlobalConfigWrites lets the config API write the deployment-wide
+	// files (policy.json, routes.json, trunk_peers.json). Default false:
+	// policy.json is the authorization boundary — it decides which tenant may
+	// dial out and how much — and this API has no authentication, so making it
+	// writable has to be an operator's decision rather than a side effect of
+	// shipping an editor. Reading is always allowed.
+	AllowGlobalConfigWrites bool
+
 	// Trunk settings
 	TrunkConfigPath string // Path to trunk peers JSON (list of {name,host,port,role})
 	RoutesPath      string // Path to DID->tenant mapping (routes.json)
@@ -83,6 +91,7 @@ func Load() (*Config, error) {
 	flag.StringVar(&cfg.RoutingPath, "routing-path", "", "Directory containing per-tenant <tenant>.routing.json and <tenant>.flows.json files (defaults to --tenants-path)")
 	flag.StringVar(&cfg.TrunkConfigPath, "trunk-config", "resources/config/trunk_peers.json", "Path to trunk peers configuration")
 	flag.StringVar(&cfg.RoutesPath, "routes-path", "resources/config/routes.json", "Path to DID->tenant routes (routes.json)")
+	flag.BoolVar(&cfg.AllowGlobalConfigWrites, "allow-global-config-writes", false, "Allow the config API to WRITE policy.json, routes.json and trunk_peers.json (reading is always allowed)")
 
 	var rtpManagerAddrs string
 	flag.StringVar(&rtpManagerAddrs, "rtpmanager", "localhost:9090", "RTP Manager gRPC addresses (comma-separated for multiple)")
@@ -133,6 +142,9 @@ func Load() (*Config, error) {
 	}
 	if policyPath := os.Getenv("POLICY_CONFIG"); policyPath != "" {
 		cfg.PolicyPath = policyPath
+	}
+	if v := os.Getenv("ALLOW_GLOBAL_CONFIG_WRITES"); v != "" {
+		cfg.AllowGlobalConfigWrites = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
 	}
 	if tenantsPath := os.Getenv("TENANTS_PATH"); tenantsPath != "" {
 		cfg.TenantsPath = tenantsPath

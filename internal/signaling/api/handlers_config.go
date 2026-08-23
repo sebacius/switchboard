@@ -30,7 +30,16 @@ type FileProvider interface {
 	GetTenantFile(name string, kind filemanager.FileKind) (string, error)
 	PutTenantFile(name string, kind filemanager.FileKind, content string) (dialplan.Problems, error)
 
+	// The deployment-wide files, addressed by name against a closed allowlist.
+	ListGlobalFiles() []filemanager.GlobalFileInfo
+	GetGlobalFile(kind filemanager.GlobalKind) (string, error)
+	PutGlobalFile(kind filemanager.GlobalKind, content string) (dialplan.Problems, error)
+
+	// ConfigStatus reports whether what is on disk is what is serving calls.
+	ConfigStatus() filemanager.Status
+
 	Reload() error
+	ReloadDetail() (filemanager.ReloadResult, error)
 }
 
 // fileKindFrom reads the ?file= parameter, defaulting to the routing table.
@@ -92,6 +101,11 @@ func (s *Server) writeSaved(w http.ResponseWriter, fields map[string]any, warnin
 // SetFileProvider sets the file manager for config API endpoints.
 func (s *Server) SetFileProvider(fp FileProvider) {
 	s.fileProvider = fp
+}
+
+// SetAllowGlobalConfigWrites enables PUT on the deployment-wide files.
+func (s *Server) SetAllowGlobalConfigWrites(allow bool) {
+	s.allowGlobalWrites = allow
 }
 
 // handleConfigTenantList handles GET /api/v1/config/tenants and POST (create)
@@ -267,12 +281,21 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.fileProvider.Reload(); err != nil {
+	result, err := s.fileProvider.ReloadDetail()
+	if err != nil {
 		slog.Error("[API] Reload failed", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	slog.Info("[API] Configuration reloaded successfully")
-	s.writeJSON(w, map[string]string{"status": "ok", "message": "Configuration reloaded"})
+	// Say what a reload did NOT cover. Half the files this API writes cannot be
+	// reloaded at all, and "ok" would let an operator believe a policy edit is
+	// live when only a restart would make it so.
+	s.writeJSON(w, map[string]any{
+		"status":       "ok",
+		"message":      result.Message,
+		"reloaded":     result.Reloaded,
+		"not_reloaded": result.NotReloaded,
+	})
 }

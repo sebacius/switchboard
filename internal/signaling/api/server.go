@@ -56,9 +56,15 @@ type Server struct {
 	drainProvider DrainProvider
 	parkProvider  ParkProvider
 	fileProvider  FileProvider
-	sessionsMu    sync.RWMutex
-	sessions      map[string]*SessionRecord
-	startTime     time.Time
+
+	// allowGlobalWrites gates PUT on the deployment-wide files. policy.json is
+	// the authorization boundary and this port has no authentication, so making
+	// it writable is an operator's decision, not a side effect of shipping an
+	// editor.
+	allowGlobalWrites bool
+	sessionsMu        sync.RWMutex
+	sessions          map[string]*SessionRecord
+	startTime         time.Time
 }
 
 // SessionRecord tracks an active RTP session
@@ -111,6 +117,9 @@ func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog
 	mux.HandleFunc("/api/v1/config/tenants", s.handleConfigTenantList)
 	mux.HandleFunc("/api/v1/config/tenants/", s.handleConfigTenant)
 	mux.HandleFunc("/api/v1/config/reload", s.handleConfigReload)
+	mux.HandleFunc("/api/v1/config/files", s.handleConfigFileList)
+	mux.HandleFunc("/api/v1/config/files/", s.handleConfigFile)
+	mux.HandleFunc("/api/v1/config/status", s.handleConfigStatus)
 
 	// Admin
 	mux.HandleFunc("/api/v1/shutdown", s.handleShutdown)
