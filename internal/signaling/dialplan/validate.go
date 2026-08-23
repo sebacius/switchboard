@@ -98,10 +98,6 @@ func CheckFlows(tenant string, table *RoutingTable, set *FlowSet) Problems {
 // at load rather than at 2am.
 func CheckFlowsWithPolicy(tenant string, table *RoutingTable, set *FlowSet, cos TargetClassifier) Problems {
 	ps := checkFlowsStructure(tenant, table, set)
-	// Emergency hazards are warnings, not errors: they flag a liability this
-	// change makes worse without blocking a deployment over a feature that does
-	// not exist yet.
-	ps = append(ps, CheckEmergency(tenant, table)...)
 	if cos != nil {
 		ps = append(ps, checkFlowPolicy(tenant, table, set, cos)...)
 	}

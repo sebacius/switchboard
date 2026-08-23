@@ -436,15 +436,6 @@ the PBX, where it does not belong.
 
 ### Where We're Headed
 
-**E911 — the next change, and a prerequisite for production traffic.** Nothing
-currently special-cases `911`. A tenant with the default `allow_external_dial:
-false` cannot dial it at all, and a perfectly reasonable `"9."` outbound pattern
-silently swallows it. Kari's Law requires direct 911 dialing without a prefix
-plus on-site notification, and RAY BAUM'S Act requires a dispatchable location.
-Emergency routing must bypass Class of Service entirely and be un-configurable —
-it cannot be something a tenant can misconfigure. The validator currently warns
-about pattern shadowing; that is a guardrail, not a solution.
-
 **Voicemail.** The `voicemail` node was deliberately cut from the flow
 vocabulary because recording forces a media-plane refactor: there is no
 persistent per-session RTP socket, so a recorder cannot coexist with playback.
