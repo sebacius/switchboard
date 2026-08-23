@@ -74,6 +74,22 @@
     </div>
     {{end}}
 
+    {{if .Warnings}}
+    <div class="mb-4 rounded-lg bg-amber-500/10 border border-amber-500/30 overflow-hidden">
+        <div class="px-4 py-2 bg-amber-500/20 text-amber-200 text-sm font-medium">
+            Saved, but worth a look:
+        </div>
+        <ul class="divide-y divide-amber-500/20">
+            {{range .Warnings}}
+            <li class="px-4 py-2.5">
+                <code class="text-xs text-amber-300/80 font-mono">{{.Path}}</code>
+                <p class="text-sm text-amber-200 mt-0.5">{{.Message}}</p>
+            </li>
+            {{end}}
+        </ul>
+    </div>
+    {{end}}
+
     <form hx-post="{{if .IsNew}}/admin/config/tenants/create?server={{.Server}}{{else}}/admin/config/tenants/save?server={{.Server}}{{end}}"
           hx-target="#config-content"
           hx-swap="innerHTML">
@@ -85,7 +101,7 @@
                    placeholder="e.g., acme-corp"
                    class="w-full sm:w-96 bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                    required>
-            <p class="mt-1 text-xs text-slate-500">Use alphanumeric characters, hyphens, underscores, or dots. The .md extension is added automatically.</p>
+            <p class="mt-1 text-xs text-slate-500">Use alphanumeric characters, hyphens, underscores, or dots. Creates <code class="text-slate-400">&lt;name&gt;.routing.json</code>.</p>
         </div>
         {{else}}
         <input type="hidden" name="name" value="{{.Name}}">

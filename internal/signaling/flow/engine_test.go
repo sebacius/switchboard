@@ -44,7 +44,7 @@ func testEngine(t *testing.T, extensions map[string]string, flowsJSON string) *E
 	routing := dialplan.StaticRouting{"acme": table}
 	return New(Config{
 		Routing: routing,
-		Flows:   staticFlows{"acme": &set},
+		Flows:   dialplan.StaticFlows{"acme": &set},
 		BuildPolicy: func(cc agent.CallContext) *agent.Policy {
 			return agent.NewPolicy(cc.Tenant, agent.TenantPolicy{
 				AllowExternalDial:      true,
@@ -55,14 +55,6 @@ func testEngine(t *testing.T, extensions map[string]string, flowsJSON string) *E
 		},
 		Logger: quiet(),
 	})
-}
-
-// staticFlows is a FlowSource over a map.
-type staticFlows map[string]*dialplan.FlowSet
-
-func (f staticFlows) TenantFlows(tenant string) (*dialplan.FlowSet, bool) {
-	set, ok := f[tenant]
-	return set, ok && set != nil
 }
 
 func internalCall(callee string) *agent.CallContext {
@@ -363,7 +355,7 @@ func TestDeniedExternalTakesDeniedExit(t *testing.T) {
 
 	e := New(Config{
 		Routing: dialplan.StaticRouting{"acme": table},
-		Flows:   staticFlows{"acme": &set},
+		Flows:   dialplan.StaticFlows{"acme": &set},
 		BuildPolicy: func(cc agent.CallContext) *agent.Policy {
 			// External dialing off: the shipped default posture.
 			return agent.NewPolicy(cc.Tenant, agent.TenantPolicy{

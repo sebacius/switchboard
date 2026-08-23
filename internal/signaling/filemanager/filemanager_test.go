@@ -72,7 +72,7 @@ func TestInvalidFlowIsRejectedAndNothingIsWritten(t *testing.T) {
 			"b":{"type":"tts","entry":{"text":"two"},"exits":{"done":"a"}}
 		}}}}`
 
-	err := fm.PutTenantFile("acme", KindFlows, broken)
+	_, err := fm.PutTenantFile("acme", KindFlows, broken)
 	if err == nil {
 		t.Fatal("a cyclic flow must be refused")
 	}
@@ -92,7 +92,7 @@ func TestRejectionCarriesProblems(t *testing.T) {
 	fm, dir := newManager(t)
 	writeFile(t, dir, "acme.routing.json", validRouting)
 
-	err := fm.PutTenantFile("acme", KindFlows, `{"flows":{"main":{
+	_, err := fm.PutTenantFile("acme", KindFlows, `{"flows":{"main":{
 		"start":"d",
 		"nodes":{"d":{"type":"dial_user","entry":{"target":"group/ghost"},
 			"exits":{"no_answer":"d2","busy":"d2","rejected":"d2","unavailable":"d2"}},
@@ -118,7 +118,7 @@ func TestRoutingChangeThatBreaksAFlowIsRejected(t *testing.T) {
 	writeFile(t, dir, "acme.flows.json", validFlows)
 
 	// Removing the claims group leaves the flow dialing nothing.
-	err := fm.PutTenantFile("acme", KindRouting,
+	_, err := fm.PutTenantFile("acme", KindRouting,
 		`{"operator":"user/100","extensions":{"100":"flow/main"},"groups":{}}`)
 
 	if err == nil {
@@ -134,7 +134,7 @@ func TestValidWriteSucceeds(t *testing.T) {
 	fm, dir := newManager(t)
 	writeFile(t, dir, "acme.routing.json", validRouting)
 
-	if err := fm.PutTenantFile("acme", KindFlows, validFlows); err != nil {
+	if _, err := fm.PutTenantFile("acme", KindFlows, validFlows); err != nil {
 		t.Fatalf("a valid flow should be accepted: %v", err)
 	}
 	got, err := fm.GetTenantFile("acme", KindFlows)

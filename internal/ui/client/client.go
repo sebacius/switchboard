@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	types "github.com/sebas/switchboard/api/types/v1"
@@ -223,12 +224,7 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// The body carries WHY, and a refused configuration write puts the
-		// individual problems there. Discarding it would reduce "node greeting
-		// has an unwired timeout exit" to "422".
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		resp.Body.Close()
-		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: string(body)}
+		return nil, errorFrom(resp)
 	}
 
 	return resp, nil
@@ -248,6 +244,54 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("unexpected status: %d", e.StatusCode)
 }
 
+// errorFrom turns a non-2xx response into an HTTPError, closing the body.
+//
+// Every verb goes through it, because the body carries WHY: a refused
+// configuration write puts the individual problems there, and discarding it
+// reduces "node greeting has an unwired timeout exit" to "422".
+func errorFrom(resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	resp.Body.Close()
+	return &HTTPError{StatusCode: resp.StatusCode, Body: string(body)}
+}
+
+// rejectionFrom upgrades a 422 into a typed ConfigRejectedError so every editor
+// can show which node is wrong, not only the one write that happened to unpack
+// it. Anything else passes through unchanged.
+func rejectionFrom(err error) error {
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnprocessableEntity {
+		var rejection types.ConfigRejection
+		if json.Unmarshal([]byte(httpErr.Body), &rejection) == nil && len(rejection.Problems) > 0 {
+			return &ConfigRejectedError{Rejection: rejection}
+		}
+	}
+	return err
+}
+
+// tenantPath builds a tenant file URL. The name is escaped because the server's
+// name rule admits characters — an ampersand, notably — that would otherwise
+// terminate the path or the query.
+func tenantPath(name, file string) string {
+	path := "/api/v1/config/tenants/" + url.PathEscape(name)
+	if file != "" {
+		path += "?file=" + url.QueryEscape(file)
+	}
+	return path
+}
+
+// decodeSaved reads the body of a successful write, which carries any warnings
+// the validator raised.
+func decodeSaved(resp *http.Response) ([]types.ConfigProblem, error) {
+	defer resp.Body.Close()
+	var saved types.ConfigSaved
+	if err := json.NewDecoder(resp.Body).Decode(&saved); err != nil {
+		// The write succeeded; only the warning list is lost.
+		return nil, nil
+	}
+	return saved.Warnings, nil
+}
+
 // post performs an HTTP POST request
 func (c *Client) post(ctx context.Context, path string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, nil)
@@ -261,8 +305,7 @@ func (c *Client) post(ctx context.Context, path string) (*http.Response, error) 
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return nil, errorFrom(resp)
 	}
 
 	return resp, nil
@@ -281,8 +324,7 @@ func (c *Client) delete(ctx context.Context, path string) (*http.Response, error
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return nil, errorFrom(resp)
 	}
 
 	return resp, nil
@@ -302,12 +344,7 @@ func (c *Client) put(ctx context.Context, path string, body io.Reader) (*http.Re
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// The body carries WHY, and a refused configuration write puts the
-		// individual problems there. Discarding it would reduce "node greeting
-		// has an unwired timeout exit" to "422".
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		resp.Body.Close()
-		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: string(body)}
+		return nil, errorFrom(resp)
 	}
 
 	return resp, nil
@@ -327,8 +364,7 @@ func (c *Client) postWithBody(ctx context.Context, path string, body io.Reader) 
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
-		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return nil, errorFrom(resp)
 	}
 
 	return resp, nil
@@ -350,7 +386,6 @@ func (c *Client) ListTenants(ctx context.Context) ([]types.TenantFile, error) {
 	return tenants, nil
 }
 
-// GetTenant fetches a tenant markdown file by name
 // GetTenantFile fetches one of a tenant's configuration files.
 func (c *Client) GetTenantFile(ctx context.Context, name, file string) (string, error) {
 	return c.getTenantFile(ctx, name, file)
@@ -362,7 +397,7 @@ func (c *Client) GetTenant(ctx context.Context, name string) (string, error) {
 }
 
 func (c *Client) getTenantFile(ctx context.Context, name, file string) (string, error) {
-	resp, err := c.get(ctx, "/api/v1/config/tenants/"+name+"?file="+file)
+	resp, err := c.get(ctx, tenantPath(name, file))
 	if err != nil {
 		return "", err
 	}
@@ -378,20 +413,19 @@ func (c *Client) getTenantFile(ctx context.Context, name, file string) (string, 
 	return result.Content, nil
 }
 
-// CreateTenant creates a new tenant markdown file
-func (c *Client) CreateTenant(ctx context.Context, name, content string) error {
+// CreateTenant creates a tenant's routing file, returning any warnings the
+// server raised about the content it accepted.
+func (c *Client) CreateTenant(ctx context.Context, name, content string) ([]types.ConfigProblem, error) {
 	body, _ := json.Marshal(types.CreateTenantRequest{Name: name, Content: content})
 	resp, err := c.postWithBody(ctx, "/api/v1/config/tenants", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, rejectionFrom(err)
 	}
-	resp.Body.Close()
-	return nil
+	return decodeSaved(resp)
 }
 
-// PutTenant updates an existing tenant markdown file
 // PutTenant saves a tenant's routing table.
-func (c *Client) PutTenant(ctx context.Context, name, content string) error {
+func (c *Client) PutTenant(ctx context.Context, name, content string) ([]types.ConfigProblem, error) {
 	return c.PutTenantFile(ctx, name, "routing", content)
 }
 
@@ -400,21 +434,13 @@ func (c *Client) PutTenant(ctx context.Context, name, content string) error {
 // A write that would not load is refused by the server, and the refusal carries
 // the problems. Returning them as a typed error is what lets the editor show
 // which node is wrong instead of a bare "bad request".
-func (c *Client) PutTenantFile(ctx context.Context, name, file, content string) error {
+func (c *Client) PutTenantFile(ctx context.Context, name, file, content string) ([]types.ConfigProblem, error) {
 	body, _ := json.Marshal(types.FileContent{Content: content})
-	resp, err := c.put(ctx, "/api/v1/config/tenants/"+name+"?file="+file, bytes.NewReader(body))
+	resp, err := c.put(ctx, tenantPath(name, file), bytes.NewReader(body))
 	if err != nil {
-		var httpErr *HTTPError
-		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnprocessableEntity {
-			var rejection types.ConfigRejection
-			if json.Unmarshal([]byte(httpErr.Body), &rejection) == nil && len(rejection.Problems) > 0 {
-				return &ConfigRejectedError{Rejection: rejection}
-			}
-		}
-		return err
+		return nil, rejectionFrom(err)
 	}
-	resp.Body.Close()
-	return nil
+	return decodeSaved(resp)
 }
 
 // ConfigRejectedError reports a configuration write refused by validation.
@@ -434,35 +460,9 @@ func (e *ConfigRejectedError) Error() string {
 // Problems returns the individual findings.
 func (e *ConfigRejectedError) Problems() []types.ConfigProblem { return e.Rejection.Problems }
 
-// DeleteTenant deletes a tenant markdown file
+// DeleteTenant removes every file belonging to a tenant.
 func (c *Client) DeleteTenant(ctx context.Context, name string) error {
-	resp, err := c.delete(ctx, "/api/v1/config/tenants/"+name)
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	return nil
-}
-
-// GetDialplan fetches the dialplan.json content
-func (c *Client) GetDialplan(ctx context.Context) (string, error) {
-	resp, err := c.get(ctx, "/api/v1/config/dialplan")
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var result types.FileContent
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode dialplan: %w", err)
-	}
-	return result.Content, nil
-}
-
-// PutDialplan updates the dialplan.json content
-func (c *Client) PutDialplan(ctx context.Context, content string) error {
-	body, _ := json.Marshal(types.FileContent{Content: content})
-	resp, err := c.put(ctx, "/api/v1/config/dialplan", bytes.NewReader(body))
+	resp, err := c.delete(ctx, tenantPath(name, ""))
 	if err != nil {
 		return err
 	}

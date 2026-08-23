@@ -104,9 +104,10 @@ type TenantFile struct {
 	HasFlows bool `json:"has_flows,omitempty"`
 }
 
-// ConfigProblem is one reason a configuration write was refused. Path locates
-// it — "flows.main.nodes.greeting.exits.timeout" — so an editor can point at
-// the node rather than saying only that something is wrong.
+// ConfigProblem is one finding about a configuration file. Path locates it —
+// "flows.main.nodes.greeting.exits.timeout" — so an editor can point at the
+// node rather than saying only that something is wrong. Severity "error" means
+// the write was refused; "warning" means it was saved and is worth a look.
 type ConfigProblem struct {
 	Path     string `json:"path"`
 	Message  string `json:"message"`
@@ -115,9 +116,22 @@ type ConfigProblem struct {
 
 // ConfigRejection is the body returned when a write fails validation.
 type ConfigRejection struct {
-	Error    string          `json:"error"`
-	Tenant   string          `json:"tenant"`
+	Error  string `json:"error"`
+	Tenant string `json:"tenant"`
+	// File names which file was refused — a tenant's "routing"/"flows", or a
+	// deployment-wide "policy"/"routes"/"trunk_peers".
+	File     string          `json:"file,omitempty"`
 	Problems []ConfigProblem `json:"problems"`
+}
+
+// ConfigSaved is the body of a successful configuration write. Warnings are
+// findings the loader would accept, so they ride along with the success rather
+// than blocking it.
+type ConfigSaved struct {
+	Status   string          `json:"status"`
+	File     string          `json:"file,omitempty"`
+	Name     string          `json:"name,omitempty"`
+	Warnings []ConfigProblem `json:"warnings,omitempty"`
 }
 
 // CreateTenantRequest is the body for creating a new tenant file.

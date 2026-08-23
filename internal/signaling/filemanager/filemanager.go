@@ -1,6 +1,7 @@
 package filemanager
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/sebas/switchboard/internal/signaling/dialplan"
 )
 
 // SettingsReloader refreshes the cached configuration an edit through this API
@@ -105,6 +108,49 @@ func New(cfg Config) *FileManager {
 	}
 }
 
+// ErrNotFound and ErrAlreadyExists let a caller classify a failure without
+// matching on message text. The API maps them to 404 and 409, and a reworded
+// message must not silently turn one status into another.
+var (
+	ErrNotFound      = errors.New("not found")
+	ErrAlreadyExists = errors.New("already exists")
+)
+
+// writeFileAtomic writes through a temp file in the SAME directory and renames.
+//
+// A configuration file is read by a reloader that can run at any moment, so a
+// truncate-then-write leaves a window in which a tenant has an empty routing
+// table. Rename within a directory is atomic, so a reader sees either the old
+// file or the new one, and a crash mid-write leaves the old one intact.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file in %s: %w", dir, err)
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp) // no-op once the rename succeeds
+
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("sync %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", tmp, err)
+	}
+	if err := os.Chmod(tmp, perm); err != nil {
+		return fmt.Errorf("chmod %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("rename %s to %s: %w", tmp, path, err)
+	}
+	return nil
+}
+
 // ListTenants returns every tenant that has configuration on disk.
 func (fm *FileManager) ListTenants() ([]TenantInfo, error) {
 	entries, err := os.ReadDir(fm.tenantsDir)
@@ -192,35 +238,40 @@ func (fm *FileManager) GetTenant(name string) (string, error) {
 // server would then refuse to reload would take the tenant's routing down at
 // the next restart. So the candidate is validated against the tenant's other
 // file first, and nothing touches disk unless it passes.
-func (fm *FileManager) PutTenantFile(name string, kind FileKind, content string) error {
+//
+// Only ERRORS block the write. A warning is a finding the loader would accept —
+// refusing it would make the editor stricter than the server, so warnings are
+// returned alongside a successful save for the operator to read.
+func (fm *FileManager) PutTenantFile(name string, kind FileKind, content string) (dialplan.Problems, error) {
 	path, err := fm.pathFor(name, kind)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	if problems := fm.validateCandidate(name, kind, content); len(problems) > 0 {
-		return &ValidationError{Tenant: name, Problems: problems}
+	problems := fm.validateCandidate(name, kind, content)
+	if problems.HasErrors() {
+		return nil, &ValidationError{Tenant: name, Problems: problems}
 	}
 
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("write %s for tenant %s: %w", kind, name, err)
+	if err := writeFileAtomic(path, []byte(content), 0o644); err != nil {
+		return nil, fmt.Errorf("write %s for tenant %s: %w", kind, name, err)
 	}
-	return nil
+	return problems, nil
 }
 
 // PutTenant updates a tenant's routing file.
-func (fm *FileManager) PutTenant(name, content string) error {
+func (fm *FileManager) PutTenant(name, content string) (dialplan.Problems, error) {
 	return fm.PutTenantFile(name, KindRouting, content)
 }
 
 // CreateTenant creates a tenant's routing file. Fails if it already exists.
-func (fm *FileManager) CreateTenant(name, content string) error {
+func (fm *FileManager) CreateTenant(name, content string) (dialplan.Problems, error) {
 	path, err := fm.pathFor(name, KindRouting)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("tenant %q already exists", name)
+		return nil, fmt.Errorf("tenant %q: %w", name, ErrAlreadyExists)
 	}
 	return fm.PutTenantFile(name, KindRouting, content)
 }
@@ -233,7 +284,7 @@ func (fm *FileManager) DeleteTenant(name string) error {
 
 	routing := filepath.Join(fm.tenantsDir, name+routingSuffix)
 	if _, err := os.Stat(routing); os.IsNotExist(err) {
-		return fmt.Errorf("tenant %q not found", name)
+		return fmt.Errorf("tenant %q: %w", name, ErrNotFound)
 	}
 	if err := os.Remove(routing); err != nil {
 		return fmt.Errorf("delete tenant %s: %w", name, err)
@@ -288,8 +339,6 @@ func validateTenantName(name string) error {
 	if strings.Contains(name, "/") || strings.Contains(name, "\\") || strings.Contains(name, "..") {
 		return fmt.Errorf("tenant name contains invalid characters")
 	}
-	// Strip .md suffix if provided
-	name = strings.TrimSuffix(name, ".md")
 	if !tenantNameRegex.MatchString(name) {
 		return fmt.Errorf("tenant name %q contains invalid characters (use alphanumeric, hyphens, underscores, dots, ampersands)", name)
 	}

@@ -73,8 +73,6 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	mux.HandleFunc("/admin/config/tenants/save", s.handleConfigTenantSave)
 	mux.HandleFunc("/admin/config/tenants/create", s.handleConfigTenantCreate)
 	mux.HandleFunc("/admin/config/tenants/delete", s.handleConfigTenantDelete)
-	mux.HandleFunc("/admin/config/partials/dialplan", s.handleConfigDialplanPartial)
-	mux.HandleFunc("/admin/config/dialplan/save", s.handleConfigDialplanSave)
 	mux.HandleFunc("/admin/config/reload", s.handleConfigReload)
 
 	// Health check

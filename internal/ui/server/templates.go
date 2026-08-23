@@ -24,7 +24,6 @@ type Templates struct {
 	configPage       *template.Template
 	configTenants    *template.Template
 	configTenantEdit *template.Template
-	configDialplan   *template.Template
 }
 
 // TemplateData holds data for rendering templates
@@ -212,11 +211,6 @@ func NewTemplates() (*Templates, error) {
 		return nil, err
 	}
 
-	t.configDialplan, err = template.New("config_dialplan.html").ParseFS(templatesFS, "templates/config_dialplan.html")
-	if err != nil {
-		return nil, err
-	}
-
 	return t, nil
 }
 
@@ -299,35 +293,31 @@ type ConfigTenantsData struct {
 	Error   string
 }
 
-// ConfigTenantEditData holds data for the tenant editor
-// ConfigProblemData is one validation problem shown against its path.
+// ConfigProblemData is one validation finding shown against its path.
 type ConfigProblemData struct {
 	Path    string
 	Message string
 }
 
+// ConfigTenantEditData holds data for the tenant editor.
 type ConfigTenantEditData struct {
 	Server  string
 	Name    string
 	Content string
 	// File is "routing" or "flows".
-	File     string
-	IsNew    bool
-	Success  string
-	Error    string
+	File    string
+	IsNew   bool
+	Success string
+	Error   string
+	// Problems are errors that BLOCKED the write; Warnings were saved anyway
+	// and are worth a second look. Rendering them the same way would tell the
+	// operator to fix something that is already live.
 	Problems []ConfigProblemData
+	Warnings []ConfigProblemData
 }
 
 // IsFlows reports whether the flow graph is being edited, for the template.
 func (d ConfigTenantEditData) IsFlows() bool { return d.File == "flows" }
-
-// ConfigDialplanData holds data for the dialplan editor
-type ConfigDialplanData struct {
-	Server  string
-	Content string
-	Success string
-	Error   string
-}
 
 // --- Configuration Render Methods ---
 
@@ -344,9 +334,4 @@ func (t *Templates) RenderConfigTenants(w io.Writer, data ConfigTenantsData) err
 // RenderConfigTenantEdit renders the tenant editor partial
 func (t *Templates) RenderConfigTenantEdit(w io.Writer, data ConfigTenantEditData) error {
 	return t.configTenantEdit.Execute(w, data)
-}
-
-// RenderConfigDialplan renders the dialplan editor partial
-func (t *Templates) RenderConfigDialplan(w io.Writer, data ConfigDialplanData) error {
-	return t.configDialplan.Execute(w, data)
 }
