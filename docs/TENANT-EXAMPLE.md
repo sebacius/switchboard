@@ -121,11 +121,9 @@ This is the reference: every routing feature appears here.
     // Patterns, because extension ranges cannot be enumerated. 2XX is any
     // 200-299 extension; the literals above still win where they overlap,
     // because a literal is narrower than X at that position.
-    "2XX":  "flow/dept-lookup",
+    "2XX":  "flow/dept-lookup"
 
     // Parked-call retrieval is handled by retrieval_prefix, not here.
-    "911":  "user/150"            // see the E911 note at the end — this is NOT
-                                  // adequate emergency handling
   },
 
   // Capability narrowing: the ONLY names a flow may dial externally. A flow can
@@ -471,28 +469,3 @@ warning: tenant handles DID "+15558001200" but routes.json does not route that
 The first is an error because the call fails. The second is a warning because
 the configuration still loads — but it catches the likeliest mistake there is:
 adding a number to the tenant file and forgetting the global one.
-
----
-
-## 5. A warning about `911`
-
-The `"911": "user/150"` line in the routing table above is **not** adequate
-emergency handling, and is shown only because a real table would plausibly
-contain something like it.
-
-Nothing in Switchboard currently special-cases emergency numbers:
-
-- A tenant with the default `allow_external_dial: false` cannot dial 911 **at
-  all**.
-- A tenant with external dialing enabled but an empty allowlist cannot either.
-- A perfectly reasonable outbound pattern such as `"9."` silently swallows `911`,
-  because `9` followed by `11` matches it.
-
-Kari's Law requires direct 911 dialing with no prefix, plus on-site
-notification. RAY BAUM'S Act requires a dispatchable location. Emergency routing
-must bypass Class of Service entirely and be **un-configurable** — it cannot be
-something a tenant is able to get wrong.
-
-The validator warns when a pattern shadows an emergency number, or when a
-PSTN-capable tenant has no emergency route. That is a guardrail, not a solution.
-**Do not carry production traffic until emergency calling is implemented.**
