@@ -363,6 +363,14 @@ export LOGLEVEL=debug
 | `--rtp-port-max` | `RTP_PORT_MAX` | 20000 | End of RTP port range |
 | `--audio-path` | `AUDIO_PATH` | ./audio | Base path for audio files |
 
+A `play_audio` node's file name is resolved against `--audio-path`. A name may
+name a subdirectory (`acme/welcome.wav`) but cannot escape the base path; an
+absolute path in a flow is used as written.
+
+> **Upgrading:** this path was previously parsed and then ignored, so file names
+> resolved against the RTP manager's *working directory*. A deployment that
+> relied on that must set `AUDIO_PATH` to that directory, or move the files.
+
 ### Speech Service Connections
 
 | Flag | Env Var | Default | Description |

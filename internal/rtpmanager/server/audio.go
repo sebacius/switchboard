@@ -106,3 +106,47 @@ func depth(rel string) int {
 	}
 	return len(strings.Split(filepath.ToSlash(rel), "/"))
 }
+
+// resolveAudio turns a flow's file name into a path under the audio directory.
+//
+// A relative name is joined onto the audio directory and checked to still be
+// inside it, so "../../etc/passwd" in a flow cannot read outside the prompt
+// library.
+//
+// An absolute path is honoured as written. Deployments exist that mount prompts
+// somewhere specific and say so in the flow, and today — with the audio
+// directory unread — an absolute path is the ONLY thing that reliably works, so
+// reinterpreting it here would break exactly the people who did the careful
+// thing. Note what this means: a flow file can name any absolute path, so it is
+// operator-trust input. The WAV loader rejects anything that is not RIFF/PCM, so
+// the reach is "play a valid WAV that is already on this host".
+//
+// With no audio directory configured, names pass through unchanged, which is
+// what every deployment gets today.
+func (s *Server) resolveAudio(name string) string {
+	base := s.config.AudioBasePath
+	if name == "" || base == "" || filepath.IsAbs(name) {
+		return name
+	}
+
+	root := filepath.Clean(base)
+	joined := filepath.Join(root, filepath.Clean("/"+name))
+	if !strings.HasPrefix(joined, root+string(filepath.Separator)) && joined != root {
+		slog.Warn("[AUDIO] Refusing a file name that escapes the audio directory",
+			"name", name, "base", root)
+		return name
+	}
+	return joined
+}
+
+// resolveAudioAll resolves a playlist.
+func (s *Server) resolveAudioAll(names []string) []string {
+	if len(names) == 0 {
+		return names
+	}
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = s.resolveAudio(n)
+	}
+	return out
+}
