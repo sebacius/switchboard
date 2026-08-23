@@ -79,8 +79,8 @@ func (c *Client) Transcribe(ctx context.Context, audioData []byte) (string, erro
 
 	// The model field is REQUIRED by the OpenAI transcription contract. Omitting
 	// it makes faster-whisper style servers reject the whole request with a 422,
-	// which surfaces as every Listen failing and the supervisor never hearing
-	// the caller — so this is not an optional refinement.
+	// which surfaces as every Listen failing — so this is not an optional
+	// refinement.
 	if err := writer.WriteField("model", c.model); err != nil {
 		return "", fmt.Errorf("write model field: %w", err)
 	}

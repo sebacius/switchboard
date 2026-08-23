@@ -18,8 +18,9 @@ type Config struct {
 	Routing dialplan.RoutingSource
 	// Flows supplies each tenant's graphs.
 	Flows dialplan.FlowSource
-	// Resolver handles the single-hop cases — a registered extension, a mapped
-	// DID, a ring group — that need no graph at all.
+	// Resolver is consulted for *7XX retrieval, which is evaluated before any
+	// entry mapping. It can resolve endpoints and ring groups too; the engine
+	// does not ask, because entryFor already covers those.
 	Resolver *agent.Resolver
 	// Parking serves *7XX retrieval, which is evaluated before any flow.
 	Parking agent.ParkingService

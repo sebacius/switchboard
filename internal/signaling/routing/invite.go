@@ -78,14 +78,14 @@ func NewInviteHandler(
 // This handler deliberately does NOT send a 200 OK: whoever ends up owning the
 // call decides that. It performs the deterministic work — ingress authorization,
 // direction and tenant resolution, tenant preflight — sets up media, rings the
-// caller, and then hands off:
+// caller, and then hands the call to the flow engine:
 //
-//	deterministic resolution → forward / ring group / retrieve, no LLM at all
-//	no deterministic answer   → channel admission → the supervisor runner
+//	engine claims it   → unpark, a one-node dial, or a walk of the graph
+//	engine declines it → the tenant operator, or 480 if none is configured
 //
-// The order is the point. A call with exactly one correct destination is routed
-// without waiting on a model, and the channel limit is charged only to calls
-// that actually engage one.
+// Every branch is decided from configuration checked at startup. Nothing here
+// waits on a network call, and the call blocks this goroutine either way — see
+// routeCall for why that is required rather than merely convenient.
 func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction) {
 	slog.Info("Received INVITE", "from", req.From(), "to", req.To(), "call_id", req.CallID())
 
@@ -161,7 +161,7 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	}
 
 	// Create media session via transport (this returns the SDP we will answer
-	// with — later, and only if the supervisor decides to own the media).
+	// with — later, and only if a node takes ownership of the media).
 	sessionResult, err := h.transport.CreateSession(context.Background(), mediaclient.SessionInfo{
 		CallID:        dlg.CallID,
 		RemoteAddr:    clientAddr,
@@ -187,8 +187,8 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 	}
 
 	// The answer SDP is handed to the session and held until
-	// agent.CallSession.Answer sends it — the supervisor's first turn still
-	// decides whether this call is forwarded or answered. No 183, no 200 OK.
+	// agent.CallSession.Answer sends it — what the flow reaches first decides
+	// whether this call is forwarded or answered. No 183, no 200 OK.
 	session := agent.NewSession(agent.SessionConfig{
 		Dialog:      dlg,
 		Transport:   h.transport,
@@ -203,18 +203,18 @@ func (h *InviteHandler) HandleINVITE(req *sip.Request, tx sip.ServerTransaction)
 		SDPBody:     sessionResult.SDPBody,
 	})
 
-	// Ring the caller BEFORE the first LLM turn. The turn can take tens of
-	// seconds on modest hardware, and until some provisional response arrives the
-	// caller's INVITE client transaction is still retransmitting against Timer B
-	// — so the call was being CANCELled before the supervisor ever decided
-	// anything. A provisional moves that transaction to Proceeding, which buys
-	// the decision as much time as it needs, and the caller hears real ringback
-	// instead of dead air.
+	// Ring the caller BEFORE routing. Until some provisional response arrives the
+	// caller's INVITE client transaction is still retransmitting against Timer B,
+	// and a slow decision was getting the call CANCELled before it was made. A
+	// provisional moves that transaction to Proceeding, which buys routing as
+	// much time as it needs, and the caller hears real ringback instead of dead
+	// air. Routing is fast now that nothing external is consulted, but the
+	// transaction still has to be held: a dial can ring for its full timeout.
 	//
 	// 180 is deliberately not 200: it holds the transaction without answering, so
-	// a first turn that chooses to forward can still relay the target's own 200,
-	// and one that chooses to speak still sends our 200 at that point. Ordinary
-	// SIP either way — the phone rings, then somebody picks up.
+	// a flow that forwards can still relay the target's own 200, and one that
+	// speaks still sends our 200 at that point. Ordinary SIP either way — the
+	// phone rings, then somebody picks up.
 	if err := h.dialogMgr.SendRinging(dlg); err != nil {
 		// Not fatal: the call can still complete, the caller just waits in silence.
 		slog.Warn("[Routing] Failed to send 180 Ringing", "call_id", dlg.CallID, "error", err)
@@ -266,10 +266,9 @@ func (h *InviteHandler) routeCall(dlg *dialog.Dialog, session agent.CallSession,
 	h.fallbackToOperator(dlg, session, cc)
 }
 
-// fallbackToOperator is what happens when nothing claims a call. Until the flow
-// engine lands this is the whole of the former supervisor's job: send the caller
-// to a human if the tenant named one, and otherwise decline honestly rather than
-// leaving them on 180 forever.
+// fallbackToOperator is what happens when the flow engine does not claim a call:
+// send the caller to a human if the tenant named one, and otherwise decline
+// honestly rather than leaving them on 180 forever.
 func (h *InviteHandler) fallbackToOperator(dlg *dialog.Dialog, session agent.CallSession, cc agent.CallContext) {
 	operator := ""
 	if h.operatorFor != nil {
