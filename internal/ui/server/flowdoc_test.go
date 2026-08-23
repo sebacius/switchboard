@@ -508,7 +508,7 @@ func TestALayoutOnlySaveTouchesOnlyTheLayout(t *testing.T) {
 	}
 }
 
-// Editing one node must not reformat its neighbours.
+// Editing one node must not reformat its neighbors.
 func TestEditingOneNodeLeavesTheOthersVerbatim(t *testing.T) {
 	original := readFile(t, filepath.Join(tenantsDir, "devtenant.flows.json"))
 

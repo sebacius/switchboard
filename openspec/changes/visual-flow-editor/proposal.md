@@ -6,7 +6,7 @@ A graphical editor makes the graph the thing being edited. It does not make Java
 
 ## What Changes
 
-- **New**: `dialplan.NodeSchema()` exports the node-type catalogue — every type, its declared exits, its terminal exits, and a field descriptor per entry-struct field — derived by reflection over the existing entry structs. Adding a node type in Go makes it appear in the editor with no front-end change; the catalogue is never hand-written in JavaScript.
+- **New**: `dialplan.NodeSchema()` exports the node-type catalog — every type, its declared exits, its terminal exits, and a field descriptor per entry-struct field — derived by reflection over the existing entry structs. Adding a node type in Go makes it appear in the editor with no front-end change; the catalog is never hand-written in JavaScript.
 - **New**: a "Flows" tab in the UI server's config page rendering a tenant's flow as a drag-and-drop graph (Drawflow, MIT, from unpkg — no npm, no bundler, no build step, consistent with the existing htmx + Tailwind-from-CDN stack).
 - **New**: node palette, per-node labelled output ports (one per exit, digit exits included), a marked start node with a way to designate a different one, and a schema-generated inspector form for the selected node.
 - **New**: per-flow `_layout` key storing node positions. Safe because only `Node.entry` decodes with `DisallowUnknownFields`; the flow object itself is decoded by plain `json.Unmarshal`, which already carries `_comment` and `_comment_nodes` in the reference file. A flow with no `_layout` is placed by BFS depth from start — column by depth, row by order within the layer — which terminates because the graph is guaranteed acyclic.
@@ -20,7 +20,7 @@ No breaking changes. The existing raw-JSON tenant editor stays exactly as it is.
 
 ### New Capabilities
 
-- `flow-schema`: the machine-readable node-type catalogue exported from `internal/signaling/dialplan` — node types, declared exits, terminal exits, and per-type entry field descriptors — so a UI can render a palette and a property form without restating the exit contract.
+- `flow-schema`: the machine-readable node-type catalog exported from `internal/signaling/dialplan` — node types, declared exits, terminal exits, and per-type entry field descriptors — so a UI can render a palette and a property form without restating the exit contract.
 - `flow-authoring`: the graphical flow editor in the UI server — graph rendering, layout persistence, node and connection editing, and the validated save that routes through the signaling server's config API.
 
 ### Modified Capabilities

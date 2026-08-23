@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// schemaFor returns one type's entry from the catalogue, failing if it is
+// schemaFor returns one type's entry from the catalog, failing if it is
 // absent — every assertion below depends on the type being there at all.
 func schemaFor(t *testing.T, name string) NodeTypeSchema {
 	t.Helper()
@@ -38,7 +38,7 @@ func keysOf(fields []FieldSchema) []string {
 	return out
 }
 
-// The catalogue must cover the closed set exactly. A type present in one and
+// The catalog must cover the closed set exactly. A type present in one and
 // not the other is a type an operator can write but not draw, or draw but not
 // write.
 func TestNodeSchemaCoversEveryTypeExactlyOnce(t *testing.T) {
@@ -231,7 +231,7 @@ func TestRequiredFollowsTheOmitemptyTag(t *testing.T) {
 	}
 }
 
-// SchemaFor is the same catalogue looked up one type at a time, and refuses a
+// SchemaFor is the same catalog looked up one type at a time, and refuses a
 // type the closed set does not contain.
 func TestSchemaForOneType(t *testing.T) {
 	got, ok := SchemaFor(NodeIVR)
@@ -239,7 +239,7 @@ func TestSchemaForOneType(t *testing.T) {
 		t.Fatal("SchemaFor(ivr) reported the type as unknown")
 	}
 	if !reflect.DeepEqual(got, schemaFor(t, "ivr")) {
-		t.Error("SchemaFor(ivr) disagrees with the catalogue entry")
+		t.Error("SchemaFor(ivr) disagrees with the catalog entry")
 	}
 	if _, ok := SchemaFor(NodeType("voicemail")); ok {
 		t.Error("SchemaFor accepted a type that is not in the closed set")

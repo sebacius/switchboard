@@ -46,7 +46,7 @@ Each node SHALL render one output port per exit, labelled with the exit name, pl
 
 ### Requirement: The palette and inspector are generated from the exported schema
 
-The palette SHALL offer exactly the node types the exported schema reports, and the inspector for a selected node SHALL generate its fields from that type's field descriptors. Neither SHALL contain a hand-written node catalogue.
+The palette SHALL offer exactly the node types the exported schema reports, and the inspector for a selected node SHALL generate its fields from that type's field descriptors. Neither SHALL contain a hand-written node catalog.
 
 #### Scenario: Dragging from the palette adds a node
 

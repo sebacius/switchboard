@@ -11,7 +11,7 @@ Constraint verified before designing anything: the flows file is decoded with pl
 **Goals:**
 
 - Render a tenant's flow as a graph an operator can read at a glance: which port is `busy`, which is `no_answer`, and where each one leads.
-- Keep the node catalogue single-sourced in Go. Adding a node type or an entry field must surface in the editor with no front-end change.
+- Keep the node catalog single-sourced in Go. Adding a node type or an entry field must surface in the editor with no front-end change.
 - Persist layout without changing what the file means to the loader.
 - Route every save through the existing validated write path, so the editor cannot produce a file the server would later refuse to load.
 - Round-trip a flow unchanged: open it, save it without editing, and the file still validates and still means the same thing.
@@ -27,13 +27,13 @@ Constraint verified before designing anything: the flows file is decoded with pl
 
 ## Decisions
 
-### The Go code is the schema; the catalogue is derived, not written
+### The Go code is the schema; the catalog is derived, not written
 
 `dialplan.NodeSchema() []NodeTypeSchema` returns, per node type: the type name, `DeclaredExits(t)`, `terminalExits[t]`, whether the type accepts digit exits, and a field descriptor list built by reflecting over the entry struct returned by `entryTarget(t)` — json key, kind, and whether the field is a `PromptSpec`.
 
 *Why reflection over a hand-written table:* a hand-written table is a second copy of the contract, and the failure mode is silent. Add `Terminator` to `IVREntry` and a hand-written table still renders the old form; nobody finds out until an operator cannot set a terminator. Reflection makes the entry struct the only place the field exists.
 
-*Why not generate the catalogue into JavaScript at all:* it would be a third copy with its own staleness. The handler serializes `NodeSchema()` into the page as JSON at render time, so the browser reads whatever the running binary knows.
+*Why not generate the catalog into JavaScript at all:* it would be a third copy with its own staleness. The handler serializes `NodeSchema()` into the page as JSON at render time, so the browser reads whatever the running binary knows.
 
 *`required` is a hint, not a rule.* Reflection can see struct tags, not `checkEntry`'s logic. The descriptor derives `required` from the absence of `omitempty` — which is how the existing structs already distinguish `json:"text"` from `json:"voice,omitempty"` — and the schema documents it as a form hint. Go's validator stays the authority, and a field the heuristic gets wrong produces a nagging asterisk, never a rejected save or an accepted bad one.
 

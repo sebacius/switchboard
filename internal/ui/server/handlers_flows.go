@@ -18,11 +18,11 @@ import (
 // PutTenantFile the raw JSON editor uses, so the signaling server validates the
 // candidate against the tenant's routing table and refuses it whole if it would
 // not load. What the canvas knows about the exit contract it learns from
-// dialplan.NodeSchema(), serialized into the page — never from a catalogue
+// dialplan.NodeSchema(), serialized into the page — never from a catalog
 // written out again in JavaScript, which would be a second copy of the contract
 // with its own opinion about what is true.
 //
-// The catalogue is compiled into this binary rather than fetched from the
+// The catalog is compiled into this binary rather than fetched from the
 // backend, which assumes the UI and the signaling server it edits are built
 // from the same source. They ship together, so that holds; if a UI ever had to
 // drive an older signaling server, the schema would need to come over the API
@@ -205,7 +205,7 @@ func graphJSON(graph flowGraph) template.JS {
 	return template.JS(out)
 }
 
-// schemaJSON serializes the node catalogue for the palette and the inspector.
+// schemaJSON serializes the node catalog for the palette and the inspector.
 func schemaJSON() template.JS {
 	out, err := json.Marshal(dialplan.NodeSchema())
 	if err != nil {

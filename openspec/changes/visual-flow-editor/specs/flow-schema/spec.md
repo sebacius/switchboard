@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: The node catalogue is exported from Go
+### Requirement: The node catalog is exported from Go
 
 The `dialplan` package SHALL export `NodeSchema()`, returning one entry per node type in the closed set returned by `NodeTypes()`. Each entry SHALL carry the type name, its declared exits, its terminal exits, whether the type accepts digit exits, and a descriptor for every field of that type's entry struct. No consumer SHALL need to restate the exit contract or the entry shape to render a palette or a property form.
 
@@ -23,7 +23,7 @@ The `dialplan` package SHALL export `NodeSchema()`, returning one entry per node
 
 - **WHEN** a node type is added to the `dialplan` package's exit table with its entry struct
 - **THEN** `NodeSchema()` includes it with its exits and fields
-- **AND** no JavaScript, template, or hand-written catalogue requires editing for it to be offered in a palette
+- **AND** no JavaScript, template, or hand-written catalog requires editing for it to be offered in a palette
 
 ### Requirement: Terminal exits are reported and marked as unconnectable
 

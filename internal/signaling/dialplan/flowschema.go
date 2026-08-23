@@ -12,7 +12,7 @@ import (
 // Add a field to IVREntry and a hand-written form still shows the old one; the
 // first person to find out is an operator who cannot set a terminator.
 //
-// So the catalogue is derived here, from the same tables and the same structs
+// So the catalog is derived here, from the same tables and the same structs
 // the loader and the validator use. Adding a node type in Go is the whole
 // change: the editor picks it up with no edit of its own.
 
@@ -75,7 +75,7 @@ type NodeTypeSchema struct {
 	Fields []FieldSchema `json:"fields,omitempty"`
 }
 
-// NodeSchema returns the whole node catalogue, sorted by type name so a palette
+// NodeSchema returns the whole node catalog, sorted by type name so a palette
 // is stable between renders.
 func NodeSchema() []NodeTypeSchema {
 	types := NodeTypes()

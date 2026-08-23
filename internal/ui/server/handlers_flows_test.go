@@ -59,8 +59,14 @@ func (f *fakeSignaling) handler() http.Handler {
 	return mux
 }
 
+// devtenant's only flow, and the one every test here edits.
+const (
+	testTenant = "devtenant"
+	testFlow   = "main-ivr"
+)
+
 // uiFor builds a UI server pointed at a fake backend.
-func uiFor(t *testing.T, backend *fakeSignaling) (*Server, *httptest.Server) {
+func uiFor(t *testing.T, backend *fakeSignaling) *Server {
 	t.Helper()
 	api := httptest.NewServer(backend.handler())
 	t.Cleanup(api.Close)
@@ -72,7 +78,7 @@ func uiFor(t *testing.T, backend *fakeSignaling) (*Server, *httptest.Server) {
 	return &Server{
 		clients:   []*client.Client{client.NewClient("test", api.URL)},
 		templates: tmpl,
-	}, api
+	}
 }
 
 func referenceFlows(t *testing.T) string {
@@ -81,11 +87,11 @@ func referenceFlows(t *testing.T) string {
 }
 
 // The tab has to render the real reference flow, with the graph and the node
-// catalogue both in the page — the catalogue because the palette and the
+// catalog both in the page — the catalog because the palette and the
 // inspector are generated from it rather than from a hand-written list.
 func TestFlowsPartialRendersTheReferenceFlow(t *testing.T) {
 	backend := &fakeSignaling{flows: referenceFlows(t)}
-	s, _ := uiFor(t, backend)
+	s := uiFor(t, backend)
 
 	rec := httptest.NewRecorder()
 	s.handleConfigFlowsPartial(rec, httptest.NewRequest(http.MethodGet, "/admin/config/partials/flows?server=test", nil))
@@ -114,10 +120,10 @@ func TestFlowsPartialRendersTheReferenceFlow(t *testing.T) {
 			t.Errorf("the serialized graph is missing %q", want)
 		}
 	}
-	// The catalogue comes from Go, so the page carries the exit contract it did
+	// The catalog comes from Go, so the page carries the exit contract it did
 	// not have to restate.
 	if !strings.Contains(body, `"accepts_digit_exits"`) || !strings.Contains(body, `"terminal_exits"`) {
-		t.Error("the node catalogue was not serialized into the page")
+		t.Error("the node catalog was not serialized into the page")
 	}
 	// A terminal exit is never a port.
 	if strings.Contains(body, `{"name":"answered"`) {
@@ -127,28 +133,28 @@ func TestFlowsPartialRendersTheReferenceFlow(t *testing.T) {
 
 // graphFor reads a flow through the same model the browser is handed, so a test
 // posts what the canvas would post.
-func graphFor(t *testing.T, content, flow string) flowGraph {
+func graphFor(t *testing.T, content string) flowGraph {
 	t.Helper()
 	doc, err := parseFlowsDoc(content)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	graph, err := doc.Graph(flow)
+	graph, err := doc.Graph(testFlow)
 	if err != nil {
 		t.Fatalf("graph: %v", err)
 	}
 	return graph
 }
 
-func postSave(t *testing.T, s *Server, tenant, flow, content string, graph flowGraph) *httptest.ResponseRecorder {
+func postSave(t *testing.T, s *Server, content string, graph flowGraph) *httptest.ResponseRecorder {
 	t.Helper()
 	raw, err := json.Marshal(graph)
 	if err != nil {
 		t.Fatalf("marshal graph: %v", err)
 	}
 	form := url.Values{
-		"tenant":  {tenant},
-		"flow":    {flow},
+		"tenant":  {testTenant},
+		"flow":    {testFlow},
 		"content": {content},
 		"graph":   {string(raw)},
 	}
@@ -164,12 +170,12 @@ func postSave(t *testing.T, s *Server, tenant, flow, content string, graph flowG
 func TestSavingAMovedNodeWritesOnlyTheLayout(t *testing.T) {
 	original := referenceFlows(t)
 	backend := &fakeSignaling{flows: original}
-	s, _ := uiFor(t, backend)
+	s := uiFor(t, backend)
 
-	graph := graphFor(t, original, "main-ivr")
+	graph := graphFor(t, original)
 	graph.Nodes[0].X, graph.Nodes[0].Y = 480, 260
 
-	rec := postSave(t, s, "devtenant", "main-ivr", original, graph)
+	rec := postSave(t, s, original, graph)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -214,9 +220,9 @@ func TestARefusedSaveShowsTheProblemsAndWritesNothing(t *testing.T) {
 			Severity: "error",
 		}},
 	}
-	s, _ := uiFor(t, backend)
+	s := uiFor(t, backend)
 
-	graph := graphFor(t, original, "main-ivr")
+	graph := graphFor(t, original)
 	for i := range graph.Nodes {
 		if graph.Nodes[i].ID != "ring-sales" {
 			continue
@@ -228,7 +234,7 @@ func TestARefusedSaveShowsTheProblemsAndWritesNothing(t *testing.T) {
 		}
 	}
 
-	rec := postSave(t, s, "devtenant", "main-ivr", original, graph)
+	rec := postSave(t, s, original, graph)
 	body := rec.Body.String()
 
 	if backend.written {
@@ -258,9 +264,9 @@ func TestWarningsRideAlongWithASuccess(t *testing.T) {
 			Path: "flows.main-ivr.nodes.closing", Message: "this prompt is very long", Severity: "warning",
 		}},
 	}
-	s, _ := uiFor(t, backend)
+	s := uiFor(t, backend)
 
-	rec := postSave(t, s, "devtenant", "main-ivr", original, graphFor(t, original, "main-ivr"))
+	rec := postSave(t, s, original, graphFor(t, original))
 	body := rec.Body.String()
 
 	if !strings.Contains(body, "Saved, but worth a look:") {
@@ -276,9 +282,9 @@ func TestWarningsRideAlongWithASuccess(t *testing.T) {
 func TestASaveTellsThePageToRecheckDrift(t *testing.T) {
 	original := referenceFlows(t)
 	backend := &fakeSignaling{flows: original}
-	s, _ := uiFor(t, backend)
+	s := uiFor(t, backend)
 
-	rec := postSave(t, s, "devtenant", "main-ivr", original, graphFor(t, original, "main-ivr"))
+	rec := postSave(t, s, original, graphFor(t, original))
 	if got := rec.Header().Get("HX-Trigger"); got != "config-saved" {
 		t.Errorf("HX-Trigger = %q, want config-saved", got)
 	}
@@ -288,12 +294,12 @@ func TestASaveTellsThePageToRecheckDrift(t *testing.T) {
 func TestChangingTheStartNodeIsSaved(t *testing.T) {
 	original := referenceFlows(t)
 	backend := &fakeSignaling{flows: original}
-	s, _ := uiFor(t, backend)
+	s := uiFor(t, backend)
 
-	graph := graphFor(t, original, "main-ivr")
+	graph := graphFor(t, original)
 	graph.Start = "closing"
 
-	postSave(t, s, "devtenant", "main-ivr", original, graph)
+	postSave(t, s, original, graph)
 	if !backend.written {
 		t.Fatal("nothing was written")
 	}
@@ -329,7 +335,7 @@ func TestNoTenantHasFlows(t *testing.T) {
 
 // The save handler is a write. A GET must not be able to reach it.
 func TestSaveRejectsNonPost(t *testing.T) {
-	s, _ := uiFor(t, &fakeSignaling{flows: referenceFlows(t)})
+	s := uiFor(t, &fakeSignaling{flows: referenceFlows(t)})
 	rec := httptest.NewRecorder()
 	s.handleConfigFlowsSave(rec, httptest.NewRequest(http.MethodGet, "/admin/config/flows/save?server=test", nil))
 	if rec.Code != http.StatusMethodNotAllowed {

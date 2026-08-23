@@ -89,7 +89,7 @@ type objectKeys struct {
 	spans map[string]span
 	// keyStarts is where each key token begins, and indents is the whitespace
 	// in front of it. Together they let a new key be inserted in front of an
-	// existing one, indented the way its neighbours are.
+	// existing one, indented the way its neighbors are.
 	keyStarts map[string]int
 	indents   map[string]string
 }
@@ -168,7 +168,7 @@ func skipToValue(body []byte, from int) int {
 // encodeKey renders a key the way the document must have spelled it, so its
 // start offset can be recovered from where its token ended. A key written with
 // an escape sequence is longer than this and simply gets no indent hint, which
-// costs nothing: it is only used to place an inserted neighbour.
+// costs nothing: it is only used to place an inserted neighbor.
 func encodeKey(key string) string { return quote(key) }
 
 // indentBefore returns the whitespace between the start of a key's line and the
@@ -866,18 +866,4 @@ func quote(s string) string {
 		return `""`
 	}
 	return string(out)
-}
-
-// insertBefore places a key ahead of an anchor, appending if the anchor is
-// absent.
-func insertBefore(keys []string, key, anchor string) []string {
-	for i, k := range keys {
-		if k == anchor {
-			out := make([]string, 0, len(keys)+1)
-			out = append(out, keys[:i]...)
-			out = append(out, key)
-			return append(out, keys[i:]...)
-		}
-	}
-	return append(keys, key)
 }

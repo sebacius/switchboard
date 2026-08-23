@@ -460,7 +460,7 @@ type ConfigFlowsData struct {
 	Flows []string
 	Flow  string
 	// Graph is the selected flow as JSON for the canvas, and Schema is the node
-	// catalogue exported from the dialplan package. Both are serialized here so
+	// catalog exported from the dialplan package. Both are serialized here so
 	// the page never restates the exit contract in JavaScript.
 	Graph  template.JS
 	Schema template.JS
