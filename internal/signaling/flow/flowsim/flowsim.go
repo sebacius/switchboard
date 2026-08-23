@@ -11,7 +11,7 @@
 //   - No Parking service. Engine.Handle tries *NNN retrieval before anything
 //     else, and against a live park service a simulated retrieval would remove a
 //     real caller from their slot — and then block forever, because the fake
-//     session's context is never cancelled.
+//     session's context is never canceled.
 //   - No Resolver either, which is what makes the above true by construction:
 //     retrieval returns before it can reach the parking service at all.
 //   - A LEDGER-FREE policy. The authorization verdict is identical; what is

@@ -19,12 +19,12 @@ func TestResolveAudio(t *testing.T) {
 	}{
 		{"a plain name lands in the audio directory", "welcome.wav", filepath.Join(base, "welcome.wav")},
 		{"a subdirectory is kept", "acme/welcome.wav", filepath.Join(base, "acme", "welcome.wav")},
-		{"an absolute path is honoured as written", "/mnt/prompts/x.wav", "/mnt/prompts/x.wav"},
+		{"an absolute path is honored as written", "/mnt/prompts/x.wav", "/mnt/prompts/x.wav"},
 		{"an empty name stays empty", "", ""},
 		// A tenant's flow file is operator-supplied, but it should not be a way
 		// to read outside the prompt library.
 		{"traversal cannot escape", "../../etc/passwd", filepath.Join(base, "etc", "passwd")},
-		// An absolute path is honoured whatever it cleans to, because honouring
+		// An absolute path is honored whatever it cleans to, because honoring
 		// absolute paths at all is what makes that so. See resolveAudio.
 		{"an absolute path is not reinterpreted", "/../../etc/passwd", "/../../etc/passwd"},
 	}

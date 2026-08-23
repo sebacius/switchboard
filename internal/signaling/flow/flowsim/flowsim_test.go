@@ -13,7 +13,7 @@ import (
 
 // testSources builds a tenant to simulate against, validated the way the loader
 // would validate it so a broken fixture fails here rather than misleading a test.
-func testSources(t *testing.T, flowsJSON string) Sources {
+func testSources(t *testing.T) Sources {
 	t.Helper()
 
 	table := &dialplan.RoutingTable{
@@ -29,7 +29,7 @@ func testSources(t *testing.T, flowsJSON string) Sources {
 	}
 
 	var set dialplan.FlowSet
-	if err := json.Unmarshal([]byte(flowsJSON), &set); err != nil {
+	if err := json.Unmarshal([]byte(menuFlow), &set); err != nil {
 		t.Fatalf("fixture flows: %v", err)
 	}
 	if err := dialplan.ValidateFlows("acme", table, &set); err != nil {
@@ -55,7 +55,7 @@ const menuFlow = `{"flows":{"main":{
 	}}}}`
 
 func TestFlowTraversalIsReported(t *testing.T) {
-	src := testSources(t, menuFlow)
+	src := testSources(t)
 
 	res, err := Run(context.Background(), src, Request{
 		Tenant: "acme", Dialed: "100", Digits: []string{"1"},
@@ -87,7 +87,7 @@ func TestFlowTraversalIsReported(t *testing.T) {
 // so it emits no trace. That is a fact about the engine, and the result has to
 // say so rather than looking like an empty traversal.
 func TestDirectDialIsDistinguishedFromAnEmptyFlow(t *testing.T) {
-	src := testSources(t, menuFlow)
+	src := testSources(t)
 
 	res, err := Run(context.Background(), src, Request{Tenant: "acme", Dialed: "110"})
 	if err != nil {
@@ -108,7 +108,7 @@ func TestDirectDialIsDistinguishedFromAnEmptyFlow(t *testing.T) {
 }
 
 func TestUnmatchedCallNamesTheOperator(t *testing.T) {
-	src := testSources(t, menuFlow)
+	src := testSources(t)
 
 	res, err := Run(context.Background(), src, Request{Tenant: "acme", Dialed: "999"})
 	if err != nil {
@@ -123,7 +123,7 @@ func TestUnmatchedCallNamesTheOperator(t *testing.T) {
 }
 
 func TestUnknownTenantIsTyped(t *testing.T) {
-	src := testSources(t, menuFlow)
+	src := testSources(t)
 
 	_, err := Run(context.Background(), src, Request{Tenant: "ghost", Dialed: "100"})
 	if err == nil {
@@ -138,7 +138,7 @@ func TestUnknownTenantIsTyped(t *testing.T) {
 // engine declines it before reaching a parking service, so the call simply falls
 // through to the entry mapping.
 func TestRetrievalIsDeclinedRatherThanAttempted(t *testing.T) {
-	src := testSources(t, menuFlow)
+	src := testSources(t)
 
 	res, err := Run(context.Background(), src, Request{Tenant: "acme", Dialed: "*701"})
 	if err != nil {
@@ -153,7 +153,7 @@ func TestRetrievalIsDeclinedRatherThanAttempted(t *testing.T) {
 // in the log and nowhere else, so losing it would leave "outcome: hangup" with
 // no reason attached.
 func TestEngineLogIsCaptured(t *testing.T) {
-	src := testSources(t, menuFlow)
+	src := testSources(t)
 
 	res, err := Run(context.Background(), src, Request{
 		Tenant: "acme", Dialed: "100", Digits: []string{"1"},
@@ -171,7 +171,7 @@ func TestEngineLogIsCaptured(t *testing.T) {
 }
 
 func TestBadDirectionIsRejected(t *testing.T) {
-	src := testSources(t, menuFlow)
+	src := testSources(t)
 
 	if _, err := Run(context.Background(), src, Request{
 		Tenant: "acme", Dialed: "100", Direction: "sideways",
@@ -183,7 +183,7 @@ func TestBadDirectionIsRejected(t *testing.T) {
 // Simulations share the sources and must not share anything else. The engine
 // tracks active calls by ID, so identical IDs would have concurrent runs collide.
 func TestConcurrentRunsAreIndependent(t *testing.T) {
-	src := testSources(t, menuFlow)
+	src := testSources(t)
 
 	var wg sync.WaitGroup
 	ids := make([]string, 50)

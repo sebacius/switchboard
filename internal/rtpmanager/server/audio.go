@@ -74,7 +74,7 @@ func (s *Server) ListAudio(ctx context.Context, req *rtpv1.ListAudioRequest) (*r
 			info.Problem = probeErr.Error()
 			info.Playable = false
 		} else {
-			info.SampleRate = uint32(wav.SampleRate)
+			info.SampleRate = wav.SampleRate
 			info.Channels = uint32(wav.NumChannels)
 			info.BitsPerSample = uint32(wav.BitsPerSample)
 			info.DurationMs = wav.DurationMs()
@@ -113,7 +113,7 @@ func depth(rel string) int {
 // inside it, so "../../etc/passwd" in a flow cannot read outside the prompt
 // library.
 //
-// An absolute path is honoured as written. Deployments exist that mount prompts
+// An absolute path is honored as written. Deployments exist that mount prompts
 // somewhere specific and say so in the flow, and today — with the audio
 // directory unread — an absolute path is the ONLY thing that reliably works, so
 // reinterpreting it here would break exactly the people who did the careful
