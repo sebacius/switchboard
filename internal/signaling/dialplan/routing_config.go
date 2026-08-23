@@ -8,11 +8,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // The per-tenant routing table is the structured half of a tenant's config: the
-// data a call is routed BY, as opposed to tenant.md, which is the judgement a
-// call is handled WITH.
+// data a call is routed BY, as opposed to the flow graph, which is the sequence
+// a call is handled WITH.
 //
 // Why it exists (design #3): routing data used to live in the tenant prompt as
 // prose — a staff directory, an intent→department table, ring group members, an
@@ -394,6 +395,9 @@ type RoutingStore struct {
 	mu     sync.RWMutex
 	tables map[string]*RoutingTable
 	flows  map[string]*FlowSet
+	// loadedAt stamps the cache that is in force, so a reader can tell whether a
+	// file edited since then is actually serving calls yet.
+	loadedAt time.Time
 }
 
 // NewRoutingStore builds a store over the tenants directory and performs an
@@ -421,6 +425,7 @@ func (s *RoutingStore) Reload() error {
 			s.mu.Lock()
 			s.tables = make(map[string]*RoutingTable)
 			s.flows = make(map[string]*FlowSet)
+			s.loadedAt = time.Now()
 			s.mu.Unlock()
 			return nil
 		}
@@ -458,8 +463,17 @@ func (s *RoutingStore) Reload() error {
 	s.mu.Lock()
 	s.tables = tables
 	s.flows = flows
+	s.loadedAt = time.Now()
 	s.mu.Unlock()
 	return nil
+}
+
+// LoadedAt reports when the cache now in force was built. A file whose mtime is
+// newer than this has been written but is not yet routing calls.
+func (s *RoutingStore) LoadedAt() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadedAt
 }
 
 // ValidateTable runs a routing table's own checks. Exported so the config API
@@ -612,6 +626,17 @@ func (r StaticRouting) TenantRouting(tenant string) (*RoutingTable, bool) {
 		return nil, false
 	}
 	return t, true
+}
+
+// StaticFlows is an in-memory FlowSource for tests and the smoke harness. It is
+// the companion to StaticRouting: a tenant loaded from disk is described by two
+// files, so a harness that fakes one has to fake the other.
+type StaticFlows map[string]*FlowSet
+
+// TenantFlows implements FlowSource over the map.
+func (f StaticFlows) TenantFlows(tenant string) (*FlowSet, bool) {
+	set, ok := f[tenant]
+	return set, ok && set != nil
 }
 
 // SymbolicTargetsFor returns a tenant's symbolic targets from its routing table,

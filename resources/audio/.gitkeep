@@ -1,2 +1,6 @@
-# Place audio files (WAV, 8kHz, mono, PCMU) here
+# Place audio files here: WAV, 16-bit PCM, 8 kHz, mono.
 # Example: demo-congrats.wav
+#
+# Not PCMU: the loader refuses anything that is not uncompressed PCM and does
+# the µ-law conversion itself on the way out. Anything that is not already
+# 8 kHz mono plays, but is resampled or downmixed on every single call.

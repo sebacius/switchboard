@@ -39,6 +39,7 @@ go.work.sum
 CLAUDE.md
 .cline
 .clinerules
+.audit-workflows
 
 .DS_Store
 

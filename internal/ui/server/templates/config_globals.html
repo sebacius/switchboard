@@ -1,0 +1,64 @@
+<div>
+    <div class="mb-6">
+        <h2 class="text-xl font-bold text-white">Deployment Files</h2>
+        <p class="text-sm text-slate-400 mt-1">Configuration shared by every tenant on this server</p>
+    </div>
+
+    {{if .Error}}
+    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm">
+        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        {{.Error}}
+    </div>
+    {{end}}
+
+    <div class="space-y-3">
+        {{range .Files}}
+        <div class="bg-slate-800 rounded-xl border border-slate-700 p-4">
+            <div class="flex items-start justify-between gap-4">
+                <div class="min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <svg class="w-5 h-5 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        <h3 class="text-sm font-semibold text-white">{{.Title}}</h3>
+                        {{if .NeedsRestart}}
+                        <span class="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30">restart to activate</span>
+                        {{end}}
+                        {{if not .Configured}}
+                        <span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-400 border border-slate-600">not configured here</span>
+                        {{else if not .Exists}}
+                        <span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-400 border border-slate-600">no file yet</span>
+                        {{end}}
+                        {{if and .Configured (not .Writable)}}
+                        <span class="px-2 py-0.5 rounded text-xs bg-slate-700 text-slate-400 border border-slate-600">read-only</span>
+                        {{end}}
+                    </div>
+                    <p class="text-sm text-slate-400 mt-1.5">{{.Description}}</p>
+                    <div class="mt-2 flex items-center gap-3 text-xs text-slate-500 font-mono">
+                        <span>{{if .Path}}{{.Path}}{{else}}—{{end}}</span>
+                        {{if .Exists}}<span>{{.Size}} B</span><span>{{.Modified}}</span>{{end}}
+                    </div>
+                </div>
+                {{if .Configured}}
+                <button hx-get="/admin/config/globals/edit?server={{$.Server}}&name={{.Name}}"
+                        hx-target="#config-content"
+                        hx-swap="innerHTML"
+                        class="flex-shrink-0 inline-flex items-center px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors text-slate-200 text-sm">
+                    <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
+                    </svg>
+                    {{if .Writable}}Edit{{else}}View{{end}}
+                </button>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+    </div>
+
+    <p class="mt-6 text-xs text-slate-500">
+        These files are read once, at startup. Saving one writes it to disk; the signaling server has to
+        restart before it routes or authorizes anything differently.
+    </p>
+</div>

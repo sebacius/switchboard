@@ -4,6 +4,8 @@ import (
 	"embed"
 	"html/template"
 	"io"
+
+	types "github.com/sebas/switchboard/api/types/v1"
 )
 
 //go:embed templates/*.html
@@ -24,7 +26,12 @@ type Templates struct {
 	configPage       *template.Template
 	configTenants    *template.Template
 	configTenantEdit *template.Template
-	configDialplan   *template.Template
+	configGlobals    *template.Template
+	configGlobalEdit *template.Template
+	reloadBanner     *template.Template
+	configAudio      *template.Template
+	flowTest         *template.Template
+	flowTestResult   *template.Template
 }
 
 // TemplateData holds data for rendering templates
@@ -212,7 +219,36 @@ func NewTemplates() (*Templates, error) {
 		return nil, err
 	}
 
-	t.configDialplan, err = template.New("config_dialplan.html").ParseFS(templatesFS, "templates/config_dialplan.html")
+	t.configGlobals, err = template.New("config_globals.html").ParseFS(templatesFS, "templates/config_globals.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.configGlobalEdit, err = template.New("config_global_edit.html").ParseFS(templatesFS, "templates/config_global_edit.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.reloadBanner, err = template.New("config_reload_banner.html").ParseFS(templatesFS, "templates/config_reload_banner.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.configAudio, err = template.New("config_audio.html").ParseFS(templatesFS, "templates/config_audio.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.flowTest, err = template.New("config_flowtest.html").ParseFS(templatesFS, "templates/config_flowtest.html")
+	if err != nil {
+		return nil, err
+	}
+
+	// add is for 1-based hop numbering, which is how printTrace numbers them in
+	// the CLI; the two outputs should read the same way.
+	t.flowTestResult, err = template.New("config_flowtest_result.html").
+		Funcs(template.FuncMap{"add": func(a, b int) int { return a + b }}).
+		ParseFS(templatesFS, "templates/config_flowtest_result.html")
 	if err != nil {
 		return nil, err
 	}
@@ -279,6 +315,10 @@ type ConfigPageData struct {
 	ActiveTab      string
 	SelectedServer string
 	Backends       []BackendInfo
+	// TabQuery carries extra parameters through to the tab's partial, so a link
+	// like ?tab=flowtest&dialed=700&digits=2 arrives as a filled-in form rather
+	// than an empty one. Built from an allowlist, never from the raw query.
+	TabQuery string
 }
 
 // TenantFileData holds tenant file info for display
@@ -299,35 +339,109 @@ type ConfigTenantsData struct {
 	Error   string
 }
 
-// ConfigTenantEditData holds data for the tenant editor
-// ConfigProblemData is one validation problem shown against its path.
+// ConfigProblemData is one validation finding shown against its path.
 type ConfigProblemData struct {
 	Path    string
 	Message string
 }
 
+// ConfigTenantEditData holds data for the tenant editor.
 type ConfigTenantEditData struct {
 	Server  string
 	Name    string
 	Content string
 	// File is "routing" or "flows".
-	File     string
-	IsNew    bool
-	Success  string
-	Error    string
+	File    string
+	IsNew   bool
+	Success string
+	Error   string
+	// Problems are errors that BLOCKED the write; Warnings were saved anyway
+	// and are worth a second look. Rendering them the same way would tell the
+	// operator to fix something that is already live.
 	Problems []ConfigProblemData
+	Warnings []ConfigProblemData
 }
 
 // IsFlows reports whether the flow graph is being edited, for the template.
 func (d ConfigTenantEditData) IsFlows() bool { return d.File == "flows" }
 
-// ConfigDialplanData holds data for the dialplan editor
-type ConfigDialplanData struct {
-	Server  string
-	Content string
-	Success string
+// GlobalFileData describes one deployment-wide file for the templates.
+type GlobalFileData struct {
+	Name        string
+	Path        string
+	Size        int64
+	Modified    string
+	Exists      bool
+	Configured  bool
+	Writable    bool
+	Activation  string
+	Title       string
+	Description string
+}
+
+// NeedsRestart reports whether saving this file requires a restart to take
+// effect, for the template.
+func (d GlobalFileData) NeedsRestart() bool { return d.Activation == "restart" }
+
+// ConfigGlobalsData holds the deployment-wide file list.
+type ConfigGlobalsData struct {
+	Server string
+	Files  []GlobalFileData
+	Error  string
+}
+
+// ConfigGlobalEditData holds the editor for one deployment-wide file.
+type ConfigGlobalEditData struct {
+	Server   string
+	Name     string
+	Content  string
+	File     GlobalFileData
+	Success  string
+	Error    string
+	Problems []ConfigProblemData
+	Warnings []ConfigProblemData
+}
+
+// ReloadBannerData says whether what is on disk is what is serving calls.
+type ReloadBannerData struct {
+	Server string
+	// LoadedAt is when the routing cache in force was built.
+	LoadedAt string
+	// StaleTenants a reload activates; StaleGlobals only a restart does. They
+	// are separate because offering a Reload button for the second kind would
+	// be a lie.
+	StaleTenants []string
+	StaleGlobals []string
+}
+
+// FlowTestData holds the simulator form.
+type FlowTestData struct {
+	Server    string
+	Tenants   []types.LoadedTenant
+	Tenant    string
+	Dialed    string
+	Digits    string
+	Direction string
+	// AutoRun runs the simulation as the panel loads, so a deep link comes back
+	// as a trace rather than as a form to fill in again.
+	AutoRun bool
 	Error   string
 }
+
+// FlowTestResultData holds one simulation's outcome.
+type FlowTestResultData struct {
+	Server  string
+	Request types.SimulateRequest
+	Result  types.SimulateResult
+	Error   string
+}
+
+// IsFlow, IsDirect and IsNone distinguish the three ways a call can be routed.
+// A direct dial produces no trace, and rendering that as an empty traversal
+// would read as "the flow did nothing" rather than "no flow was involved".
+func (d FlowTestResultData) IsFlow() bool   { return d.Result.Routed == "flow" }
+func (d FlowTestResultData) IsDirect() bool { return d.Result.Routed == "direct" }
+func (d FlowTestResultData) IsNone() bool   { return d.Result.Routed == "none" }
 
 // --- Configuration Render Methods ---
 
@@ -346,7 +460,32 @@ func (t *Templates) RenderConfigTenantEdit(w io.Writer, data ConfigTenantEditDat
 	return t.configTenantEdit.Execute(w, data)
 }
 
-// RenderConfigDialplan renders the dialplan editor partial
-func (t *Templates) RenderConfigDialplan(w io.Writer, data ConfigDialplanData) error {
-	return t.configDialplan.Execute(w, data)
+// RenderConfigGlobals renders the deployment-wide file list.
+func (t *Templates) RenderConfigGlobals(w io.Writer, data ConfigGlobalsData) error {
+	return t.configGlobals.Execute(w, data)
+}
+
+// RenderConfigGlobalEdit renders the deployment-wide file editor.
+func (t *Templates) RenderConfigGlobalEdit(w io.Writer, data ConfigGlobalEditData) error {
+	return t.configGlobalEdit.Execute(w, data)
+}
+
+// RenderConfigAudio renders the audio inventory.
+func (t *Templates) RenderConfigAudio(w io.Writer, data ConfigAudioData) error {
+	return t.configAudio.Execute(w, data)
+}
+
+// RenderFlowTest renders the simulator form.
+func (t *Templates) RenderFlowTest(w io.Writer, data FlowTestData) error {
+	return t.flowTest.Execute(w, data)
+}
+
+// RenderFlowTestResult renders one simulation's outcome.
+func (t *Templates) RenderFlowTestResult(w io.Writer, data FlowTestResultData) error {
+	return t.flowTestResult.Execute(w, data)
+}
+
+// RenderReloadBanner renders the configuration drift banner.
+func (t *Templates) RenderReloadBanner(w io.Writer, data ReloadBannerData) error {
+	return t.reloadBanner.Execute(w, data)
 }

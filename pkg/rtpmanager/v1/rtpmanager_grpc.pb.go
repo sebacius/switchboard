@@ -24,6 +24,7 @@ const (
 	RTPManagerService_PlayAudio_FullMethodName           = "/rtpmanager.v1.RTPManagerService/PlayAudio"
 	RTPManagerService_StopAudio_FullMethodName           = "/rtpmanager.v1.RTPManagerService/StopAudio"
 	RTPManagerService_Health_FullMethodName              = "/rtpmanager.v1.RTPManagerService/Health"
+	RTPManagerService_ListAudio_FullMethodName           = "/rtpmanager.v1.RTPManagerService/ListAudio"
 	RTPManagerService_UpdateSessionRemote_FullMethodName = "/rtpmanager.v1.RTPManagerService/UpdateSessionRemote"
 	RTPManagerService_BridgeMedia_FullMethodName         = "/rtpmanager.v1.RTPManagerService/BridgeMedia"
 	RTPManagerService_UnbridgeMedia_FullMethodName       = "/rtpmanager.v1.RTPManagerService/UnbridgeMedia"
@@ -52,6 +53,12 @@ type RTPManagerServiceClient interface {
 	StopAudio(ctx context.Context, in *StopAudioRequest, opts ...grpc.CallOption) (*StopAudioResponse, error)
 	// Health checks if the service is operational.
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
+	// ListAudio describes the audio files this manager can play.
+	//
+	// The signaling server has no audio directory of its own — a flow names a
+	// file and this service opens it — so "does the file a flow asks for exist,
+	// and will it play" can only be answered here.
+	ListAudio(ctx context.Context, in *ListAudioRequest, opts ...grpc.CallOption) (*ListAudioResponse, error)
 	// UpdateSessionRemote updates the remote endpoint for an existing session.
 	// Used for B2BUA: B-leg session is created without remote info, then updated
 	// when the 200 OK with SDP arrives from the callee.
@@ -147,6 +154,16 @@ func (c *rTPManagerServiceClient) Health(ctx context.Context, in *HealthRequest,
 	return out, nil
 }
 
+func (c *rTPManagerServiceClient) ListAudio(ctx context.Context, in *ListAudioRequest, opts ...grpc.CallOption) (*ListAudioResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListAudioResponse)
+	err := c.cc.Invoke(ctx, RTPManagerService_ListAudio_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *rTPManagerServiceClient) UpdateSessionRemote(ctx context.Context, in *UpdateSessionRemoteRequest, opts ...grpc.CallOption) (*UpdateSessionRemoteResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UpdateSessionRemoteResponse)
@@ -236,6 +253,12 @@ type RTPManagerServiceServer interface {
 	StopAudio(context.Context, *StopAudioRequest) (*StopAudioResponse, error)
 	// Health checks if the service is operational.
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
+	// ListAudio describes the audio files this manager can play.
+	//
+	// The signaling server has no audio directory of its own — a flow names a
+	// file and this service opens it — so "does the file a flow asks for exist,
+	// and will it play" can only be answered here.
+	ListAudio(context.Context, *ListAudioRequest) (*ListAudioResponse, error)
 	// UpdateSessionRemote updates the remote endpoint for an existing session.
 	// Used for B2BUA: B-leg session is created without remote info, then updated
 	// when the 200 OK with SDP arrives from the callee.
@@ -286,6 +309,9 @@ func (UnimplementedRTPManagerServiceServer) StopAudio(context.Context, *StopAudi
 }
 func (UnimplementedRTPManagerServiceServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
+}
+func (UnimplementedRTPManagerServiceServer) ListAudio(context.Context, *ListAudioRequest) (*ListAudioResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListAudio not implemented")
 }
 func (UnimplementedRTPManagerServiceServer) UpdateSessionRemote(context.Context, *UpdateSessionRemoteRequest) (*UpdateSessionRemoteResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateSessionRemote not implemented")
@@ -405,6 +431,24 @@ func _RTPManagerService_Health_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RTPManagerServiceServer).Health(ctx, req.(*HealthRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RTPManagerService_ListAudio_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAudioRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RTPManagerServiceServer).ListAudio(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RTPManagerService_ListAudio_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RTPManagerServiceServer).ListAudio(ctx, req.(*ListAudioRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -532,6 +576,10 @@ var RTPManagerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Health",
 			Handler:    _RTPManagerService_Health_Handler,
+		},
+		{
+			MethodName: "ListAudio",
+			Handler:    _RTPManagerService_ListAudio_Handler,
 		},
 		{
 			MethodName: "UpdateSessionRemote",

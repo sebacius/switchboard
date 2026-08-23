@@ -188,10 +188,13 @@ func (s *Server) PlayAudio(req *rtpv1.PlayAudioRequest, stream rtpv1.RTPManagerS
 	// Create event channel
 	eventCh := make(chan *rtpv1.PlaybackEvent, 10)
 
-	// Build play request
+	// Resolve names against the configured audio directory. A flow says
+	// "welcome.wav" and means "the prompt we shipped", not "whatever happens to
+	// be next to the binary" — which is what an unresolved name meant, since
+	// --audio-path was parsed and then never read.
 	playReq := session.PlayAudioRequest{
-		FilePath: req.FilePath,
-		Files:    req.Files,
+		FilePath: s.resolveAudio(req.FilePath),
+		Files:    s.resolveAudioAll(req.Files),
 		Loop:     req.Loop,
 	}
 

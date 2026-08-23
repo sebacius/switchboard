@@ -3,10 +3,13 @@ package server
 import (
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
+	types "github.com/sebas/switchboard/api/types/v1"
 	"github.com/sebas/switchboard/internal/ui/client"
 )
 
@@ -38,14 +41,23 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activeTab := r.URL.Query().Get("tab")
-	if activeTab == "" {
-		activeTab = "tenants"
+	// The tab name becomes a partial's URL, so it comes from an allowlist rather
+	// than from the query string. An unknown name is a typo in a bookmark, not a
+	// reason to render a page that immediately 404s.
+	activeTab := "tenants"
+	switch r.URL.Query().Get("tab") {
+	case "globals":
+		activeTab = "globals"
+	case "audio":
+		activeTab = "audio"
+	case "flowtest":
+		activeTab = "flowtest"
 	}
 
 	data := ConfigPageData{
 		Title:          "Switchboard Configuration",
 		ActiveTab:      activeTab,
+		TabQuery:       tabQuery(r),
 		SelectedServer: c.Name(),
 		Backends:       make([]BackendInfo, 0, len(s.clients)),
 	}
@@ -61,6 +73,25 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 		slog.Error("[UI] Failed to render config page", "error", err)
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 	}
+}
+
+// tabQuery forwards the parameters a tab's partial understands.
+//
+// An allowlist rather than the raw query string: whatever this returns is
+// appended to a URL the page then fetches, so it may only contain keys we
+// recognize.
+func tabQuery(r *http.Request) string {
+	q := r.URL.Query()
+	out := url.Values{}
+	for _, key := range []string{"tenant", "dialed", "digits", "direction", "name", "file"} {
+		if v := q.Get(key); v != "" {
+			out.Set(key, v)
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	return "&" + out.Encode()
 }
 
 // fileParam reads which of a tenant's files is being edited, defaulting to the
@@ -139,16 +170,36 @@ func (s *Server) handleConfigTenantNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Seed a skeleton that actually loads. These files are JSON and the server
+	// refuses a write that would not parse, so prose here would guarantee the
+	// first save fails.
+	file := fileParam(r)
 	data := ConfigTenantEditData{
 		Server:  c.Name(),
 		IsNew:   true,
-		Content: "# Tenant Name\n\nDescribe the tenant knowledge base here.\n",
+		File:    file,
+		Content: skeletonFor(file),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderConfigTenantEdit(w, data); err != nil {
 		slog.Error("[UI] Failed to render tenant new", "error", err)
 	}
+}
+
+// skeletonFor returns an empty but valid starting point for a tenant file.
+func skeletonFor(file string) string {
+	if file == "flows" {
+		return "{\n  \"flows\": {}\n}\n"
+	}
+	return `{
+  "operator": "user/100",
+  "extensions": {},
+  "dids": {},
+  "groups": {},
+  "symbolic_targets": {}
+}
+`
 }
 
 // handleConfigTenantSave saves an existing tenant file
@@ -170,30 +221,20 @@ func (s *Server) handleConfigTenantSave(w http.ResponseWriter, r *http.Request) 
 	}
 
 	name := r.FormValue("name")
-	content := r.FormValue("content")
+	content := normalizeContent(r.FormValue("content"))
 	file := fileParam(r)
 	if v := r.FormValue("file"); v != "" {
 		file = v
 	}
 	data := ConfigTenantEditData{Server: c.Name(), Name: name, Content: content, File: file}
 
-	if err := c.PutTenantFile(r.Context(), name, file, content); err != nil {
-		// A refused write carries the individual problems, and showing them
-		// against their paths is the difference between fixing the flow and
-		// guessing at it.
-		var rejected *client.ConfigRejectedError
-		if errors.As(err, &rejected) {
-			data.Error = "Not saved: the configuration would not load."
-			for _, p := range rejected.Problems() {
-				data.Problems = append(data.Problems, ConfigProblemData{
-					Path: p.Path, Message: p.Message,
-				})
-			}
-		} else {
-			data.Error = fmt.Sprintf("Failed to save %s: %v", file, err)
-		}
+	warnings, err := c.PutTenantFile(r.Context(), name, file, content)
+	if err != nil {
+		applyWriteError(&data, err, fmt.Sprintf("Failed to save %s", file))
 	} else {
 		data.Success = fmt.Sprintf("Saved %s", file)
+		data.Warnings = problemData(warnings)
+		configSaved(w)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -221,7 +262,7 @@ func (s *Server) handleConfigTenantCreate(w http.ResponseWriter, r *http.Request
 	}
 
 	name := r.FormValue("name")
-	content := r.FormValue("content")
+	content := normalizeContent(r.FormValue("content"))
 
 	if name == "" {
 		data := ConfigTenantEditData{Server: c.Name(), IsNew: true, Content: content, Error: "Tenant name is required"}
@@ -230,17 +271,18 @@ func (s *Server) handleConfigTenantCreate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Sanitize name
-	name = strings.TrimSuffix(name, ".md")
 	name = strings.TrimSpace(name)
 
-	data := ConfigTenantEditData{Server: c.Name(), Name: name, Content: content}
+	data := ConfigTenantEditData{Server: c.Name(), Name: name, Content: content, File: "routing"}
 
-	if err := c.CreateTenant(r.Context(), name, content); err != nil {
+	warnings, err := c.CreateTenant(r.Context(), name, content)
+	if err != nil {
 		data.IsNew = true
-		data.Error = fmt.Sprintf("Failed to create tenant: %v", err)
+		applyWriteError(&data, err, "Failed to create tenant")
 	} else {
 		data.Success = fmt.Sprintf("Tenant %q created successfully", name)
+		data.Warnings = problemData(warnings)
+		configSaved(w)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -296,61 +338,6 @@ func (s *Server) handleConfigTenantDelete(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// handleConfigDialplanPartial renders the dialplan editor partial
-func (s *Server) handleConfigDialplanPartial(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
-	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	content, err := c.GetDialplan(r.Context())
-	data := ConfigDialplanData{Server: c.Name()}
-	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load dialplan: %v", err)
-	} else {
-		data.Content = content
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderConfigDialplan(w, data); err != nil {
-		slog.Error("[UI] Failed to render config dialplan", "error", err)
-	}
-}
-
-// handleConfigDialplanSave saves the dialplan.json content
-func (s *Server) handleConfigDialplanSave(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	c := s.findClient(r.URL.Query().Get("server"))
-	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
-		return
-	}
-
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid form data", http.StatusBadRequest)
-		return
-	}
-
-	content := r.FormValue("content")
-	data := ConfigDialplanData{Server: c.Name(), Content: content}
-
-	if err := c.PutDialplan(r.Context(), content); err != nil {
-		data.Error = fmt.Sprintf("Failed to save dialplan: %v", err)
-	} else {
-		data.Success = "Dialplan saved successfully"
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderConfigDialplan(w, data); err != nil {
-		slog.Error("[UI] Failed to render config dialplan", "error", err)
-	}
-}
-
 // handleConfigReload triggers a configuration reload
 func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -366,11 +353,87 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	if err := c.ReloadConfig(r.Context()); err != nil {
+	result, err := c.ReloadConfig(r.Context())
+	if err != nil {
 		slog.Error("[UI] Reload failed", "server", c.Name(), "error", err)
 		_, _ = fmt.Fprintf(w, `<div class="flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm"><svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>Reload failed: %s</div>`, err.Error())
 		return
 	}
 
-	_, _ = fmt.Fprintf(w, `<div class="flex items-center px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm"><svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Configuration reloaded successfully</div>`)
+	// Say what the reload did NOT cover: the deployment-wide files are read once
+	// at startup, so answering a plain "reloaded" to an operator who just edited
+	// policy.json would be wrong in the way that matters.
+	message := result.Message
+	if message == "" {
+		message = "Configuration reloaded"
+	}
+	if len(result.NotReloaded) > 0 {
+		message += " Waiting on a restart: " + strings.Join(result.NotReloaded, ", ") + "."
+	}
+	w.Header().Set("HX-Trigger", "config-saved")
+	_, _ = fmt.Fprintf(w, `<div class="flex items-start px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm"><svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg><span>%s</span></div>`, html.EscapeString(message))
+}
+
+// applyWriteError renders a failed configuration write into the editor's data.
+//
+// A refused write carries the individual problems, and showing them against
+// their paths is the difference between fixing the flow and guessing at it.
+// Every editor goes through here so create, save and the global files all
+// report a refusal the same way.
+func applyWriteError(data *ConfigTenantEditData, err error, prefix string) {
+	var rejected *client.ConfigRejectedError
+	if errors.As(err, &rejected) {
+		data.Error = "Not saved: the configuration would not load."
+		data.Problems = problemData(rejected.Problems())
+		return
+	}
+	data.Error = fmt.Sprintf("%s: %v", prefix, err)
+}
+
+// applyGlobalWriteError is applyWriteError for the deployment-wide editor. The
+// two data structs are separate because their pages are, but a refusal has to
+// read the same way in both.
+func applyGlobalWriteError(data *ConfigGlobalEditData, err error, prefix string) {
+	var rejected *client.ConfigRejectedError
+	if errors.As(err, &rejected) {
+		data.Error = "Not saved: the configuration would not load."
+		data.Problems = problemData(rejected.Problems())
+		return
+	}
+	data.Error = fmt.Sprintf("%s: %v", prefix, err)
+}
+
+// normalizeContent undoes what a browser does to a textarea on submit.
+//
+// HTML form submission encodes textarea content with CRLF line endings, so
+// saving a file through the editor would otherwise rewrite every line of a
+// checked-in JSON file the first time anyone opened it. The trailing newline is
+// restored for the same reason: a file that ends without one reads as a
+// one-line diff on every tool that touches it.
+func normalizeContent(content string) string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return content
+}
+
+// problemData converts wire problems for the templates.
+func problemData(problems []types.ConfigProblem) []ConfigProblemData {
+	if len(problems) == 0 {
+		return nil
+	}
+	out := make([]ConfigProblemData, 0, len(problems))
+	for _, p := range problems {
+		out = append(out, ConfigProblemData{Path: p.Path, Message: p.Message})
+	}
+	return out
+}
+
+// configSaved tells the page a write landed, so the reload banner re-checks
+// whether what is on disk is what is serving calls. HTMX fires the named event
+// on body, which the banner listens for — no JavaScript involved.
+func configSaved(w http.ResponseWriter) {
+	w.Header().Set("HX-Trigger", "config-saved")
 }

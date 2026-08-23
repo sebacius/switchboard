@@ -79,15 +79,41 @@
                         </button>
                     </li>
                     <li>
-                        <button hx-get="/admin/config/partials/dialplan?server={{.SelectedServer}}"
+                        <button hx-get="/admin/config/partials/globals?server={{.SelectedServer}}"
                                 hx-target="#config-content"
                                 hx-swap="innerHTML"
                                 onclick="setActiveTab(this)"
-                                class="config-tab {{if eq .ActiveTab "dialplan"}}tab-active{{end}} w-full flex items-center px-3 py-2.5 rounded-lg border-l-2 border-transparent hover:bg-slate-700/50 transition-colors group text-left">
+                                class="config-tab {{if eq .ActiveTab "globals"}}tab-active{{end}} w-full flex items-center px-3 py-2.5 rounded-lg border-l-2 border-transparent hover:bg-slate-700/50 transition-colors group text-left">
                             <svg class="w-5 h-5 text-slate-400 group-hover:text-amber-400 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                             </svg>
-                            <span class="text-sm text-slate-300 group-hover:text-white">Dialplan</span>
+                            <span class="text-sm text-slate-300 group-hover:text-white">Deployment</span>
+                        </button>
+                    </li>
+                    <li>
+                        <button hx-get="/admin/config/partials/audio?server={{.SelectedServer}}"
+                                hx-target="#config-content"
+                                hx-swap="innerHTML"
+                                onclick="setActiveTab(this)"
+                                class="config-tab {{if eq .ActiveTab "audio"}}tab-active{{end}} w-full flex items-center px-3 py-2.5 rounded-lg border-l-2 border-transparent hover:bg-slate-700/50 transition-colors group text-left">
+                            <svg class="w-5 h-5 text-slate-400 group-hover:text-blue-400 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
+                            </svg>
+                            <span class="text-sm text-slate-300 group-hover:text-white">Audio</span>
+                        </button>
+                    </li>
+                    <li>
+                        <button hx-get="/admin/config/partials/flowtest?server={{.SelectedServer}}"
+                                hx-target="#config-content"
+                                hx-swap="innerHTML"
+                                onclick="setActiveTab(this)"
+                                class="config-tab {{if eq .ActiveTab "flowtest"}}tab-active{{end}} w-full flex items-center px-3 py-2.5 rounded-lg border-l-2 border-transparent hover:bg-slate-700/50 transition-colors group text-left">
+                            <svg class="w-5 h-5 text-slate-400 group-hover:text-emerald-400 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <span class="text-sm text-slate-300 group-hover:text-white">Test a Call</span>
                         </button>
                     </li>
                 </ul>
@@ -112,12 +138,21 @@
 
         <!-- Main Content Area -->
         <main class="flex-1 ml-56 p-6">
-            <!-- Reload Status -->
+            <!-- Reload Status: the result of pressing Reload -->
             <div id="reload-status" class="mb-4"></div>
+
+            <!-- Configuration drift: is what is on disk what is serving calls?
+                 Asked of the signaling server rather than remembered here, so a
+                 second operator, a UI restart or a signaling restart all get the
+                 same answer. -->
+            <div id="reload-banner"
+                 hx-get="/admin/config/partials/reload-banner?server={{.SelectedServer}}"
+                 hx-trigger="load, config-saved from:body, every 30s"
+                 hx-swap="innerHTML"></div>
 
             <!-- Tab Content -->
             <div id="config-content"
-                 hx-get="/admin/config/partials/{{.ActiveTab}}?server={{.SelectedServer}}"
+                 hx-get="/admin/config/partials/{{.ActiveTab}}?server={{.SelectedServer}}{{.TabQuery}}"
                  hx-trigger="load"
                  hx-swap="innerHTML">
                 <div class="flex items-center justify-center py-20">

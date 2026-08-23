@@ -75,25 +75,32 @@ const DefaultChannelLimitFallback = 10
 // because silently falling back to defaults would turn a typo in an allowlist
 // into a policy change nobody noticed.
 func LoadPolicyConfig(path string) (*PolicyConfig, error) {
-	cfg := &PolicyConfig{
-		DefaultChannelLimit: DefaultChannelLimitFallback,
-		Tenants:             map[string]TenantConfig{},
-	}
 	if path == "" {
-		return cfg, nil
+		return defaultPolicyConfig(), nil
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return cfg, nil
+			return defaultPolicyConfig(), nil
 		}
 		return nil, fmt.Errorf("read policy config %s: %w", path, err)
 	}
+	return ParsePolicyConfig(data, path)
+}
+
+// ParsePolicyConfig applies the loader's rules to bytes that are not on disk
+// yet, so the config API can refuse a write the server would then refuse to
+// start with. label names the source in error messages.
+//
+// An absent file is the loader's business, not this function's: "no policy at
+// all" means defaults, while "empty content" is a caller sending nothing.
+func ParsePolicyConfig(data []byte, label string) (*PolicyConfig, error) {
+	cfg := defaultPolicyConfig()
 
 	var parsed PolicyConfig
 	if err := json.Unmarshal(data, &parsed); err != nil {
-		return nil, fmt.Errorf("parse policy config %s: %w", path, err)
+		return nil, fmt.Errorf("parse policy config %s: %w", label, err)
 	}
 
 	if parsed.DefaultChannelLimit > 0 {
@@ -111,10 +118,19 @@ func LoadPolicyConfig(path string) (*PolicyConfig, error) {
 			return nil, fmt.Errorf(
 				"%s: tenant %q still defines \"symbolic_targets\"; move those entries to the "+
 					"tenant's routing file (<tenants-path>/%s.routing.json) under \"symbolic_targets\" "+
-					"and remove the key here", path, name, name)
+					"and remove the key here", label, name, name)
 		}
 	}
 	return cfg, nil
+}
+
+// defaultPolicyConfig is the configuration a deployment with no policy file
+// runs under.
+func defaultPolicyConfig() *PolicyConfig {
+	return &PolicyConfig{
+		DefaultChannelLimit: DefaultChannelLimitFallback,
+		Tenants:             map[string]TenantConfig{},
+	}
 }
 
 // ChannelLimits renders the per-tenant overrides in the shape NewAdmission

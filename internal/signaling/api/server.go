@@ -56,9 +56,20 @@ type Server struct {
 	drainProvider DrainProvider
 	parkProvider  ParkProvider
 	fileProvider  FileProvider
-	sessionsMu    sync.RWMutex
-	sessions      map[string]*SessionRecord
-	startTime     time.Time
+
+	// allowGlobalWrites gates PUT on the deployment-wide files. policy.json is
+	// the authorization boundary and this port has no authentication, so making
+	// it writable is an operator's decision, not a side effect of shipping an
+	// editor.
+	allowGlobalWrites bool
+
+	audio   AudioProvider
+	flowSim FlowSimProvider
+	// simSlots bounds simultaneous simulations; see simConcurrency.
+	simSlots   chan struct{}
+	sessionsMu sync.RWMutex
+	sessions   map[string]*SessionRecord
+	startTime  time.Time
 }
 
 // SessionRecord tracks an active RTP session
@@ -111,6 +122,14 @@ func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog
 	mux.HandleFunc("/api/v1/config/tenants", s.handleConfigTenantList)
 	mux.HandleFunc("/api/v1/config/tenants/", s.handleConfigTenant)
 	mux.HandleFunc("/api/v1/config/reload", s.handleConfigReload)
+	mux.HandleFunc("/api/v1/config/files", s.handleConfigFileList)
+	mux.HandleFunc("/api/v1/config/files/", s.handleConfigFile)
+	mux.HandleFunc("/api/v1/config/status", s.handleConfigStatus)
+	mux.HandleFunc("/api/v1/config/audio", s.handleConfigAudio)
+
+	// Flow simulation, against the LOADED configuration
+	mux.HandleFunc("/api/v1/flow/tenants", s.handleFlowTenants)
+	mux.HandleFunc("/api/v1/flow/simulate", s.handleFlowSimulate)
 
 	// Admin
 	mux.HandleFunc("/api/v1/shutdown", s.handleShutdown)

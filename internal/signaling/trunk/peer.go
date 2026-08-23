@@ -62,9 +62,16 @@ func LoadPeers(path string) (*PeerStore, error) {
 		}
 		return nil, fmt.Errorf("read trunk peers %s: %w", path, err)
 	}
+	return ParsePeers(data, path)
+}
+
+// ParsePeers applies the loader's rules to bytes that are not on disk yet, so
+// the config API refuses a peer list the server would refuse to start with.
+// label names the source in error messages.
+func ParsePeers(data []byte, label string) (*PeerStore, error) {
 	var peers []*Peer
 	if err := json.Unmarshal(data, &peers); err != nil {
-		return nil, fmt.Errorf("parse trunk peers %s: %w", path, err)
+		return nil, fmt.Errorf("parse trunk peers %s: %w", label, err)
 	}
 	for _, p := range peers {
 		if p.Role == "" {
@@ -76,6 +83,16 @@ func LoadPeers(path string) (*PeerStore, error) {
 
 // Count returns the number of configured peers.
 func (s *PeerStore) Count() int { return len(s.peers) }
+
+// All returns the configured peers, for validation and inspection.
+func (s *PeerStore) All() []*Peer {
+	if s == nil {
+		return nil
+	}
+	out := make([]*Peer, len(s.peers))
+	copy(out, s.peers)
+	return out
+}
 
 // MatchInbound returns the inbound-capable peer whose host matches the given
 // source IP/host, if any.

@@ -355,3 +355,121 @@ func BuildWAVData(pcmData []byte, sampleRate uint32) []byte {
 	copy(wav[len(header):], pcmData)
 	return wav
 }
+
+// --- Inventory ---
+
+// WAVInfo is a WAV file's header, without its audio.
+//
+// Listing a directory must not load every PCM payload into memory to answer
+// "what format is this", which is what ReadWAVFile would do.
+type WAVInfo struct {
+	AudioFormat   uint16
+	NumChannels   uint16
+	BitsPerSample uint16
+	SampleRate    uint32
+	DataBytes     int64
+}
+
+// DurationMs estimates the playing time from the header alone.
+func (i WAVInfo) DurationMs() int64 {
+	bytesPerFrame := int64(i.NumChannels) * int64(i.BitsPerSample) / 8
+	if bytesPerFrame <= 0 || i.SampleRate == 0 {
+		return 0
+	}
+	return i.DataBytes * 1000 / (bytesPerFrame * int64(i.SampleRate))
+}
+
+// Problem reports why the player would refuse this file, or why it will not
+// sound as recorded. An empty string means the file is exactly what the player
+// wants; playable is false only for the refusals.
+//
+// The rules are read off what the player actually does, not off a general idea
+// of what a WAV is: ParseWAVData rejects anything but PCM, ResampleAudio assumes
+// 16-bit little-endian samples and handles at most two channels, and anything
+// not already 8 kHz mono is converted on every single call.
+func (i WAVInfo) Problem() (problem string, playable bool) {
+	switch {
+	case i.AudioFormat != 1:
+		return fmt.Sprintf(
+			"encoded as format %d, not uncompressed PCM; the player refuses it. Convert it — the "+
+				"µ-law conversion happens on the way out, so the file itself must be PCM", i.AudioFormat), false
+	case i.BitsPerSample != 16:
+		return fmt.Sprintf(
+			"%d-bit samples; the player assumes 16-bit and would emit noise", i.BitsPerSample), false
+	case i.NumChannels == 0 || i.NumChannels > 2:
+		return fmt.Sprintf("%d channels; the player handles mono or stereo only", i.NumChannels), false
+	case i.DataBytes == 0:
+		return "no audio data", false
+	case i.SampleRate != 8000 && i.NumChannels == 2:
+		return fmt.Sprintf(
+			"%d Hz stereo; it plays, but is downmixed and resampled to 8 kHz mono on every call",
+			i.SampleRate), true
+	case i.SampleRate != 8000:
+		return fmt.Sprintf("%d Hz; it plays, but is resampled to 8 kHz on every call", i.SampleRate), true
+	case i.NumChannels == 2:
+		return "stereo; it plays, but is downmixed to mono on every call", true
+	}
+	return "", true
+}
+
+// ProbeWAVFile reads a WAV file's header without reading its audio.
+func ProbeWAVFile(filePath string) (WAVInfo, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return WAVInfo{}, err
+	}
+	defer f.Close()
+
+	// Enough for the RIFF/WAVE header plus a generous run of chunk headers
+	// before the data chunk. A file whose fmt chunk is further in than this is
+	// not one the player would handle either.
+	buf := make([]byte, 4096)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return WAVInfo{}, err
+	}
+	buf = buf[:n]
+
+	if len(buf) < 12 || string(buf[0:4]) != "RIFF" || string(buf[8:12]) != "WAVE" {
+		return WAVInfo{}, fmt.Errorf("not a RIFF/WAVE file")
+	}
+
+	var info WAVInfo
+	sawFmt := false
+	offset := 12
+	for offset+8 <= len(buf) {
+		chunkID := string(buf[offset : offset+4])
+		chunkSize := binary.LittleEndian.Uint32(buf[offset+4 : offset+8])
+		offset += 8
+
+		switch chunkID {
+		case "fmt ":
+			if offset+16 > len(buf) {
+				return WAVInfo{}, fmt.Errorf("truncated fmt chunk")
+			}
+			info.AudioFormat = binary.LittleEndian.Uint16(buf[offset : offset+2])
+			info.NumChannels = binary.LittleEndian.Uint16(buf[offset+2 : offset+4])
+			info.SampleRate = binary.LittleEndian.Uint32(buf[offset+4 : offset+8])
+			info.BitsPerSample = binary.LittleEndian.Uint16(buf[offset+14 : offset+16])
+			sawFmt = true
+			offset += int(chunkSize)
+
+		case "data":
+			// The declared size, not what was read: the payload is deliberately
+			// not loaded.
+			info.DataBytes = int64(chunkSize)
+			if !sawFmt {
+				return WAVInfo{}, fmt.Errorf("data chunk before fmt chunk")
+			}
+			return info, nil
+
+		default:
+			offset += int(chunkSize)
+		}
+	}
+
+	if !sawFmt {
+		return WAVInfo{}, fmt.Errorf("fmt chunk not found")
+	}
+	return info, fmt.Errorf("data chunk not found")
+}
