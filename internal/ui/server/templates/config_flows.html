@@ -78,16 +78,16 @@
     <div class="flex flex-wrap items-end gap-3 mb-4">
         <div>
             <label class="block text-xs font-medium text-slate-400 mb-1.5">Tenant</label>
-            <select name="tenant"
-                    hx-get="/admin/config/partials/flows?server={{.Server}}"
-                    hx-target="#config-content"
-                    hx-swap="innerHTML"
-                    hx-include="this"
-                    class="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none">
-                {{range .Tenants}}
-                <option value="{{.Name}}" {{if eq .Name $.Tenant}}selected{{end}}>{{.Name}}</option>
-                {{end}}
-            </select>
+            <!-- A textbox that narrows the list as you type. A select is fine for
+                 one tenant and useless for thirty; the name is the fastest thing
+                 an operator knows about the tenant they want. -->
+            <div class="relative" id="tenant-picker">
+                <input id="tenant-input" type="text" value="{{.Tenant}}"
+                       autocomplete="off" spellcheck="false" placeholder="Type to filter…"
+                       class="w-56 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:border-emerald-500 focus:outline-none">
+                <ul id="tenant-options"
+                    class="hidden absolute left-0 right-0 mt-1 z-30 max-h-56 overflow-y-auto rounded-lg bg-slate-900 border border-slate-600 shadow-2xl py-1"></ul>
+            </div>
         </div>
         <div>
             <label class="block text-xs font-medium text-slate-400 mb-1.5">Flow</label>
@@ -105,6 +105,7 @@
             </select>
         </div>
         <div class="flex-1"></div>
+        <span id="flow-hint" class="text-xs text-slate-500 self-center"></span>
         <button type="button" id="flow-save"
                 class="inline-flex items-center px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 transition-colors text-white text-sm font-medium shadow-lg">
             <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -113,6 +114,104 @@
             Save Flow
         </button>
     </div>
+
+
+    <script>
+    (function () {
+        const SERVER  = {{.Server}};
+        const TENANT  = {{.Tenant}};
+        const TENANTS = [{{range .Tenants}}{{.Name}},{{end}}];
+
+        // --- The tenant picker ------------------------------------------------
+
+    // A textbox that narrows the list as it is typed into. Selecting one
+    // fetches the tab afresh, which is what the select it replaces did.
+    function wireTenantPicker() {
+        const input = document.getElementById('tenant-input');
+        const list = document.getElementById('tenant-options');
+        if (!input || !list) { return; }
+
+        let active = -1;
+        let showing = [];
+
+        function open(filter) {
+            const needle = (filter || '').trim().toLowerCase();
+            showing = TENANTS.filter(function (name) {
+                return needle === '' || name.toLowerCase().indexOf(needle) >= 0;
+            });
+            list.innerHTML = '';
+            if (showing.length === 0) {
+                const empty = document.createElement('li');
+                empty.className = 'px-3 py-2 text-sm text-slate-500';
+                empty.textContent = 'No tenant matches.';
+                list.appendChild(empty);
+            } else {
+                showing.forEach(function (name, i) {
+                    const li = document.createElement('li');
+                    li.className = 'px-3 py-1.5 text-sm font-mono cursor-pointer ' +
+                        (name === TENANT ? 'text-emerald-300' : 'text-slate-300') +
+                        ' hover:bg-slate-700/60';
+                    li.textContent = name;
+                    // mousedown, not click: blur fires first on click and
+                    // would close the list out from under the pointer.
+                    li.addEventListener('mousedown', function (e) { e.preventDefault(); choose(name); });
+                    li.addEventListener('mouseenter', function () { highlight(i); });
+                    list.appendChild(li);
+                });
+            }
+            active = showing.length ? 0 : -1;
+            highlight(active);
+            list.classList.remove('hidden');
+        }
+
+        function close() { list.classList.add('hidden'); active = -1; }
+
+        function highlight(i) {
+            active = i;
+            Array.prototype.forEach.call(list.children, function (li, n) {
+                li.classList.toggle('bg-slate-700/60', n === i);
+            });
+        }
+
+        function choose(name) {
+            close();
+            input.value = name;
+            if (name === TENANT) { return; }
+            htmx.ajax('GET', '/admin/config/partials/flows?server=' + encodeURIComponent(SERVER) +
+                '&tenant=' + encodeURIComponent(name),
+                { target: '#config-content', swap: 'innerHTML' });
+        }
+
+        input.addEventListener('focus', function () { open(''); input.select(); });
+        input.addEventListener('input', function () { open(input.value); });
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (list.classList.contains('hidden')) { open(input.value); return; }
+                if (!showing.length) { return; }
+                highlight((active + (e.key === 'ArrowDown' ? 1 : showing.length - 1)) % showing.length);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (active >= 0 && showing[active]) { choose(showing[active]); }
+            } else if (e.key === 'Escape') {
+                close();
+                input.value = TENANT;
+                input.blur();
+            }
+        });
+        // Half-typed text names no tenant, so the box goes back to saying
+        // which one is actually on screen rather than lying about it.
+        input.addEventListener('blur', function () {
+            window.setTimeout(function () {
+                close();
+                if (TENANTS.indexOf(input.value) < 0) { input.value = TENANT; }
+            }, 120);
+        });
+    }
+
+        wireTenantPicker();
+    })();
+    </script>
 
     {{if not .HasFlow}}
     <div class="bg-slate-800/50 rounded-xl border border-dashed border-slate-700 p-10 text-center">
@@ -134,38 +233,39 @@
         <input type="hidden" name="graph" id="flow-graph-field" value="">
     </form>
 
-    <div class="grid grid-cols-12 gap-4">
+    <!-- The canvas cancels the page padding and runs edge to edge: the graph is
+         what the tab is for, and everything else earns its space from it. -->
+    <div class="-mx-6">
         <!-- Palette -->
-        <div class="col-span-2">
-            <div class="bg-slate-800 rounded-xl border border-slate-700 p-3">
-                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Nodes</p>
-                <div id="flow-palette" class="space-y-1.5"></div>
-                <p class="mt-3 text-xs text-slate-500 leading-relaxed">
-                    Drag onto the canvas. Every type here comes from the server's own node
-                    catalog, so it is exactly what a flow may contain.
-                </p>
-            </div>
+        <div class="flex items-center gap-1 px-4 py-2 bg-slate-800 border-y border-slate-700 overflow-x-auto">
+            <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-3 flex-shrink-0">Drag on</span>
+            <div id="flow-palette" class="flex items-stretch gap-1"></div>
+            <div class="flex-1"></div>
+            <span class="text-xs text-slate-500 flex-shrink-0 pl-4">{{.Tenant}}.flows.json &middot; {{.Flow}}</span>
         </div>
 
-        <!-- Canvas -->
-        <div class="col-span-7">
-            <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-                <div class="flex items-center justify-between px-4 py-2.5 bg-slate-700/50 border-b border-slate-700">
-                    <span class="text-sm font-medium text-slate-300">{{.Tenant}}.flows.json &middot; {{.Flow}}</span>
-                    <span id="flow-hint" class="text-xs text-slate-500"></span>
-                </div>
-                <div id="drawflow" class="w-full" style="height: 640px; background-color: #0f172a;
-                     background-image: radial-gradient(#1e293b 1px, transparent 1px); background-size: 22px 22px;"></div>
-            </div>
-        </div>
+        <!-- Canvas, with the inspector floating over it rather than beside it -->
+        <div class="relative border-b border-slate-700">
+            <div id="drawflow" class="w-full" style="height: calc(100vh - 320px); min-height: 480px;
+                 background-color: #0f172a; background-image: radial-gradient(#1e293b 1px, transparent 1px);
+                 background-size: 22px 22px;"></div>
 
-        <!-- Inspector -->
-        <div class="col-span-3">
-            <div class="bg-slate-800 rounded-xl border border-slate-700 p-4">
-                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Node</p>
-                <div id="flow-inspector">
-                    <p class="text-sm text-slate-500">Select a node to edit it.</p>
+            <div id="flow-inspector-panel"
+                 class="hidden absolute top-4 right-4 z-20 w-80 max-h-[calc(100%-2rem)] overflow-y-auto
+                        rounded-xl bg-slate-800/95 backdrop-blur border border-slate-600 shadow-2xl">
+                <div class="sticky top-0 flex items-start justify-between px-4 py-3 bg-slate-800/95 border-b border-slate-700">
+                    <div class="min-w-0">
+                        <p id="flow-inspector-type" class="text-[10px] uppercase tracking-wider text-slate-500"></p>
+                        <p id="flow-inspector-title" class="text-sm font-semibold text-white truncate"></p>
+                    </div>
+                    <button type="button" id="flow-inspector-close"
+                            class="ml-3 flex-shrink-0 text-slate-400 hover:text-white transition-colors" title="Close">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
                 </div>
+                <div id="flow-inspector" class="p-4"></div>
             </div>
         </div>
     </div>
@@ -299,13 +399,50 @@
 
         // --- The palette ------------------------------------------------------
 
+        // Decoration only. WHICH types exist, what exits they have and what their
+        // entry contains all still come from the server's catalog — an icon is
+        // just a face for one. A type with no icon here still appears, wearing
+        // the generic one, so adding a node type in Go stays a one-place change.
+        const ICONS = {
+            ivr: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
+            tts: 'M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z',
+            play_audio: 'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3',
+            dial_user: 'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z',
+            dial_external: 'M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9',
+            transfer: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4',
+            hangup: 'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z'
+        };
+        const GENERIC_ICON = 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4';
+
+        function iconFor(type) { return ICONS[type] || GENERIC_ICON; }
+
         const palette = document.getElementById('flow-palette');
         SCHEMA.forEach(function (s) {
             const item = document.createElement('div');
-            item.className = 'palette-item px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 ' +
-                'text-xs font-mono text-slate-300 hover:border-emerald-500/60 hover:text-white transition-colors';
-            item.textContent = s.type;
+            item.className = 'palette-item flex flex-col items-center justify-center w-20 px-1 py-1.5 rounded-lg ' +
+                'bg-slate-900 border border-slate-700 text-slate-400 ' +
+                'hover:border-emerald-500/60 hover:text-emerald-300 transition-colors';
+            item.title = 'Drag onto the canvas to add a ' + s.type + ' node';
             item.draggable = true;
+
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('viewBox', '0 0 24 24');
+            svg.setAttribute('fill', 'none');
+            svg.setAttribute('stroke', 'currentColor');
+            svg.setAttribute('class', 'w-5 h-5 pointer-events-none');
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('stroke-linecap', 'round');
+            path.setAttribute('stroke-linejoin', 'round');
+            path.setAttribute('stroke-width', '1.7');
+            path.setAttribute('d', iconFor(s.type));
+            svg.appendChild(path);
+            item.appendChild(svg);
+
+            const label = document.createElement('span');
+            label.className = 'mt-1 text-[10px] font-mono leading-tight text-center pointer-events-none';
+            label.textContent = s.type;
+            item.appendChild(label);
+
             item.addEventListener('dragstart', function (e) {
                 e.dataTransfer.setData('node/type', s.type);
             });
@@ -342,19 +479,37 @@
         // --- Selection and the inspector --------------------------------------
 
         editor.on('nodeSelected', function (id) { select(id); });
-        editor.on('nodeUnselected', function () { selected = null; renderInspector(); });
-        editor.on('nodeRemoved', function () { selected = null; renderInspector(); markUnwired(); });
+        editor.on('nodeUnselected', deselect);
+        editor.on('nodeRemoved', function () { deselect(); markUnwired(); });
         editor.on('connectionCreated', markUnwired);
         editor.on('connectionRemoved', markUnwired);
 
-        function select(dfId) { selected = dfId; renderInspector(); }
+        const panel = document.getElementById('flow-inspector-panel');
+        document.getElementById('flow-inspector-close').addEventListener('click', deselect);
+
+        function select(dfId) {
+            selected = dfId;
+            renderInspector();
+        }
+
+        // The canvas is the whole width now, so the editor floats over it and
+        // only while something is selected. Clicking empty canvas already fires
+        // nodeUnselected, which makes that the natural way to dismiss it.
+        function deselect() {
+            selected = null;
+            panel.classList.add('hidden');
+        }
 
         function renderInspector() {
             const box = document.getElementById('flow-inspector');
             if (selected === null || !editor.getNodeFromId(selected)) {
-                box.innerHTML = '<p class="text-sm text-slate-500">Select a node to edit it.</p>';
+                panel.classList.add('hidden');
                 return;
             }
+            panel.classList.remove('hidden');
+            panel.scrollTop = 0;
+            document.getElementById('flow-inspector-title').textContent = editor.getNodeFromId(selected).data.id;
+            document.getElementById('flow-inspector-type').textContent = editor.getNodeFromId(selected).data.type;
             const node = editor.getNodeFromId(selected);
             const data = node.data;
             const schema = typeOf[data.type] || { fields: [], exits: [], terminal_exits: [] };
@@ -369,6 +524,7 @@
                 data.id = name;
                 if (start === node.data.id) { start = name; }
                 editor.updateNodeDataFromId(selected, data);
+                document.getElementById('flow-inspector-title').textContent = name;
                 repaintAll();
             }));
 

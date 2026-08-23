@@ -104,6 +104,7 @@ func TestFlowsPartialRendersTheReferenceFlow(t *testing.T) {
 	for _, want := range []string{
 		`name="tenant"`, `name="flow"`, "devtenant", "main-ivr",
 		`id="drawflow"`, `id="flow-palette"`, `id="flow-inspector"`,
+		`id="tenant-input"`, `id="flow-inspector-panel"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page does not contain %q", want)
@@ -305,6 +306,30 @@ func TestChangingTheStartNodeIsSaved(t *testing.T) {
 	}
 	if !strings.Contains(backend.wrote, `"start": "closing"`) {
 		t.Errorf("the new start node was not saved:\n%s", backend.wrote)
+	}
+}
+
+// The tenant picker is JavaScript now, and a tenant whose file defines no flows
+// renders no canvas — so the picker's script has to live outside that branch.
+// Otherwise the one tenant with an empty flows file becomes a place the editor
+// cannot be steered out of.
+func TestTheTenantPickerWorksWithoutAFlowToDraw(t *testing.T) {
+	s := uiFor(t, &fakeSignaling{flows: `{"flows": {}}`})
+
+	rec := httptest.NewRecorder()
+	s.handleConfigFlowsPartial(rec, httptest.NewRequest(http.MethodGet, "/admin/config/partials/flows?server=test", nil))
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "defines no flows") {
+		t.Errorf("the empty-flows state was not rendered:\n%s", body)
+	}
+	if strings.Contains(body, `id="drawflow"`) {
+		t.Error("a canvas was rendered for a file with no flows")
+	}
+	for _, want := range []string{`id="tenant-input"`, "wireTenantPicker", "const TENANTS"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the tenant picker is not usable here: missing %q", want)
+		}
 	}
 }
 
