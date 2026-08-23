@@ -69,13 +69,20 @@ func LoadRoutes(path string) (*DIDRoutes, error) {
 		}
 		return nil, fmt.Errorf("read routes %s: %w", path, err)
 	}
+	return ParseRoutes(data, path)
+}
+
+// ParseRoutes applies the loader's rules to bytes that are not on disk yet, so
+// the config API refuses a table the server would refuse to start with. label
+// names the source in error messages.
+func ParseRoutes(data []byte, label string) (*DIDRoutes, error) {
 	var rf routesFile
 	if err := json.Unmarshal(data, &rf); err != nil {
-		return nil, fmt.Errorf("parse routes %s: %w", path, err)
+		return nil, fmt.Errorf("parse routes %s: %w", label, err)
 	}
 	routes, err := newDIDRoutes(rf.DIDs)
 	if err != nil {
-		return nil, fmt.Errorf("invalid routes %s: %w", path, describeRoutesError(err, rf.DIDs))
+		return nil, fmt.Errorf("invalid routes %s: %w", label, describeRoutesError(err, rf.DIDs))
 	}
 	return routes, nil
 }
