@@ -6,6 +6,11 @@
     <title>{{.Title}}</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- The flow canvas. Pinned to an exact version and loaded here rather than
+         in the tab's partial, so the editor's script can never run before the
+         library it needs has arrived. -->
+    <link rel="stylesheet" href="https://unpkg.com/drawflow@0.0.60/dist/drawflow.min.css">
+    <script src="https://unpkg.com/drawflow@0.0.60/dist/drawflow.min.js"></script>
     <style>
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #1e293b; }
@@ -89,6 +94,18 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                             </svg>
                             <span class="text-sm text-slate-300 group-hover:text-white">Deployment</span>
+                        </button>
+                    </li>
+                    <li>
+                        <button hx-get="/admin/config/partials/flows?server={{.SelectedServer}}"
+                                hx-target="#config-content"
+                                hx-swap="innerHTML"
+                                onclick="setActiveTab(this)"
+                                class="config-tab {{if eq .ActiveTab "flows"}}tab-active{{end}} w-full flex items-center px-3 py-2.5 rounded-lg border-l-2 border-transparent hover:bg-slate-700/50 transition-colors group text-left">
+                            <svg class="w-5 h-5 text-slate-400 group-hover:text-purple-400 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                            </svg>
+                            <span class="text-sm text-slate-300 group-hover:text-white">Flows</span>
                         </button>
                     </li>
                     <li>
