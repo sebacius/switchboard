@@ -52,6 +52,8 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 		activeTab = "audio"
 	case "flowtest":
 		activeTab = "flowtest"
+	case "flows":
+		activeTab = "flows"
 	}
 
 	data := ConfigPageData{
@@ -83,7 +85,7 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 func tabQuery(r *http.Request) string {
 	q := r.URL.Query()
 	out := url.Values{}
-	for _, key := range []string{"tenant", "dialed", "digits", "direction", "name", "file"} {
+	for _, key := range []string{"tenant", "dialed", "digits", "direction", "name", "file", "flow"} {
 		if v := q.Get(key); v != "" {
 			out.Set(key, v)
 		}

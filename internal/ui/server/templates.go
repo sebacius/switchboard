@@ -32,6 +32,7 @@ type Templates struct {
 	configAudio      *template.Template
 	flowTest         *template.Template
 	flowTestResult   *template.Template
+	configFlows      *template.Template
 }
 
 // TemplateData holds data for rendering templates
@@ -253,6 +254,11 @@ func NewTemplates() (*Templates, error) {
 		return nil, err
 	}
 
+	t.configFlows, err = template.New("config_flows.html").ParseFS(templatesFS, "templates/config_flows.html")
+	if err != nil {
+		return nil, err
+	}
+
 	return t, nil
 }
 
@@ -443,6 +449,35 @@ func (d FlowTestResultData) IsFlow() bool   { return d.Result.Routed == "flow" }
 func (d FlowTestResultData) IsDirect() bool { return d.Result.Routed == "direct" }
 func (d FlowTestResultData) IsNone() bool   { return d.Result.Routed == "none" }
 
+// ConfigFlowsData holds the graphical flow editor.
+type ConfigFlowsData struct {
+	Server string
+	// Tenants are only those that HAVE flows: the canvas edits a graph, and
+	// offering a tenant with no graph would promise something the tab cannot do.
+	Tenants []TenantFileData
+	Tenant  string
+	// Flows are the selected tenant's flow names, in document order.
+	Flows []string
+	Flow  string
+	// Graph is the selected flow as JSON for the canvas, and Schema is the node
+	// catalogue exported from the dialplan package. Both are serialized here so
+	// the page never restates the exit contract in JavaScript.
+	Graph  template.JS
+	Schema template.JS
+	// Content is the file exactly as read. It travels with the form so a save
+	// splices into the document the operator was actually looking at.
+	Content string
+	Success string
+	Error   string
+	// Problems BLOCKED the write; Warnings were saved anyway. Same distinction,
+	// and same rendering, as the raw JSON editor.
+	Problems []ConfigProblemData
+	Warnings []ConfigProblemData
+}
+
+// HasFlow reports whether there is a graph to draw, for the template.
+func (d ConfigFlowsData) HasFlow() bool { return d.Flow != "" && len(d.Flows) > 0 }
+
 // --- Configuration Render Methods ---
 
 // RenderConfig renders the config page
@@ -483,6 +518,11 @@ func (t *Templates) RenderFlowTest(w io.Writer, data FlowTestData) error {
 // RenderFlowTestResult renders one simulation's outcome.
 func (t *Templates) RenderFlowTestResult(w io.Writer, data FlowTestResultData) error {
 	return t.flowTestResult.Execute(w, data)
+}
+
+// RenderConfigFlows renders the graphical flow editor.
+func (t *Templates) RenderConfigFlows(w io.Writer, data ConfigFlowsData) error {
+	return t.configFlows.Execute(w, data)
 }
 
 // RenderReloadBanner renders the configuration drift banner.

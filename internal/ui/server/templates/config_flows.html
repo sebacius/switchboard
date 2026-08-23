@@ -1,0 +1,683 @@
+<div>
+    <div class="mb-6">
+        <h2 class="text-xl font-bold text-white">Flows</h2>
+        <p class="text-sm text-slate-400 mt-1">
+            Edit a tenant's flow graph as a graph. This reads and writes what is <em>on disk</em>;
+            the server validates every save and refuses one that would not load.
+        </p>
+    </div>
+
+    {{if .Success}}
+    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm">
+        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+        </svg>
+        {{.Success}}
+    </div>
+    {{end}}
+
+    {{if .Error}}
+    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm">
+        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        {{.Error}}
+    </div>
+    {{end}}
+
+    {{if .Problems}}
+    <div class="mb-4 rounded-lg bg-red-500/10 border border-red-500/30 overflow-hidden">
+        <div class="px-4 py-2 bg-red-500/20 text-red-200 text-sm font-medium">
+            Nothing was saved. Fix these and try again:
+        </div>
+        <ul class="divide-y divide-red-500/20">
+            {{range .Problems}}
+            <li class="px-4 py-2.5">
+                <code class="text-xs text-red-300/80 font-mono">{{.Path}}</code>
+                <p class="text-sm text-red-200 mt-0.5">{{.Message}}</p>
+            </li>
+            {{end}}
+        </ul>
+    </div>
+    {{end}}
+
+    {{if .Warnings}}
+    <div class="mb-4 rounded-lg bg-amber-500/10 border border-amber-500/30 overflow-hidden">
+        <div class="px-4 py-2 bg-amber-500/20 text-amber-200 text-sm font-medium">
+            Saved, but worth a look:
+        </div>
+        <ul class="divide-y divide-amber-500/20">
+            {{range .Warnings}}
+            <li class="px-4 py-2.5">
+                <code class="text-xs text-amber-300/80 font-mono">{{.Path}}</code>
+                <p class="text-sm text-amber-200 mt-0.5">{{.Message}}</p>
+            </li>
+            {{end}}
+        </ul>
+    </div>
+    {{end}}
+
+    {{if not .Tenants}}
+    <!-- No tenant has a graph. Say so, and point at the editor that can create
+         one, rather than showing an empty canvas that reads like an empty flow. -->
+    <div class="bg-slate-800/50 rounded-xl border border-dashed border-slate-700 p-10 text-center">
+        <p class="text-sm text-slate-400">No tenant has a flow graph yet.</p>
+        <p class="text-xs text-slate-500 mt-2">
+            A flows file is created in the Tenants tab; once a tenant has one, it can be edited here.
+        </p>
+        <button hx-get="/admin/config/partials/tenants?server={{.Server}}"
+                hx-target="#config-content"
+                hx-swap="innerHTML"
+                class="mt-4 inline-flex items-center px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors text-slate-300 text-sm font-medium">
+            Go to Tenants
+        </button>
+    </div>
+    {{else}}
+
+    <!-- Pickers -->
+    <div class="flex flex-wrap items-end gap-3 mb-4">
+        <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1.5">Tenant</label>
+            <select name="tenant"
+                    hx-get="/admin/config/partials/flows?server={{.Server}}"
+                    hx-target="#config-content"
+                    hx-swap="innerHTML"
+                    hx-include="this"
+                    class="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none">
+                {{range .Tenants}}
+                <option value="{{.Name}}" {{if eq .Name $.Tenant}}selected{{end}}>{{.Name}}</option>
+                {{end}}
+            </select>
+        </div>
+        <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1.5">Flow</label>
+            <select name="flow"
+                    hx-get="/admin/config/partials/flows?server={{.Server}}&tenant={{.Tenant}}"
+                    hx-target="#config-content"
+                    hx-swap="innerHTML"
+                    hx-include="this"
+                    class="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none">
+                {{range .Flows}}
+                <option value="{{.}}" {{if eq . $.Flow}}selected{{end}}>{{.}}</option>
+                {{else}}
+                <option value="">no flows in this file</option>
+                {{end}}
+            </select>
+        </div>
+        <div class="flex-1"></div>
+        <button type="button" id="flow-save"
+                class="inline-flex items-center px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 transition-colors text-white text-sm font-medium shadow-lg">
+            <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+            Save Flow
+        </button>
+    </div>
+
+    {{if not .HasFlow}}
+    <div class="bg-slate-800/50 rounded-xl border border-dashed border-slate-700 p-10 text-center">
+        <p class="text-sm text-slate-400">This tenant's flows file defines no flows.</p>
+        <p class="text-xs text-slate-500 mt-2">Add one in the Tenants tab, then come back to draw it.</p>
+    </div>
+    {{else}}
+
+    <!-- The form carries the document the operator opened. Splicing into that
+         rather than into whatever is on disk now makes last-write-wins a stated
+         behavior instead of an accident. -->
+    <form id="flow-form"
+          hx-post="/admin/config/flows/save?server={{.Server}}"
+          hx-target="#config-content"
+          hx-swap="innerHTML">
+        <input type="hidden" name="tenant" value="{{.Tenant}}">
+        <input type="hidden" name="flow" value="{{.Flow}}">
+        <input type="hidden" name="content" value="{{.Content}}">
+        <input type="hidden" name="graph" id="flow-graph-field" value="">
+    </form>
+
+    <div class="grid grid-cols-12 gap-4">
+        <!-- Palette -->
+        <div class="col-span-2">
+            <div class="bg-slate-800 rounded-xl border border-slate-700 p-3">
+                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Nodes</p>
+                <div id="flow-palette" class="space-y-1.5"></div>
+                <p class="mt-3 text-xs text-slate-500 leading-relaxed">
+                    Drag onto the canvas. Every type here comes from the server's own node
+                    catalogue, so it is exactly what a flow may contain.
+                </p>
+            </div>
+        </div>
+
+        <!-- Canvas -->
+        <div class="col-span-7">
+            <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                <div class="flex items-center justify-between px-4 py-2.5 bg-slate-700/50 border-b border-slate-700">
+                    <span class="text-sm font-medium text-slate-300">{{.Tenant}}.flows.json &middot; {{.Flow}}</span>
+                    <span id="flow-hint" class="text-xs text-slate-500"></span>
+                </div>
+                <div id="drawflow" class="w-full" style="height: 640px; background-color: #0f172a;
+                     background-image: radial-gradient(#1e293b 1px, transparent 1px); background-size: 22px 22px;"></div>
+            </div>
+        </div>
+
+        <!-- Inspector -->
+        <div class="col-span-3">
+            <div class="bg-slate-800 rounded-xl border border-slate-700 p-4">
+                <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Node</p>
+                <div id="flow-inspector">
+                    <p class="text-sm text-slate-500">Select a node to edit it.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        /* The node's own chrome. Drawflow's default padding is removed so the
+           content column and the port column share a top edge, which is what
+           lets the exit labels line up with their dots by arithmetic instead of
+           by measurement. */
+        #drawflow .drawflow-node {
+            padding: 0; width: 232px; background: #1e293b; border: 1px solid #334155;
+            border-radius: 10px; color: #e2e8f0; box-shadow: 0 4px 14px rgba(0,0,0,.35);
+        }
+        #drawflow .drawflow-node.selected { border-color: #10b981; box-shadow: 0 0 0 2px rgba(16,185,129,.35); }
+        #drawflow .drawflow-node .drawflow_content_node { width: 100%; }
+
+        /* Header 44px, exit row 26px, port dot 12px. The outputs column is
+           padded so port i sits on row i: 51 + 6 + 26i == 44 + 13 + 26i. */
+        .fnode-head { height: 44px; padding: 5px 10px; border-bottom: 1px solid #334155; }
+        .fnode-type { display: block; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #94a3b8; }
+        .fnode-id { display: block; font-size: 13px; font-weight: 600; color: #f1f5f9; line-height: 18px;
+                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .fnode-start { position: absolute; top: -9px; left: 8px; font-size: 9px; font-weight: 700;
+                       letter-spacing: .08em; background: #10b981; color: #052e16; padding: 1px 6px; border-radius: 6px; }
+        .exit-row { height: 26px; line-height: 26px; padding: 0 10px; font-size: 11px; font-family: ui-monospace, monospace;
+                    color: #cbd5e1; text-align: right; border-top: 1px solid rgba(51,65,85,.5); }
+        .exit-row.digit { color: #93c5fd; }
+        .exit-row.unwired { color: #fca5a5; background: rgba(239,68,68,.10); }
+        .fnode-empty { height: 26px; line-height: 26px; padding: 0 10px; font-size: 11px; color: #64748b; text-align: right; }
+
+        #drawflow .drawflow-node .inputs { padding-top: 16px; }
+        #drawflow .drawflow-node .outputs { padding-top: 51px; }
+        #drawflow .drawflow-node .input,
+        #drawflow .drawflow-node .output {
+            width: 12px; height: 12px; margin-bottom: 14px; border-width: 2px; top: 0;
+        }
+        #drawflow .drawflow-node .input { background: #64748b; border-color: #94a3b8; left: -7px; }
+        #drawflow .drawflow-node .output { background: #334155; border-color: #64748b; right: -7px; }
+        #drawflow .drawflow-node .output:hover { background: #10b981; }
+        #drawflow .connection .main-path { stroke: #64748b; stroke-width: 2px; }
+        #drawflow .connection .main-path:hover { stroke: #10b981; }
+        .palette-item { cursor: grab; }
+    </style>
+
+    <script>
+    (function () {
+        const SCHEMA = {{.Schema}};
+        const GRAPH  = {{.Graph}};
+        const container = document.getElementById('drawflow');
+        if (!container) { return; }
+
+        // The library is loaded by the page shell. If it did not arrive, say so
+        // and point at the editor that needs nothing but a textarea — losing the
+        // canvas must never mean losing the ability to edit a flow.
+        if (typeof Drawflow === 'undefined') {
+            container.innerHTML = '<div class="p-10 text-center text-sm text-slate-400">' +
+                'The flow canvas could not load its drawing library. ' +
+                'This tenant\'s flows file is still editable as JSON in the Tenants tab.</div>';
+            return;
+        }
+
+        const editor = new Drawflow(container);
+        editor.reroute = true;
+        editor.start();
+
+        const typeOf = {};
+        SCHEMA.forEach(function (s) { typeOf[s.type] = s; });
+
+        let start = GRAPH ? GRAPH.start : '';
+        let selected = null;
+        let seq = 0;
+
+        // --- Drawing a node ---------------------------------------------------
+
+        function nodeHTML(data) {
+            const rows = data.exits.map(function (name) {
+                return '<div class="exit-row' + (isDigit(name) ? ' digit' : '') +
+                    '" data-exit="' + escapeHTML(name) + '">' + escapeHTML(name) + '</div>';
+            }).join('');
+            return '<div class="fnode">' +
+                (data.id === start ? '<span class="fnode-start">START</span>' : '') +
+                '<div class="fnode-head">' +
+                '<span class="fnode-type">' + escapeHTML(data.type) + '</span>' +
+                '<span class="fnode-id">' + escapeHTML(data.id) + '</span>' +
+                '</div>' +
+                (rows || '<div class="fnode-empty">ends the call</div>') +
+                '</div>';
+        }
+
+        function addNode(data, x, y) {
+            const dfId = editor.addNode(
+                data.type, 1, data.exits.length, x, y, 'flow-node', data, nodeHTML(data));
+            return dfId;
+        }
+
+        // Redraws one node in place. The exits a node offers are part of its
+        // markup, so anything that changes them — a rename, a new digit, a
+        // different start node — has to reach the DOM as well as the data.
+        function repaint(dfId) {
+            const node = editor.getNodeFromId(dfId);
+            if (!node) { return; }
+            const el = document.querySelector('#node-' + dfId + ' .drawflow_content_node');
+            if (el) { el.innerHTML = nodeHTML(node.data); }
+            markUnwired();
+        }
+
+        function repaintAll() {
+            Object.keys(editor.drawflow.drawflow.Home.data).forEach(function (k) { repaint(k); });
+        }
+
+        // --- Loading the flow -------------------------------------------------
+
+        const dfIdOf = {};
+        if (GRAPH && GRAPH.nodes) {
+            GRAPH.nodes.forEach(function (n) {
+                const data = {
+                    id: n.id,
+                    type: n.type,
+                    entry: n.entry || {},
+                    exits: (n.exits || []).map(function (e) { return e.name; })
+                };
+                dfIdOf[n.id] = addNode(data, n.x, n.y);
+            });
+            GRAPH.nodes.forEach(function (n) {
+                (n.exits || []).forEach(function (exit, i) {
+                    if (!exit.target || dfIdOf[exit.target] === undefined) { return; }
+                    editor.addConnection(dfIdOf[n.id], dfIdOf[exit.target], 'output_' + (i + 1), 'input_1');
+                });
+            });
+        }
+
+        // --- The palette ------------------------------------------------------
+
+        const palette = document.getElementById('flow-palette');
+        SCHEMA.forEach(function (s) {
+            const item = document.createElement('div');
+            item.className = 'palette-item px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 ' +
+                'text-xs font-mono text-slate-300 hover:border-emerald-500/60 hover:text-white transition-colors';
+            item.textContent = s.type;
+            item.draggable = true;
+            item.addEventListener('dragstart', function (e) {
+                e.dataTransfer.setData('node/type', s.type);
+            });
+            palette.appendChild(item);
+        });
+
+        container.addEventListener('dragover', function (e) { e.preventDefault(); });
+        container.addEventListener('drop', function (e) {
+            e.preventDefault();
+            const type = e.dataTransfer.getData('node/type');
+            if (!type || !typeOf[type]) { return; }
+
+            const zoom = editor.zoom;
+            const rect = editor.precanvas.getBoundingClientRect();
+            const x = (e.clientX - rect.x) / zoom;
+            const y = (e.clientY - rect.y) / zoom;
+
+            const data = {
+                id: uniqueID(type),
+                type: type,
+                entry: defaultEntry(typeOf[type]),
+                exits: typeOf[type].exits.slice()
+            };
+            // A menu with no digit needs one to be a menu at all, so a fresh ivr
+            // arrives with the selection its validator will insist on.
+            if (typeOf[type].accepts_digit_exits) { data.exits.unshift('1'); }
+
+            const dfId = addNode(data, Math.round(x), Math.round(y));
+            if (!start) { start = data.id; repaintAll(); }
+            select(dfId);
+            markUnwired();
+        });
+
+        // --- Selection and the inspector --------------------------------------
+
+        editor.on('nodeSelected', function (id) { select(id); });
+        editor.on('nodeUnselected', function () { selected = null; renderInspector(); });
+        editor.on('nodeRemoved', function () { selected = null; renderInspector(); markUnwired(); });
+        editor.on('connectionCreated', markUnwired);
+        editor.on('connectionRemoved', markUnwired);
+
+        function select(dfId) { selected = dfId; renderInspector(); }
+
+        function renderInspector() {
+            const box = document.getElementById('flow-inspector');
+            if (selected === null || !editor.getNodeFromId(selected)) {
+                box.innerHTML = '<p class="text-sm text-slate-500">Select a node to edit it.</p>';
+                return;
+            }
+            const node = editor.getNodeFromId(selected);
+            const data = node.data;
+            const schema = typeOf[data.type] || { fields: [], exits: [], terminal_exits: [] };
+
+            box.innerHTML = '';
+            box.appendChild(textField('Node ID', data.id, function (v) {
+                const name = v.trim();
+                // Two nodes with one name is a flow where an exit means two
+                // things. Refuse it here rather than letting the server work out
+                // which one an exit meant.
+                if (!name || (name !== data.id && takenID(name))) { repaintInspector(); return; }
+                data.id = name;
+                if (start === node.data.id) { start = name; }
+                editor.updateNodeDataFromId(selected, data);
+                repaintAll();
+            }));
+
+            schema.fields.forEach(function (field) {
+                box.appendChild(entryField(data, field, data.entry, function () {
+                    editor.updateNodeDataFromId(selected, data);
+                }));
+            });
+
+            if (schema.terminal_exits && schema.terminal_exits.length) {
+                const note = document.createElement('p');
+                note.className = 'mt-3 text-xs text-slate-500 leading-relaxed';
+                note.textContent = 'When this node ' + schema.terminal_exits.join(' or ') +
+                    ', the call is connected and the flow ends. That outcome has no port because ' +
+                    'there is nothing after it to route to.';
+                box.appendChild(note);
+            }
+
+            if (schema.accepts_digit_exits) { box.appendChild(digitEditor(data)); }
+
+            if (data.id !== start) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'mt-3 w-full px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 ' +
+                    'text-slate-200 text-sm font-medium transition-colors';
+                btn.textContent = 'Make this the start node';
+                btn.addEventListener('click', function () {
+                    start = data.id;
+                    repaintAll();
+                    renderInspector();
+                });
+                box.appendChild(btn);
+            } else {
+                const badge = document.createElement('p');
+                badge.className = 'mt-3 text-xs text-emerald-400';
+                badge.textContent = 'This is the start node.';
+                box.appendChild(badge);
+            }
+        }
+
+        function repaintInspector() { renderInspector(); }
+
+        // --- Digit exits ------------------------------------------------------
+
+        // An ivr node's digits belong to the flow, not to the type: they are the
+        // menu. The declared three are the type's and stay fixed.
+        function digitEditor(data) {
+            const wrap = document.createElement('div');
+            wrap.className = 'mt-4 pt-3 border-t border-slate-700';
+            wrap.innerHTML = '<p class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Digits</p>';
+
+            const list = document.createElement('div');
+            list.className = 'flex flex-wrap gap-1.5 mb-2';
+            data.exits.forEach(function (name) {
+                if (!isDigit(name)) { return; }
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'px-2 py-1 rounded bg-blue-500/15 border border-blue-500/30 ' +
+                    'text-blue-300 text-xs font-mono hover:bg-red-500/20 hover:border-red-500/40 hover:text-red-300';
+                chip.textContent = name + ' \u00d7';
+                chip.title = 'Remove this digit';
+                chip.addEventListener('click', function () { removeDigit(data, name); });
+                list.appendChild(chip);
+            });
+            wrap.appendChild(list);
+
+            const row = document.createElement('div');
+            row.className = 'flex gap-1.5';
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.placeholder = '3';
+            input.className = 'w-16 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm ' +
+                'text-slate-200 font-mono focus:border-emerald-500 focus:outline-none';
+            const add = document.createElement('button');
+            add.type = 'button';
+            add.className = 'px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs';
+            add.textContent = 'Add';
+            add.addEventListener('click', function () {
+                const digit = input.value.trim();
+                if (!digit || !isDigit(digit) || data.exits.indexOf(digit) >= 0) { return; }
+                addDigit(data, digit);
+                input.value = '';
+            });
+            row.appendChild(input);
+            row.appendChild(add);
+            wrap.appendChild(row);
+            return wrap;
+        }
+
+        function addDigit(data, digit) {
+            data.exits.push(digit);
+            editor.addNodeOutput(selected);
+            editor.updateNodeDataFromId(selected, data);
+            repaint(selected);
+            renderInspector();
+        }
+
+        function removeDigit(data, digit) {
+            const i = data.exits.indexOf(digit);
+            if (i < 0) { return; }
+            // Drawflow renumbers what is left, and so does the exits array, so
+            // the two stay index-aligned.
+            editor.removeNodeOutput(selected, 'output_' + (i + 1));
+            data.exits.splice(i, 1);
+            editor.updateNodeDataFromId(selected, data);
+            repaint(selected);
+            renderInspector();
+        }
+
+        // --- Form controls generated from the schema --------------------------
+
+        function labelled(text, control, hint) {
+            const wrap = document.createElement('div');
+            wrap.className = 'mb-3';
+            const label = document.createElement('label');
+            label.className = 'block text-xs font-medium text-slate-400 mb-1';
+            label.textContent = text;
+            wrap.appendChild(label);
+            wrap.appendChild(control);
+            if (hint) {
+                const p = document.createElement('p');
+                p.className = 'mt-1 text-xs text-slate-500';
+                p.textContent = hint;
+                wrap.appendChild(p);
+            }
+            return wrap;
+        }
+
+        const INPUT_CLASS = 'w-full bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1.5 ' +
+            'text-sm text-slate-200 focus:border-emerald-500 focus:outline-none';
+
+        function textField(label, value, onChange) {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = value || '';
+            input.className = INPUT_CLASS + ' font-mono';
+            input.addEventListener('change', function () { onChange(input.value); });
+            return labelled(label, input);
+        }
+
+        function entryField(data, field, target, onChange) {
+            const name = field.key + (field.required ? ' *' : '');
+
+            if (field.kind === 'prompt') {
+                const wrap = document.createElement('div');
+                wrap.className = 'mb-3 p-2.5 rounded-lg bg-slate-900/60 border border-slate-700';
+                const head = document.createElement('p');
+                head.className = 'text-xs font-medium text-slate-400 mb-2';
+                head.textContent = name;
+                wrap.appendChild(head);
+                if (!target[field.key] || typeof target[field.key] !== 'object') { target[field.key] = {}; }
+                field.fields.forEach(function (sub) {
+                    wrap.appendChild(entryField(data, sub, target[field.key], onChange));
+                });
+                const note = document.createElement('p');
+                note.className = 'text-xs text-slate-500';
+                note.textContent = 'Set exactly one of text, file, or files.';
+                wrap.appendChild(note);
+                return wrap;
+            }
+
+            if (field.kind === 'bool') {
+                const wrap = document.createElement('label');
+                wrap.className = 'flex items-center gap-2 mb-3 text-sm text-slate-300';
+                const box = document.createElement('input');
+                box.type = 'checkbox';
+                box.checked = !!target[field.key];
+                box.className = 'rounded bg-slate-900 border-slate-600';
+                box.addEventListener('change', function () { target[field.key] = box.checked; onChange(); });
+                wrap.appendChild(box);
+                wrap.appendChild(document.createTextNode(field.key));
+                return wrap;
+            }
+
+            const input = document.createElement('input');
+            input.className = INPUT_CLASS;
+            if (field.kind === 'int') {
+                input.type = 'number';
+                input.value = target[field.key] === undefined ? '' : target[field.key];
+                input.addEventListener('change', function () {
+                    const n = parseInt(input.value, 10);
+                    target[field.key] = isNaN(n) ? 0 : n;
+                    onChange();
+                });
+            } else if (field.kind === 'string_list') {
+                input.type = 'text';
+                input.value = (target[field.key] || []).join(', ');
+                input.addEventListener('change', function () {
+                    const items = input.value.split(',').map(function (s) { return s.trim(); })
+                        .filter(function (s) { return s !== ''; });
+                    if (items.length) { target[field.key] = items; } else { delete target[field.key]; }
+                    onChange();
+                });
+            } else {
+                input.type = 'text';
+                input.value = target[field.key] === undefined ? '' : target[field.key];
+                input.addEventListener('change', function () {
+                    if (input.value === '') { delete target[field.key]; } else { target[field.key] = input.value; }
+                    onChange();
+                });
+            }
+            return labelled(name, input);
+        }
+
+        function defaultEntry(schema) {
+            const entry = {};
+            schema.fields.forEach(function (field) {
+                if (field.kind === 'prompt') { entry[field.key] = { text: '' }; }
+                else if (field.kind === 'int' && field.required) { entry[field.key] = 0; }
+                else if (field.kind === 'string' && field.required) { entry[field.key] = ''; }
+            });
+            return entry;
+        }
+
+        // --- Unwired exits ----------------------------------------------------
+
+        // A hint, deliberately. The server is the authority on whether a flow
+        // loads, and saying so here before the round trip is a courtesy — not a
+        // second opinion that could disagree and win.
+        function markUnwired() {
+            const nodes = editor.drawflow.drawflow.Home.data;
+            let unwired = 0;
+            Object.keys(nodes).forEach(function (k) {
+                const node = nodes[k];
+                (node.data.exits || []).forEach(function (name, i) {
+                    const out = node.outputs['output_' + (i + 1)];
+                    const wired = out && out.connections && out.connections.length > 0;
+                    if (!wired) { unwired++; }
+                    const row = document.querySelector('#node-' + k + ' .exit-row[data-exit="' + cssEscape(name) + '"]');
+                    if (row) { row.classList.toggle('unwired', !wired); }
+                });
+            });
+            const hint = document.getElementById('flow-hint');
+            if (!hint) { return; }
+            if (unwired === 0) {
+                hint.textContent = 'Every exit leads somewhere.';
+                hint.className = 'text-xs text-emerald-400';
+            } else {
+                hint.textContent = unwired + ' exit' + (unwired === 1 ? '' : 's') +
+                    ' lead nowhere — the server will refuse this until they do.';
+                hint.className = 'text-xs text-red-400';
+            }
+        }
+
+        // --- Saving -----------------------------------------------------------
+
+        function serialize() {
+            const nodes = editor.drawflow.drawflow.Home.data;
+            const idOf = {};
+            Object.keys(nodes).forEach(function (k) { idOf[k] = nodes[k].data.id; });
+
+            const out = [];
+            Object.keys(nodes).forEach(function (k) {
+                const node = nodes[k];
+                const exits = (node.data.exits || []).map(function (name, i) {
+                    const port = node.outputs['output_' + (i + 1)];
+                    const conns = port && port.connections ? port.connections : [];
+                    return { name: name, target: conns.length ? (idOf[conns[0].node] || '') : '' };
+                });
+                out.push({
+                    id: node.data.id,
+                    type: node.data.type,
+                    entry: node.data.entry,
+                    exits: exits,
+                    x: Math.round(node.pos_x),
+                    y: Math.round(node.pos_y)
+                });
+            });
+            return {
+                name: {{.Flow}},
+                start: start,
+                timeout_ms: GRAPH && GRAPH.timeout_ms ? GRAPH.timeout_ms : 0,
+                nodes: out
+            };
+        }
+
+        document.getElementById('flow-save').addEventListener('click', function () {
+            document.getElementById('flow-graph-field').value = JSON.stringify(serialize());
+            htmx.trigger(document.getElementById('flow-form'), 'submit');
+        });
+
+        // --- Small helpers ----------------------------------------------------
+
+        function isDigit(s) { return s !== '' && /^[0-9*#]+$/.test(s); }
+
+        function takenID(name) {
+            const nodes = editor.drawflow.drawflow.Home.data;
+            return Object.keys(nodes).some(function (k) {
+                return String(k) !== String(selected) && nodes[k].data.id === name;
+            });
+        }
+
+        function uniqueID(type) {
+            let name;
+            do { seq++; name = type.replace(/_/g, '-') + '-' + seq; } while (takenID(name));
+            return name;
+        }
+
+        function escapeHTML(s) {
+            return String(s).replace(/[&<>"']/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+
+        function cssEscape(s) { return String(s).replace(/["\\]/g, '\\$&'); }
+
+        markUnwired();
+    })();
+    </script>
+    {{end}}
+    {{end}}
+</div>
