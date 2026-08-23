@@ -470,12 +470,76 @@ func (c *Client) DeleteTenant(ctx context.Context, name string) error {
 	return nil
 }
 
-// ReloadConfig triggers a configuration reload on the signaling server
-func (c *Client) ReloadConfig(ctx context.Context) error {
+// --- Deployment-wide configuration ---
+
+// ListGlobalFiles describes policy.json, routes.json and trunk_peers.json.
+func (c *Client) ListGlobalFiles(ctx context.Context) ([]types.GlobalFile, error) {
+	resp, err := c.get(ctx, "/api/v1/config/files")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var files []types.GlobalFile
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		return nil, fmt.Errorf("decode config files: %w", err)
+	}
+	return files, nil
+}
+
+// GetGlobalFile reads one deployment-wide file, content included.
+func (c *Client) GetGlobalFile(ctx context.Context, name string) (types.GlobalFile, error) {
+	resp, err := c.get(ctx, "/api/v1/config/files/"+url.PathEscape(name))
+	if err != nil {
+		return types.GlobalFile{}, err
+	}
+	defer resp.Body.Close()
+
+	var file types.GlobalFile
+	if err := json.NewDecoder(resp.Body).Decode(&file); err != nil {
+		return types.GlobalFile{}, fmt.Errorf("decode config file: %w", err)
+	}
+	return file, nil
+}
+
+// PutGlobalFile saves one deployment-wide file, returning any warnings the
+// server raised about content it accepted.
+func (c *Client) PutGlobalFile(ctx context.Context, name, content string) ([]types.ConfigProblem, error) {
+	body, _ := json.Marshal(types.FileContent{Content: content})
+	resp, err := c.put(ctx, "/api/v1/config/files/"+url.PathEscape(name), bytes.NewReader(body))
+	if err != nil {
+		return nil, rejectionFrom(err)
+	}
+	return decodeSaved(resp)
+}
+
+// ConfigStatus reports whether what is on disk is what is serving calls.
+func (c *Client) ConfigStatus(ctx context.Context) (types.ConfigStatus, error) {
+	resp, err := c.get(ctx, "/api/v1/config/status")
+	if err != nil {
+		return types.ConfigStatus{}, err
+	}
+	defer resp.Body.Close()
+
+	var status types.ConfigStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return types.ConfigStatus{}, fmt.Errorf("decode config status: %w", err)
+	}
+	return status, nil
+}
+
+// ReloadConfig triggers a configuration reload and reports what it covered.
+func (c *Client) ReloadConfig(ctx context.Context) (types.ReloadResult, error) {
 	resp, err := c.post(ctx, "/api/v1/config/reload")
 	if err != nil {
-		return err
+		return types.ReloadResult{}, err
 	}
-	resp.Body.Close()
-	return nil
+	defer resp.Body.Close()
+
+	var result types.ReloadResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		// The reload happened; only the detail is lost.
+		return types.ReloadResult{Status: "ok"}, nil
+	}
+	return result, nil
 }

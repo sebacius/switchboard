@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -39,9 +40,13 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activeTab := r.URL.Query().Get("tab")
-	if activeTab == "" {
-		activeTab = "tenants"
+	// The tab name becomes a partial's URL, so it comes from an allowlist rather
+	// than from the query string. An unknown name is a typo in a bookmark, not a
+	// reason to render a page that immediately 404s.
+	activeTab := "tenants"
+	switch r.URL.Query().Get("tab") {
+	case "globals":
+		activeTab = "globals"
 	}
 
 	data := ConfigPageData{
@@ -323,13 +328,25 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	if err := c.ReloadConfig(r.Context()); err != nil {
+	result, err := c.ReloadConfig(r.Context())
+	if err != nil {
 		slog.Error("[UI] Reload failed", "server", c.Name(), "error", err)
 		_, _ = fmt.Fprintf(w, `<div class="flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm"><svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>Reload failed: %s</div>`, err.Error())
 		return
 	}
 
-	_, _ = fmt.Fprintf(w, `<div class="flex items-center px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm"><svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Configuration reloaded successfully</div>`)
+	// Say what the reload did NOT cover: the deployment-wide files are read once
+	// at startup, so answering a plain "reloaded" to an operator who just edited
+	// policy.json would be wrong in the way that matters.
+	message := result.Message
+	if message == "" {
+		message = "Configuration reloaded"
+	}
+	if len(result.NotReloaded) > 0 {
+		message += " Waiting on a restart: " + strings.Join(result.NotReloaded, ", ") + "."
+	}
+	w.Header().Set("HX-Trigger", "config-saved")
+	_, _ = fmt.Fprintf(w, `<div class="flex items-start px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm"><svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg><span>%s</span></div>`, html.EscapeString(message))
 }
 
 // applyWriteError renders a failed configuration write into the editor's data.
@@ -339,6 +356,19 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 // Every editor goes through here so create, save and the global files all
 // report a refusal the same way.
 func applyWriteError(data *ConfigTenantEditData, err error, prefix string) {
+	var rejected *client.ConfigRejectedError
+	if errors.As(err, &rejected) {
+		data.Error = "Not saved: the configuration would not load."
+		data.Problems = problemData(rejected.Problems())
+		return
+	}
+	data.Error = fmt.Sprintf("%s: %v", prefix, err)
+}
+
+// applyGlobalWriteError is applyWriteError for the deployment-wide editor. The
+// two data structs are separate because their pages are, but a refusal has to
+// read the same way in both.
+func applyGlobalWriteError(data *ConfigGlobalEditData, err error, prefix string) {
 	var rejected *client.ConfigRejectedError
 	if errors.As(err, &rejected) {
 		data.Error = "Not saved: the configuration would not load."

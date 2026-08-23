@@ -24,6 +24,9 @@ type Templates struct {
 	configPage       *template.Template
 	configTenants    *template.Template
 	configTenantEdit *template.Template
+	configGlobals    *template.Template
+	configGlobalEdit *template.Template
+	reloadBanner     *template.Template
 }
 
 // TemplateData holds data for rendering templates
@@ -211,6 +214,21 @@ func NewTemplates() (*Templates, error) {
 		return nil, err
 	}
 
+	t.configGlobals, err = template.New("config_globals.html").ParseFS(templatesFS, "templates/config_globals.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.configGlobalEdit, err = template.New("config_global_edit.html").ParseFS(templatesFS, "templates/config_global_edit.html")
+	if err != nil {
+		return nil, err
+	}
+
+	t.reloadBanner, err = template.New("config_reload_banner.html").ParseFS(templatesFS, "templates/config_reload_banner.html")
+	if err != nil {
+		return nil, err
+	}
+
 	return t, nil
 }
 
@@ -319,6 +337,55 @@ type ConfigTenantEditData struct {
 // IsFlows reports whether the flow graph is being edited, for the template.
 func (d ConfigTenantEditData) IsFlows() bool { return d.File == "flows" }
 
+// GlobalFileData describes one deployment-wide file for the templates.
+type GlobalFileData struct {
+	Name        string
+	Path        string
+	Size        int64
+	Modified    string
+	Exists      bool
+	Configured  bool
+	Writable    bool
+	Activation  string
+	Title       string
+	Description string
+}
+
+// NeedsRestart reports whether saving this file requires a restart to take
+// effect, for the template.
+func (d GlobalFileData) NeedsRestart() bool { return d.Activation == "restart" }
+
+// ConfigGlobalsData holds the deployment-wide file list.
+type ConfigGlobalsData struct {
+	Server string
+	Files  []GlobalFileData
+	Error  string
+}
+
+// ConfigGlobalEditData holds the editor for one deployment-wide file.
+type ConfigGlobalEditData struct {
+	Server   string
+	Name     string
+	Content  string
+	File     GlobalFileData
+	Success  string
+	Error    string
+	Problems []ConfigProblemData
+	Warnings []ConfigProblemData
+}
+
+// ReloadBannerData says whether what is on disk is what is serving calls.
+type ReloadBannerData struct {
+	Server string
+	// LoadedAt is when the routing cache in force was built.
+	LoadedAt string
+	// StaleTenants a reload activates; StaleGlobals only a restart does. They
+	// are separate because offering a Reload button for the second kind would
+	// be a lie.
+	StaleTenants []string
+	StaleGlobals []string
+}
+
 // --- Configuration Render Methods ---
 
 // RenderConfig renders the config page
@@ -334,4 +401,19 @@ func (t *Templates) RenderConfigTenants(w io.Writer, data ConfigTenantsData) err
 // RenderConfigTenantEdit renders the tenant editor partial
 func (t *Templates) RenderConfigTenantEdit(w io.Writer, data ConfigTenantEditData) error {
 	return t.configTenantEdit.Execute(w, data)
+}
+
+// RenderConfigGlobals renders the deployment-wide file list.
+func (t *Templates) RenderConfigGlobals(w io.Writer, data ConfigGlobalsData) error {
+	return t.configGlobals.Execute(w, data)
+}
+
+// RenderConfigGlobalEdit renders the deployment-wide file editor.
+func (t *Templates) RenderConfigGlobalEdit(w io.Writer, data ConfigGlobalEditData) error {
+	return t.configGlobalEdit.Execute(w, data)
+}
+
+// RenderReloadBanner renders the configuration drift banner.
+func (t *Templates) RenderReloadBanner(w io.Writer, data ReloadBannerData) error {
+	return t.reloadBanner.Execute(w, data)
 }

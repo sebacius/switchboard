@@ -100,8 +100,17 @@
 
         <!-- Main Content Area -->
         <main class="flex-1 ml-56 p-6">
-            <!-- Reload Status -->
+            <!-- Reload Status: the result of pressing Reload -->
             <div id="reload-status" class="mb-4"></div>
+
+            <!-- Configuration drift: is what is on disk what is serving calls?
+                 Asked of the signaling server rather than remembered here, so a
+                 second operator, a UI restart or a signaling restart all get the
+                 same answer. -->
+            <div id="reload-banner"
+                 hx-get="/admin/config/partials/reload-banner?server={{.SelectedServer}}"
+                 hx-trigger="load, config-saved from:body, every 30s"
+                 hx-swap="innerHTML"></div>
 
             <!-- Tab Content -->
             <div id="config-content"

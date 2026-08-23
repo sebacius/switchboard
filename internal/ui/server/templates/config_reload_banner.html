@@ -1,0 +1,42 @@
+{{if .StaleGlobals}}
+<div class="mb-3 px-4 py-3 rounded-lg bg-amber-500/20 border border-amber-500/30 text-amber-200 text-sm">
+    <div class="flex items-start">
+        <svg class="w-5 h-5 mr-2 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"></path>
+        </svg>
+        <div>
+            <p class="font-medium">
+                {{range $i, $n := .StaleGlobals}}{{if $i}}, {{end}}<code class="font-mono">{{$n}}.json</code>{{end}}
+                changed since the server started.
+            </p>
+            <p class="mt-0.5 text-amber-300/80">
+                Restart the signaling server to activate it. Reload Config will not — these files are read once, at startup.
+            </p>
+        </div>
+    </div>
+</div>
+{{end}}
+{{if .StaleTenants}}
+<div class="mb-3 px-4 py-3 rounded-lg bg-amber-500/20 border border-amber-500/30 text-amber-200 text-sm">
+    <div class="flex items-center justify-between gap-4">
+        <div class="flex items-start">
+            <svg class="w-5 h-5 mr-2 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z"></path>
+            </svg>
+            <div>
+                <p class="font-medium">
+                    {{len .StaleTenants}} tenant file{{if ne (len .StaleTenants) 1}}s{{end}} changed since the configuration was loaded{{if .LoadedAt}} at {{.LoadedAt}}{{end}}:
+                    {{range $i, $n := .StaleTenants}}{{if $i}}, {{end}}<span class="font-mono">{{$n}}</span>{{end}}
+                </p>
+                <p class="mt-0.5 text-amber-300/80">Calls are still being routed by the previous configuration.</p>
+            </div>
+        </div>
+        <button hx-post="/admin/config/reload?server={{.Server}}"
+                hx-target="#reload-status"
+                hx-swap="innerHTML"
+                class="flex-shrink-0 inline-flex items-center px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 transition-colors text-white text-sm font-medium">
+            Reload now
+        </button>
+    </div>
+</div>
+{{end}}

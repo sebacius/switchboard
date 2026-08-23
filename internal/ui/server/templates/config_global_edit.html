@@ -1,0 +1,107 @@
+<div>
+    <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center">
+            <button hx-get="/admin/config/partials/globals?server={{.Server}}"
+                    hx-target="#config-content"
+                    hx-swap="innerHTML"
+                    class="mr-3 p-2 rounded-lg hover:bg-slate-700 transition-colors">
+                <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                </svg>
+            </button>
+            <div>
+                <h2 class="text-xl font-bold text-white">{{if .File.Title}}{{.File.Title}}{{else}}{{.Name}}{{end}}</h2>
+                <p class="text-sm text-slate-400 mt-0.5 font-mono">{{.File.Path}}</p>
+            </div>
+        </div>
+    </div>
+
+    {{if .File.NeedsRestart}}
+    <div class="mb-4 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm">
+        Saving writes the file. It only takes effect after the signaling server <strong>restarts</strong> —
+        Reload Config will not activate it, because this file is read once at startup.
+    </div>
+    {{end}}
+
+    {{if not .File.Writable}}
+    <div class="mb-4 px-4 py-3 rounded-lg bg-slate-700/50 border border-slate-600 text-slate-300 text-sm">
+        Read-only. This server was started without <code class="font-mono text-slate-400">--allow-global-config-writes</code>,
+        so the deployment-wide files can be inspected here but not changed.
+    </div>
+    {{end}}
+
+    {{if .Success}}
+    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm">
+        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+        </svg>
+        {{.Success}}
+    </div>
+    {{end}}
+
+    {{if .Error}}
+    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm">
+        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        {{.Error}}
+    </div>
+    {{end}}
+
+    {{if .Problems}}
+    <div class="mb-4 rounded-lg bg-red-500/10 border border-red-500/30 overflow-hidden">
+        <div class="px-4 py-2 bg-red-500/20 text-red-200 text-sm font-medium">
+            Nothing was saved. Fix these and try again:
+        </div>
+        <ul class="divide-y divide-red-500/20">
+            {{range .Problems}}
+            <li class="px-4 py-2.5">
+                <code class="text-xs text-red-300/80 font-mono">{{.Path}}</code>
+                <p class="text-sm text-red-200 mt-0.5">{{.Message}}</p>
+            </li>
+            {{end}}
+        </ul>
+    </div>
+    {{end}}
+
+    {{if .Warnings}}
+    <div class="mb-4 rounded-lg bg-amber-500/10 border border-amber-500/30 overflow-hidden">
+        <div class="px-4 py-2 bg-amber-500/20 text-amber-200 text-sm font-medium">
+            Saved, but worth a look:
+        </div>
+        <ul class="divide-y divide-amber-500/20">
+            {{range .Warnings}}
+            <li class="px-4 py-2.5">
+                <code class="text-xs text-amber-300/80 font-mono">{{.Path}}</code>
+                <p class="text-sm text-amber-200 mt-0.5">{{.Message}}</p>
+            </li>
+            {{end}}
+        </ul>
+    </div>
+    {{end}}
+
+    <form hx-post="/admin/config/globals/save?server={{.Server}}"
+          hx-target="#config-content"
+          hx-swap="innerHTML">
+        <input type="hidden" name="name" value="{{.Name}}">
+
+        <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+            <textarea name="content" rows="32" spellcheck="false"
+                      {{if not .File.Writable}}readonly{{end}}
+                      class="w-full bg-slate-900 px-4 py-3 text-sm text-slate-200 font-mono leading-relaxed focus:outline-none resize-y {{if not .File.Writable}}opacity-70{{end}}">{{.Content}}</textarea>
+        </div>
+
+        {{if .File.Writable}}
+        <div class="mt-4 flex items-center gap-3">
+            <button type="submit"
+                    class="inline-flex items-center px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 transition-colors text-white text-sm font-medium">
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path>
+                </svg>
+                Save
+            </button>
+            <span class="text-xs text-slate-500">Validated before anything is written; a file that would not load is refused.</span>
+        </div>
+        {{end}}
+    </form>
+</div>

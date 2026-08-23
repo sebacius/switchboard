@@ -31,7 +31,26 @@ func (s *Server) handleConfigFileList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	s.writeJSON(w, s.fileProvider.ListGlobalFiles())
+	// Writability is a property of THIS server, not of the file, so it is
+	// stamped on here rather than stored: the same policy.json is editable on a
+	// server started with the flag and read-only on one that was not.
+	files := s.fileProvider.ListGlobalFiles()
+	out := make([]map[string]any, 0, len(files))
+	for _, f := range files {
+		out = append(out, map[string]any{
+			"name":        string(f.Name),
+			"path":        f.Path,
+			"size":        f.Size,
+			"modified":    f.Modified,
+			"exists":      f.Exists,
+			"configured":  f.Configured,
+			"writable":    s.allowGlobalWrites && f.Configured,
+			"activation":  string(f.Activation),
+			"title":       f.Title,
+			"description": f.Description,
+		})
+	}
+	s.writeJSON(w, out)
 }
 
 // handleConfigFile handles GET/PUT /api/v1/config/files/{name}.
@@ -72,7 +91,8 @@ func (s *Server) handleConfigFile(w http.ResponseWriter, r *http.Request) {
 			"path":       info.Path,
 			"content":    content,
 			"exists":     info.Exists,
-			"writable":   s.allowGlobalWrites,
+			"title":      info.Title,
+			"writable":   s.allowGlobalWrites && info.Configured,
 			"activation": string(info.Activation),
 		})
 

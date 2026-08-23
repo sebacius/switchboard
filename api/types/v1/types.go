@@ -134,6 +134,48 @@ type ConfigSaved struct {
 	Warnings []ConfigProblem `json:"warnings,omitempty"`
 }
 
+// GlobalFile is one deployment-wide configuration file: policy.json,
+// routes.json or trunk_peers.json.
+type GlobalFile struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Modified string `json:"modified"`
+	Exists   bool   `json:"exists"`
+	// Configured reports whether the server was given a path for this file.
+	Configured bool `json:"configured"`
+	// Writable reports whether this server accepts writes to it at all.
+	Writable bool `json:"writable"`
+	// Activation is "reload" or "restart" — what it takes for a saved edit to
+	// actually take effect.
+	Activation  string `json:"activation"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Content     string `json:"content,omitempty"`
+}
+
+// ConfigStatus answers whether what is on disk is what is serving calls.
+type ConfigStatus struct {
+	LoadedAt  string `json:"loaded_at"`
+	StartedAt string `json:"started_at"`
+	// StaleTenants were written since the routing cache was built; a reload
+	// activates them.
+	StaleTenants []string `json:"stale_tenants"`
+	// StaleGlobals were written since the process started; only a restart
+	// activates them, which is why they are counted separately.
+	StaleGlobals []string `json:"stale_globals"`
+}
+
+// ReloadResult says what a reload actually activated. Half the files the config
+// API writes cannot be reloaded at all, so a bare "ok" would let an operator
+// believe a policy edit is live.
+type ReloadResult struct {
+	Status      string   `json:"status"`
+	Message     string   `json:"message"`
+	Reloaded    []string `json:"reloaded"`
+	NotReloaded []string `json:"not_reloaded"`
+}
+
 // CreateTenantRequest is the body for creating a new tenant file.
 type CreateTenantRequest struct {
 	Name    string `json:"name"`
