@@ -176,6 +176,99 @@ type ReloadResult struct {
 	NotReloaded []string `json:"not_reloaded"`
 }
 
+// --- Flow simulation ---
+
+// LoadedTenant is one tenant the signaling server is currently routing for.
+type LoadedTenant struct {
+	Name     string   `json:"name"`
+	Flows    []string `json:"flows"`
+	Operator string   `json:"operator"`
+}
+
+// LoadedTenants is the routing configuration in force, with the stamp saying
+// how current it is.
+type LoadedTenants struct {
+	Tenants  []LoadedTenant `json:"tenants"`
+	LoadedAt string         `json:"loaded_at"`
+}
+
+// SimulateRequest walks one fake call through a tenant's flow.
+type SimulateRequest struct {
+	Tenant    string   `json:"tenant"`
+	Dialed    string   `json:"dialed"`
+	Direction string   `json:"direction,omitempty"`
+	Caller    string   `json:"caller,omitempty"`
+	Digits    []string `json:"digits,omitempty"`
+}
+
+// FlowHop is one node the call passed through.
+type FlowHop struct {
+	Node       string `json:"node"`
+	Type       string `json:"type"`
+	Exit       string `json:"exit"`
+	DurationMs int64  `json:"duration_ms"`
+	Detail     string `json:"detail"`
+}
+
+// FlowDecision is one authorization verdict taken during the call.
+type FlowDecision struct {
+	Target  string `json:"target"`
+	Allowed bool   `json:"allowed"`
+	Reason  string `json:"reason"`
+}
+
+// FlowTrace is the traversal itself.
+type FlowTrace struct {
+	Flow      string         `json:"flow"`
+	Outcome   string         `json:"outcome"`
+	Path      string         `json:"path"`
+	Hops      []FlowHop      `json:"hops"`
+	Decisions []FlowDecision `json:"decisions"`
+	Started   string         `json:"started"`
+	Ended     string         `json:"ended"`
+}
+
+// FlowEvent is one thing that happened, in order.
+type FlowEvent struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+// CollectRecord is one digit collection the flow performed.
+type CollectRecord struct {
+	Prompt struct {
+		Text string `json:"text"`
+		File string `json:"file"`
+	} `json:"prompt"`
+	MaxDigits int `json:"max_digits"`
+}
+
+// SimulateResult is what the simulated call did.
+type SimulateResult struct {
+	Handled bool `json:"handled"`
+	// Routed is "flow", "direct" or "none". A direct dial produces no trace,
+	// which is a fact about the engine rather than an empty result.
+	Routed     string     `json:"routed"`
+	Tenant     string     `json:"tenant"`
+	Dialed     string     `json:"dialed"`
+	Direction  string     `json:"direction"`
+	CallID     string     `json:"call_id"`
+	Trace      *FlowTrace `json:"trace"`
+	DurationMs int64      `json:"duration_ms"`
+	Note       string     `json:"note"`
+
+	Spoken   []string        `json:"spoken"`
+	Played   []string        `json:"played"`
+	Targets  []string        `json:"dialed_targets"`
+	Relayed  []string        `json:"relayed"`
+	Hangups  []string        `json:"hangups"`
+	Collects []CollectRecord `json:"collects"`
+	Events   []FlowEvent     `json:"events"`
+	// Log is the engine's own reasoning: a denied destination or an unwired exit
+	// is explained here and nowhere else.
+	Log []string `json:"log"`
+}
+
 // CreateTenantRequest is the body for creating a new tenant file.
 type CreateTenantRequest struct {
 	Name    string `json:"name"`

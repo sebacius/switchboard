@@ -528,6 +528,41 @@ func (c *Client) ConfigStatus(ctx context.Context) (types.ConfigStatus, error) {
 	return status, nil
 }
 
+// --- Flow simulation ---
+
+// LoadedTenants lists the tenants the signaling server is routing for right
+// now. It is the honest source for the simulator's dropdown: a tenant saved but
+// not reloaded is not yet routing calls and should not appear as if it were.
+func (c *Client) LoadedTenants(ctx context.Context) (types.LoadedTenants, error) {
+	resp, err := c.get(ctx, "/api/v1/flow/tenants")
+	if err != nil {
+		return types.LoadedTenants{}, err
+	}
+	defer resp.Body.Close()
+
+	var loaded types.LoadedTenants
+	if err := json.NewDecoder(resp.Body).Decode(&loaded); err != nil {
+		return types.LoadedTenants{}, fmt.Errorf("decode loaded tenants: %w", err)
+	}
+	return loaded, nil
+}
+
+// SimulateFlow walks one fake call through the loaded configuration.
+func (c *Client) SimulateFlow(ctx context.Context, req types.SimulateRequest) (types.SimulateResult, error) {
+	body, _ := json.Marshal(req)
+	resp, err := c.postWithBody(ctx, "/api/v1/flow/simulate", bytes.NewReader(body))
+	if err != nil {
+		return types.SimulateResult{}, err
+	}
+	defer resp.Body.Close()
+
+	var result types.SimulateResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return types.SimulateResult{}, fmt.Errorf("decode simulation: %w", err)
+	}
+	return result, nil
+}
+
 // ReloadConfig triggers a configuration reload and reports what it covered.
 func (c *Client) ReloadConfig(ctx context.Context) (types.ReloadResult, error) {
 	resp, err := c.post(ctx, "/api/v1/config/reload")

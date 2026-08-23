@@ -6,6 +6,7 @@ import (
 	"html"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	types "github.com/sebas/switchboard/api/types/v1"
@@ -47,11 +48,14 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Query().Get("tab") {
 	case "globals":
 		activeTab = "globals"
+	case "flowtest":
+		activeTab = "flowtest"
 	}
 
 	data := ConfigPageData{
 		Title:          "Switchboard Configuration",
 		ActiveTab:      activeTab,
+		TabQuery:       tabQuery(r),
 		SelectedServer: c.Name(),
 		Backends:       make([]BackendInfo, 0, len(s.clients)),
 	}
@@ -67,6 +71,25 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 		slog.Error("[UI] Failed to render config page", "error", err)
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 	}
+}
+
+// tabQuery forwards the parameters a tab's partial understands.
+//
+// An allowlist rather than the raw query string: whatever this returns is
+// appended to a URL the page then fetches, so it may only contain keys we
+// recognize.
+func tabQuery(r *http.Request) string {
+	q := r.URL.Query()
+	out := url.Values{}
+	for _, key := range []string{"tenant", "dialed", "digits", "direction", "name", "file"} {
+		if v := q.Get(key); v != "" {
+			out.Set(key, v)
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	return "&" + out.Encode()
 }
 
 // fileParam reads which of a tenant's files is being edited, defaulting to the

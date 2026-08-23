@@ -114,7 +114,7 @@
 
             <!-- Tab Content -->
             <div id="config-content"
-                 hx-get="/admin/config/partials/{{.ActiveTab}}?server={{.SelectedServer}}"
+                 hx-get="/admin/config/partials/{{.ActiveTab}}?server={{.SelectedServer}}{{.TabQuery}}"
                  hx-trigger="load"
                  hx-swap="innerHTML">
                 <div class="flex items-center justify-center py-20">

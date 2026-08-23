@@ -4,6 +4,8 @@ import (
 	"embed"
 	"html/template"
 	"io"
+
+	types "github.com/sebas/switchboard/api/types/v1"
 )
 
 //go:embed templates/*.html
@@ -27,6 +29,8 @@ type Templates struct {
 	configGlobals    *template.Template
 	configGlobalEdit *template.Template
 	reloadBanner     *template.Template
+	flowTest         *template.Template
+	flowTestResult   *template.Template
 }
 
 // TemplateData holds data for rendering templates
@@ -229,6 +233,20 @@ func NewTemplates() (*Templates, error) {
 		return nil, err
 	}
 
+	t.flowTest, err = template.New("config_flowtest.html").ParseFS(templatesFS, "templates/config_flowtest.html")
+	if err != nil {
+		return nil, err
+	}
+
+	// add is for 1-based hop numbering, which is how printTrace numbers them in
+	// the CLI; the two outputs should read the same way.
+	t.flowTestResult, err = template.New("config_flowtest_result.html").
+		Funcs(template.FuncMap{"add": func(a, b int) int { return a + b }}).
+		ParseFS(templatesFS, "templates/config_flowtest_result.html")
+	if err != nil {
+		return nil, err
+	}
+
 	return t, nil
 }
 
@@ -291,6 +309,10 @@ type ConfigPageData struct {
 	ActiveTab      string
 	SelectedServer string
 	Backends       []BackendInfo
+	// TabQuery carries extra parameters through to the tab's partial, so a link
+	// like ?tab=flowtest&dialed=700&digits=2 arrives as a filled-in form rather
+	// than an empty one. Built from an allowlist, never from the raw query.
+	TabQuery string
 }
 
 // TenantFileData holds tenant file info for display
@@ -386,6 +408,35 @@ type ReloadBannerData struct {
 	StaleGlobals []string
 }
 
+// FlowTestData holds the simulator form.
+type FlowTestData struct {
+	Server    string
+	Tenants   []types.LoadedTenant
+	Tenant    string
+	Dialed    string
+	Digits    string
+	Direction string
+	// AutoRun runs the simulation as the panel loads, so a deep link comes back
+	// as a trace rather than as a form to fill in again.
+	AutoRun bool
+	Error   string
+}
+
+// FlowTestResultData holds one simulation's outcome.
+type FlowTestResultData struct {
+	Server  string
+	Request types.SimulateRequest
+	Result  types.SimulateResult
+	Error   string
+}
+
+// IsFlow, IsDirect and IsNone distinguish the three ways a call can be routed.
+// A direct dial produces no trace, and rendering that as an empty traversal
+// would read as "the flow did nothing" rather than "no flow was involved".
+func (d FlowTestResultData) IsFlow() bool   { return d.Result.Routed == "flow" }
+func (d FlowTestResultData) IsDirect() bool { return d.Result.Routed == "direct" }
+func (d FlowTestResultData) IsNone() bool   { return d.Result.Routed == "none" }
+
 // --- Configuration Render Methods ---
 
 // RenderConfig renders the config page
@@ -411,6 +462,16 @@ func (t *Templates) RenderConfigGlobals(w io.Writer, data ConfigGlobalsData) err
 // RenderConfigGlobalEdit renders the deployment-wide file editor.
 func (t *Templates) RenderConfigGlobalEdit(w io.Writer, data ConfigGlobalEditData) error {
 	return t.configGlobalEdit.Execute(w, data)
+}
+
+// RenderFlowTest renders the simulator form.
+func (t *Templates) RenderFlowTest(w io.Writer, data FlowTestData) error {
+	return t.flowTest.Execute(w, data)
+}
+
+// RenderFlowTestResult renders one simulation's outcome.
+func (t *Templates) RenderFlowTestResult(w io.Writer, data FlowTestResultData) error {
+	return t.flowTestResult.Execute(w, data)
 }
 
 // RenderReloadBanner renders the configuration drift banner.
