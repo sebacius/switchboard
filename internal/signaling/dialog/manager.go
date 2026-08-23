@@ -617,11 +617,11 @@ func (m *Manager) SendReINVITE(ctx context.Context, d *Dialog, localContact sip.
 	}
 }
 
-// SendRinging sends 180 Ringing (no SDP). It is the pre-answer signal the agent
-// supervisor relays to the caller while an outbound leg is being dialed, so the
-// caller's phone generates local ringback instead of silence. It does NOT
-// answer the call and does NOT create a sipgo dialog session — the 200 OK is
-// still deferred until the outbound leg answers (or the supervisor engages media).
+// SendRinging sends 180 Ringing (no SDP). It is the pre-answer signal relayed to
+// the caller while an outbound leg is being dialed, so the caller's phone
+// generates local ringback instead of silence. It does NOT answer the call and
+// does NOT create a sipgo dialog session — the 200 OK is still deferred until the
+// outbound leg answers, or until a node takes the media.
 func (m *Manager) SendRinging(d *Dialog) error {
 	ringing := sip.NewResponseFromRequest(d.InviteRequest, sip.StatusRinging, "Ringing", nil)
 	if err := d.Transaction.Respond(ringing); err != nil {

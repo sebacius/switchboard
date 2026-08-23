@@ -10,31 +10,30 @@ import (
 
 // The resolver is the deterministic answer to "does this call have exactly one
 // correct destination?". It runs after the router has produced direction and
-// tenant, and before the supervisor is started.
+// tenant, and is consulted by the flow engine.
 //
-// Why it exists: the archived llm-pbx-supervisor change routed every INVITE
-// through the model, and its own smoke testing measured a 57s first turn against
-// a 30s deadline — and an internal extension call answered with a greeting
-// instead of a dial. An 8B model was being asked to decide something with one
-// correct answer, inside the INVITE transaction, while holding a business
-// knowledge base as its prompt. Resolution removes that class of call from the
-// model's job entirely.
+// Why it exists is history worth keeping: the archived llm-pbx-supervisor change
+// routed every INVITE through a model, and its own smoke testing measured a 57s
+// first turn against a 30s deadline — and an internal extension call answered
+// with a greeting instead of a dial. Deterministic resolution took that class of
+// call away from the model, and outlived the model itself.
 //
 // What keeps this from becoming the dialplan again: the resolvable set is CLOSED
-// (four shapes, below), and the resolver only ever sees the DIALED TARGET, never
-// an utterance. Anything expressed in speech is the supervisor's job by
-// construction, because the resolver is not in that conversation.
+// (four shapes, below), and the resolver only ever sees the DIALED TARGET. It
+// decides nothing about a call it cannot answer in one hop; it declines, and the
+// flow engine decides.
 //
 // What keeps this from becoming a second trust path: a resolved destination is
-// adjudicated by the same Policy that adjudicates a model-issued dial. The
-// routing table is data, never authority.
+// adjudicated by the same Policy that adjudicates every other dial. The routing
+// table is data, never authority.
 
 // DestinationKind is the shape of a resolved destination.
 type DestinationKind int
 
 const (
-	// DestinationHandOff means resolution declined the call: the supervisor
-	// handles it. This is the zero value, so an unset Destination is a hand-off.
+	// DestinationHandOff means resolution declined the call: whoever asked
+	// decides what to do with it. This is the zero value, so an unset
+	// Destination is a hand-off.
 	DestinationHandOff DestinationKind = iota
 	// DestinationEndpoint is a single concrete dial target ("user/110").
 	DestinationEndpoint
@@ -60,7 +59,7 @@ func (k DestinationKind) String() string {
 
 // Destination is what resolution produced. A DestinationHandOff carries a Reason
 // explaining why nothing resolved, which is the log line that answers "why did
-// the AI pick this call up?".
+// this call not take the direct path?".
 type Destination struct {
 	Kind DestinationKind
 
@@ -85,7 +84,7 @@ func handOff(reason string) Destination {
 
 // ParkingLookup is the read-only slice of parking the resolver needs: whether a
 // slot currently holds a call. It is separate from ParkingService (which the
-// park/unpark tools use) so the resolver depends only on what it reads.
+// park and unpark paths use) so the resolver depends only on what it reads.
 type ParkingLookup interface {
 	Get(slotID string) (*parking.ParkSlot, bool)
 }
@@ -101,7 +100,7 @@ type Resolver struct {
 
 // NewResolver builds a Resolver. A nil routing source or directory disables
 // deterministic resolution entirely (everything hands off), which is the correct
-// degradation: the supervisor still works, calls are just slower.
+// degradation: the flow engine still routes, it just gets no shortcut.
 func NewResolver(routing dialplan.RoutingSource, dir Directory, park ParkingLookup, log *slog.Logger) *Resolver {
 	if log == nil {
 		log = slog.Default()
@@ -156,8 +155,9 @@ func (r *Resolver) Resolve(cc CallContext) (Destination, bool) {
 }
 
 // resolveRetrieval turns a *7XX dial into a retrieval of an OCCUPIED slot. An
-// empty slot deliberately does NOT resolve: the supervisor picking it up is what
-// lets the caller be told the slot is empty instead of hearing silence.
+// empty slot deliberately does NOT resolve: declining sends the call on through
+// the entry mapping and, failing that, to the tenant operator, which is a better
+// answer than bridging a caller into an empty slot.
 func (r *Resolver) resolveRetrieval(callee, prefix string) (Destination, bool) {
 	slot := normalizeSlotID(strings.TrimPrefix(callee, prefix))
 	if slot == "" {
@@ -198,8 +198,8 @@ func (r *Resolver) resolveDestination(table *dialplan.RoutingTable, dest string)
 
 	// A concrete endpoint only resolves when it is actually registered. An
 	// extension that exists on paper but has no phone online is exactly the case
-	// the supervisor should take, so it can offer voicemail or another person
-	// rather than forwarding into a dead end.
+	// to decline, so the caller's route is decided by the graph rather than by a
+	// forward into a dead end.
 	if !r.isRegistered(dest) {
 		return handOff("destination " + dest + " is not registered"), false
 	}
@@ -212,8 +212,8 @@ func (r *Resolver) resolveDestination(table *dialplan.RoutingTable, dest string)
 
 // isRegistered reports whether a "user/NNN" target has a live registration.
 // A non-directory target (an external number a tenant put in its table) is not
-// something the resolver claims: external reach is the supervisor's and the
-// policy's business, not a silent deterministic forward.
+// something the resolver claims: external reach is the policy layer's business,
+// not a silent deterministic forward.
 func (r *Resolver) isRegistered(target string) bool {
 	if r.dir == nil {
 		return false
@@ -238,9 +238,9 @@ func lookupDestination(table *dialplan.RoutingTable, dir Direction, callee strin
 }
 
 // LogDecision records what resolution decided for a call. It is deliberately one
-// line per call at info level: "why did the AI answer this?" is the first
-// question asked when a deterministic route does not happen, and it should be
-// answerable from the log without turning on debug.
+// line per call at info level: "why did this call not take the direct path?" is
+// the first question asked when a deterministic route does not happen, and it
+// should be answerable from the log without turning on debug.
 func (r *Resolver) LogDecision(cc CallContext, dest Destination, resolved bool) {
 	r.log.Info("call resolution",
 		"tenant", cc.Tenant,

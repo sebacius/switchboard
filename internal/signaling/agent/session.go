@@ -48,18 +48,18 @@ type CallSession interface {
 	// so the dial path does not send a second one.
 	MarkRinging()
 
-	// HasAnswered reports whether this leg has been answered by the supervisor.
-	// It is the branch the dial tool takes between forwarding and bridging, and
-	// the branch teardown takes between a 487 and a BYE.
+	// HasAnswered reports whether this leg has been answered. It is the branch
+	// the dial path takes between forwarding and bridging, and the branch
+	// teardown takes between a 487 and a BYE.
 	HasAnswered() bool
 
-	// B2BUA operations (for the dial tool)
+	// B2BUA operations (used by the dial nodes)
 
 	// Forward performs the PRE-ANSWER routing path: it relays 180 Ringing to the
 	// caller, dials the target, and only on the target answering does it send the
-	// 200 OK upstream and bridge. The supervisor never answers on its own behalf,
-	// so the caller hears real ringing and a failed target relays its own status
-	// code. Returns an error if the target could not be reached.
+	// 200 OK upstream and bridge. Switchboard never answers on its own behalf on
+	// this path, so the caller hears real ringing and a failed target relays its
+	// own status code. Returns an error if the target could not be reached.
 	Forward(ctx context.Context, target string, timeout time.Duration) error
 
 	// ForwardOutcome is Forward without the upstream relay: it reports what
@@ -78,8 +78,8 @@ type CallSession interface {
 	ForwardGroupOutcome(ctx context.Context, rounds [][]string, memberTimeout time.Duration) (GroupOutcome, error)
 
 	// Dial initiates an outbound call to the target and bridges media. It is the
-	// POST-ANSWER path: the supervisor already owns the media, so the B-leg is
-	// bridged to the existing RTP session rather than relayed.
+	// POST-ANSWER path: a node already took the media, so the B-leg is bridged
+	// to the existing RTP session rather than relayed.
 	// target can be "user/extension" or "sip:user@host:port"
 	// Returns error if dial fails (timeout, rejected, user not found)
 	Dial(ctx context.Context, target string, timeout time.Duration) error
@@ -132,11 +132,11 @@ type sessionImpl struct {
 
 	// sdpBody is the answer SDP produced when the media session was created. The
 	// INVITE handler holds it back instead of sending it in a 200 OK; Answer()
-	// sends it when (and only when) the supervisor decides to own the media.
+	// sends it when (and only when) a node takes ownership of the media.
 	sdpBody []byte
 
 	// answered records whether the 200 OK has gone out. It drives forward-vs-
-	// bridge in the dial tool and 487-vs-BYE in teardown.
+	// bridge in the dial path and 487-vs-BYE in teardown.
 	answered bool
 
 	// bLeg is the outbound leg created by Forward/Dial, retained so teardown can

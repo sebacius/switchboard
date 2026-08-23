@@ -7,8 +7,8 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/trunk"
 )
 
-// The router is the deterministic layer between the SIP INVITE and the runner.
-// It runs BEFORE any LLM call: it classifies the call's direction (a trust
+// The router is the deterministic layer between the SIP INVITE and everything
+// that decides where a call goes. It classifies the call's direction (a trust
 // gradient, design #8) and resolves the tenant (no default, design #9). It takes
 // plain inputs — never a sip.Request — so it is fully testable and so the SIP
 // wiring (group 7) can populate RouteInput from the INVITE without dragging

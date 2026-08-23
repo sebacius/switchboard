@@ -68,10 +68,11 @@ type TenantPolicy struct {
 	// default); set it explicitly to permit external dialing volume.
 	MaxExternalUnitsPerDay int
 
-	// AllowCallerProvidedNumber gates the separate, hard-gated tool that dials a
-	// caller-supplied number (bypassing symbolic narrowing). Default false. The
-	// normal dial tool can never express a raw external number; only this gated
-	// tool can, and it is still subject to the same COS.
+	// AllowCallerProvidedNumber gates AuthorizeCallerProvidedDial, the one entry
+	// point that adjudicates a raw caller-supplied number instead of a symbolic
+	// name. Default false, and nothing in the call path reaches it today: no
+	// flow node can express a raw number. It survives because the narrowing it
+	// enforces is what makes that guarantee checkable.
 	AllowCallerProvidedNumber bool
 }
 
@@ -143,8 +144,8 @@ func NewPolicyWithLedger(tenant string, cfg TenantPolicy, spend *SpendLedger, lo
 	}
 }
 
-// AuthorizeDial adjudicates a dial whose target is a SYMBOLIC name the caller
-// emitted through the normal dial tool. It resolves the symbol deterministically
+// AuthorizeDial adjudicates a dial whose target is a SYMBOLIC name — the only
+// kind a flow can express. It resolves the symbol deterministically
 // and runs the resolved target through the full COS. It returns the resolved
 // concrete target (empty on deny) and the Decision. Configuration can never express
 // a raw external number here — an unrecognized symbol that is not an internal
@@ -200,10 +201,10 @@ func (p *Policy) AuthorizeCallerProvidedDial(rawNumber string) (resolvedTarget s
 	return number, d
 }
 
-// resolveSymbol maps a model-emitted symbol to a concrete target. Internal
-// "user/..." targets pass through unchanged (they never reach a trunk). A name
-// in SymbolicTargets resolves to its configured target. Everything else fails
-// resolution so a raw external number can never enter through the normal tool.
+// resolveSymbol maps a symbolic name to a concrete target. Internal "user/..."
+// targets pass through unchanged (they never reach a trunk). A name in
+// SymbolicTargets resolves to its configured target. Everything else fails
+// resolution, so a raw external number can never enter by this route.
 func (p *Policy) resolveSymbol(symbol string) (string, bool) {
 	if strings.HasPrefix(symbol, "user/") {
 		return symbol, true

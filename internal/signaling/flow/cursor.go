@@ -4,10 +4,8 @@
 // has a position, buffered digits, per-node retry counts and a deadline, all of
 // which live for the duration of the call. That state is the Cursor.
 //
-// Budgets nest the way the deleted supervisor's contexts did — flow ⊃ node ⊃
-// playback — because the shape was right even though what it bounded was not: a
-// prompt can be cut without ending the node, and a node can end without ending
-// the flow.
+// Budgets nest — flow ⊃ node ⊃ playback — so that a prompt can be cut without
+// ending the node, and a node can end without ending the flow.
 package flow
 
 import (

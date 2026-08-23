@@ -57,15 +57,17 @@ type TenantConfig struct {
 	// external spend at all.
 	MaxExternalUnitsPerDay int `json:"max_external_units_per_day"`
 
-	// AllowCallerProvidedNumber gates the separate hard-gated tool that dials a
-	// raw caller-supplied number. Default false.
+	// AllowCallerProvidedNumber gates AuthorizeCallerProvidedDial, which
+	// adjudicates a raw caller-supplied number rather than a symbolic name.
+	// Default false, and nothing in the call path reaches it today.
 	AllowCallerProvidedNumber bool `json:"allow_caller_provided_number"`
 }
 
 // DefaultChannelLimitFallback is the per-tenant concurrency cap applied when
-// neither the tenant nor the file specifies one. It is deliberately modest: the
-// limit protects the first-turn LLM call from queueing past SIP Timer B, so a
-// too-high value degrades call setup for everyone rather than rejecting one call.
+// neither the tenant nor the file specifies one. It is deliberately modest: what
+// the limit bounds is physical — an RTP port, a media session and a handler
+// goroutine held for the life of each call — so a too-high value degrades every
+// call on the node rather than rejecting one.
 const DefaultChannelLimitFallback = 10
 
 // LoadPolicyConfig reads the COS/capacity file. A missing path or empty path

@@ -12,16 +12,17 @@ import (
 )
 
 // This file implements the answer model (design #7): the INVITE handler never
-// answers, and the supervisor's first-turn decision picks between two paths.
+// answers, and which path a call takes depends on what the flow reaches first.
 //
-//	dial before answer  → Forward: 180 upstream, dial the target, relay its
-//	                      200 (or its failure code); we never answer for it
-//	speak / play / listen → Answer: 200 OK with our SDP, we own the media
+//	dial before any media node → Forward: 180 upstream, dial the target, relay
+//	                             its 200 (or its failure code); we never answer
+//	                             for it
+//	a node that plays media    → Answer: 200 OK with our SDP, we own the media
 //
-// The invariant is "answering means the AI handles this leg's media itself".
+// The invariant is "answering means this leg's media is ours to drive".
 // A direct extension call is therefore a pure forward — the caller hears real
-// ringing from the endpoint, not an AI greeting, and if nobody picks up the
-// caller gets the endpoint's own 486/480 rather than a synthesized apology.
+// ringing from the endpoint, and if nobody picks up the caller gets the
+// endpoint's own 486/480 rather than anything we made up.
 
 // forwardRingTimeout bounds how long Forward waits for the target to answer
 // before giving up and relaying a failure. It is deliberately shorter than SIP
@@ -61,8 +62,8 @@ func (s *sessionImpl) HasAnswered() bool {
 	return s.answered
 }
 
-// Answer sends the 200 OK with the supervisor's SDP, taking media ownership.
-// It is idempotent — the runner calls it before every media operation, and the
+// Answer sends the 200 OK with the held-back SDP, taking media ownership.
+// It is idempotent — a media node calls it before playing anything, and the
 // forward path calls it once the outbound leg answers — so a second call is a
 // no-op. Answering a terminated call is an error, not a silent success: the
 // caller is gone and the media would have nowhere to go.
@@ -91,7 +92,7 @@ func (s *sessionImpl) Answer(_ context.Context) error {
 		return fmt.Errorf("answer: %w", err)
 	}
 
-	s.logger.Info("[Session] Answered (supervisor owns media)", "call_id", s.callID)
+	s.logger.Info("[Session] Answered (we own the media)", "call_id", s.callID)
 	return nil
 }
 
@@ -189,7 +190,7 @@ func (s *sessionImpl) completeForward(ctx context.Context, bLeg b2bua.Leg, targe
 	s.setBLeg(bLeg)
 
 	// The target answered: now — and only now — do we answer upstream. This is
-	// the "relay its 200" step; the supervisor still never answers on its own.
+	// the "relay its 200" step; we still never answer on our own behalf here.
 	if err := s.Answer(ctx); err != nil {
 		_ = bLeg.Hangup(context.Background(), b2bua.TerminationCauseError)
 		s.setBLeg(nil)
