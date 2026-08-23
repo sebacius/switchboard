@@ -62,9 +62,13 @@ type Server struct {
 	// it writable is an operator's decision, not a side effect of shipping an
 	// editor.
 	allowGlobalWrites bool
-	sessionsMu        sync.RWMutex
-	sessions          map[string]*SessionRecord
-	startTime         time.Time
+
+	flowSim FlowSimProvider
+	// simSlots bounds simultaneous simulations; see simConcurrency.
+	simSlots   chan struct{}
+	sessionsMu sync.RWMutex
+	sessions   map[string]*SessionRecord
+	startTime  time.Time
 }
 
 // SessionRecord tracks an active RTP session
@@ -120,6 +124,10 @@ func NewServer(addr string, registrations RegistrationProvider, dialogMgr dialog
 	mux.HandleFunc("/api/v1/config/files", s.handleConfigFileList)
 	mux.HandleFunc("/api/v1/config/files/", s.handleConfigFile)
 	mux.HandleFunc("/api/v1/config/status", s.handleConfigStatus)
+
+	// Flow simulation, against the LOADED configuration
+	mux.HandleFunc("/api/v1/flow/tenants", s.handleFlowTenants)
+	mux.HandleFunc("/api/v1/flow/simulate", s.handleFlowSimulate)
 
 	// Admin
 	mux.HandleFunc("/api/v1/shutdown", s.handleShutdown)

@@ -2,9 +2,10 @@
 // from stdin and printing the traversal.
 //
 // Authoring a graph otherwise means placing a call to find out what it does.
-// This is the fast loop: change the JSON, press keys, read the path. It uses
-// the real engine and the real validator, so what it shows is what a call would
-// do — only the media and the SIP legs are faked.
+// This is the fast loop: change the JSON, press keys, read the path. The walk
+// itself lives in internal/signaling/flow/flowsim, which is also what the
+// signaling server's /api/v1/flow/simulate endpoint calls — one harness, so the
+// CLI and the web UI cannot disagree about what a flow does.
 package main
 
 import (
@@ -12,15 +13,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
-	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/sebas/switchboard/internal/signaling/agent"
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/flow"
-	"github.com/sebas/switchboard/internal/signaling/flow/flowtest"
+	"github.com/sebas/switchboard/internal/signaling/flow/flowsim"
 )
 
 func main() {
@@ -30,6 +29,7 @@ func main() {
 	dialed := flag.String("dialed", "", "Digits to dial (required)")
 	digits := flag.String("digits", "", "Comma-separated digits to feed to menus, in order")
 	direction := flag.String("direction", "internal", "Call direction: internal, inbound or outbound")
+	verbose := flag.Bool("verbose", false, "Also print the engine's own log, which is where a denied destination is explained")
 	flag.Parse()
 
 	if *dialed == "" {
@@ -50,43 +50,43 @@ func main() {
 		os.Exit(1)
 	}
 
-	routing := dialplan.StaticRouting{*tenant: table}
-	engine := flow.New(flow.Config{
-		Routing:  routing,
-		Flows:    staticFlows{*tenant: set},
-		Resolver: agent.NewResolver(routing, everyoneRegistered{}, nil, quiet()),
-		BuildPolicy: func(cc agent.CallContext) *agent.Policy {
-			return agent.NewPolicy(cc.Tenant,
-				policyCfg.TenantPolicyFor(cc.Tenant, dialplan.SymbolicTargetsFor(routing, cc.Tenant)),
-				quiet())
-		},
-		Trace:  flow.TraceFunc(printTrace),
-		Logger: quiet(),
-	})
-
-	sess := flowtest.New()
-	for _, d := range scriptedDigits(*digits) {
-		sess.QueueDigits(d, agent.CollectMaxDigits)
-	}
-
-	cc := &agent.CallContext{
-		Caller:    "102",
-		Callee:    *dialed,
-		Direction: agent.Direction(*direction),
-		Tenant:    *tenant,
+	src := flowsim.Sources{
+		Routing: dialplan.StaticRouting{*tenant: table},
+		Flows:   dialplan.StaticFlows{*tenant: set},
+		Policy:  policyCfg,
 	}
 
 	fmt.Printf("dialing %q as %s for tenant %s\n\n", *dialed, *direction, *tenant)
-	handled := engine.Handle(context.Background(), sess, cc)
 
-	if !handled {
+	res, err := flowsim.Run(context.Background(), src, flowsim.Request{
+		Tenant:    *tenant,
+		Dialed:    *dialed,
+		Direction: *direction,
+		Digits:    scriptedDigits(*digits),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if res.Trace != nil {
+		printTrace(*res.Trace)
+	}
+
+	if !res.Handled {
 		fmt.Println("NOT ROUTED: nothing in the entry mapping matched.")
 		fmt.Println("The call would fall through to the tenant operator.")
+		if *verbose {
+			printLog(res.Log)
+		}
 		os.Exit(1)
 	}
 
 	fmt.Println()
-	report(sess)
+	report(res)
+	if *verbose {
+		printLog(res.Log)
+	}
 }
 
 // scriptedDigits parses the --digits list, also accepting them from stdin so a
@@ -126,40 +126,35 @@ func printTrace(t flow.Trace) {
 	fmt.Printf("\npath: %s\noutcome: %s\n", t.Path, t.Outcome)
 }
 
-func report(sess *flowtest.Session) {
-	if len(sess.Spoken) > 0 {
+func report(res *flowsim.Result) {
+	if len(res.Spoken) > 0 {
 		fmt.Println("\nspoken:")
-		for _, s := range sess.Spoken {
+		for _, s := range res.Spoken {
 			fmt.Printf("  %q\n", s)
 		}
 	}
-	if len(sess.Dialed) > 0 {
+	if len(res.Targets) > 0 {
 		fmt.Println("\ndialed:")
-		for _, d := range sess.Dialed {
+		for _, d := range res.Targets {
 			fmt.Printf("  %s\n", d)
 		}
 	}
-	if len(sess.Relayed) > 0 {
+	if len(res.Relayed) > 0 {
 		fmt.Println("\nrelayed to caller:")
-		for _, r := range sess.Relayed {
+		for _, r := range res.Relayed {
 			fmt.Printf("  %s\n", r)
 		}
 	}
 }
 
-type staticFlows map[string]*dialplan.FlowSet
-
-func (f staticFlows) TenantFlows(tenant string) (*dialplan.FlowSet, bool) {
-	set, ok := f[tenant]
-	return set, ok && set != nil
-}
-
-// everyoneRegistered treats every extension as reachable, since a smoke test is
-// about the graph rather than who happens to be at their desk.
-type everyoneRegistered struct{}
-
-func (everyoneRegistered) IsRegistered(user, domain string) bool { return true }
-
-func quiet() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+// printLog shows the engine's reasoning, which is the only place a denied
+// destination or an unwired exit is explained.
+func printLog(records []string) {
+	if len(records) == 0 {
+		return
+	}
+	fmt.Println("\nengine log:")
+	for _, r := range records {
+		fmt.Printf("  %s\n", r)
+	}
 }

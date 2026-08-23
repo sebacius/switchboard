@@ -18,6 +18,7 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/drain"
 	"github.com/sebas/switchboard/internal/signaling/filemanager"
 	"github.com/sebas/switchboard/internal/signaling/flow"
+	"github.com/sebas/switchboard/internal/signaling/flow/flowsim"
 	"github.com/sebas/switchboard/internal/signaling/location"
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 	"github.com/sebas/switchboard/internal/signaling/parking"
@@ -194,6 +195,18 @@ func NewServer(cfg *config.Config) (*SwitchBoard, error) {
 	})
 	apiServer.SetFileProvider(fileMgr)
 	apiServer.SetAllowGlobalConfigWrites(cfg.AllowGlobalConfigWrites)
+
+	// Flow simulation reads the loaded configuration and nothing else: no
+	// parking service, no spend ledger, no live engine. routingStore and
+	// policyCfg are shared READ-ONLY — nothing mutates policyCfg after
+	// LoadPolicyConfig, and the store's own lock covers its maps.
+	apiServer.SetFlowSimProvider(&flowSimProvider{
+		service: flowsim.NewService(flowsim.Sources{
+			Routing: routingStore,
+			Flows:   routingStore,
+			Policy:  policyCfg,
+		}, routingStore),
+	})
 
 	// Create resolver registry for dial targets
 	resolver := b2bua.NewTargetResolver()
@@ -456,4 +469,30 @@ func (p *SwitchBoard) Close() error {
 		return p.ua.Close()
 	}
 	return nil
+}
+
+// flowSimProvider adapts the simulator to the API's interface, keeping the api
+// package free of any knowledge of how a tenant summary is assembled.
+type flowSimProvider struct {
+	service *flowsim.Service
+}
+
+func (p *flowSimProvider) Simulate(ctx context.Context, req flowsim.Request) (*flowsim.Result, error) {
+	return p.service.Simulate(ctx, req)
+}
+
+func (p *flowSimProvider) LoadedTenants() api.LoadedTenants {
+	summaries, loadedAt := p.service.Loaded()
+	out := api.LoadedTenants{Tenants: make([]api.LoadedTenant, 0, len(summaries))}
+	if !loadedAt.IsZero() {
+		out.LoadedAt = loadedAt.Format(time.RFC3339)
+	}
+	for _, s := range summaries {
+		out.Tenants = append(out.Tenants, api.LoadedTenant{
+			Name:     s.Name,
+			Flows:    s.Flows,
+			Operator: s.Operator,
+		})
+	}
+	return out
 }

@@ -15,11 +15,35 @@ import (
 	"github.com/sebas/switchboard/internal/signaling/mediaclient"
 )
 
+// Event is one thing that happened to the call, in the order it happened.
+//
+// The parallel slices below each answer "what was spoken" or "what was dialed";
+// none of them answers "what did the caller experience", because the ordering
+// between them is lost. A UI showing a traversal needs that ordering, so it is
+// recorded alongside rather than instead — the existing readers are unchanged.
+type Event struct {
+	Kind  string `json:"kind"` // spoken|played|collect|dialed|relayed|hangup
+	Value string `json:"value"`
+}
+
+// Identity is the call a simulation pretends to be. Empty fields keep New's
+// defaults.
+type Identity struct {
+	CallID      string
+	CallerID    string
+	Destination string
+	Domain      string
+}
+
 // Session records what a flow did to a call and serves scripted caller input.
 type Session struct {
 	mu sync.Mutex
 
-	callID string
+	callID      string
+	callerID    string
+	destination string
+	domain      string
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -40,16 +64,47 @@ type Session struct {
 	// Collects records what each digit collection asked for.
 	Collects []agent.CollectRequest
 
+	// Events records everything above in one ordered list.
+	Events []Event
+
 	// scripted caller input and dial results, consumed in order.
 	collectScript []agent.CollectResult
 	dialScript    []agent.DialOutcome
 	groupScript   []agent.GroupOutcome
 }
 
-// New builds a session.
-func New() *Session {
+// New builds a session with the default identity.
+func New() *Session { return NewWith(Identity{}) }
+
+// NewWith builds a session with a chosen identity.
+//
+// A server-side simulation needs its own call ID: the flow engine tracks active
+// calls by it, and every simulation sharing one string would have them collide
+// in that map.
+func NewWith(id Identity) *Session {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Session{callID: "test-call", ctx: ctx, cancel: cancel}
+	s := &Session{
+		callID:      firstNonEmpty(id.CallID, "test-call"),
+		callerID:    firstNonEmpty(id.CallerID, "102"),
+		destination: firstNonEmpty(id.Destination, "100"),
+		domain:      firstNonEmpty(id.Domain, "example.test"),
+		ctx:         ctx,
+		cancel:      cancel,
+	}
+	return s
+}
+
+// firstNonEmpty returns the first non-empty string.
+func firstNonEmpty(v, fallback string) string {
+	if v != "" {
+		return v
+	}
+	return fallback
+}
+
+// record appends to the ordered event log. The caller holds the mutex.
+func (s *Session) record(kind, value string) {
+	s.Events = append(s.Events, Event{Kind: kind, Value: value})
 }
 
 // QueueDigits scripts the next collection.
@@ -84,9 +139,9 @@ func (s *Session) Abandon() { s.cancel() }
 // --- CallSession ---
 
 func (s *Session) CallID() string           { return s.callID }
-func (s *Session) Destination() string      { return "100" }
-func (s *Session) CallerID() string         { return "102" }
-func (s *Session) Domain() string           { return "example.test" }
+func (s *Session) Destination() string      { return s.destination }
+func (s *Session) CallerID() string         { return s.callerID }
+func (s *Session) Domain() string           { return s.domain }
 func (s *Session) Context() context.Context { return s.ctx }
 
 func (s *Session) PlayAudio(_ context.Context, file string) error {
@@ -94,6 +149,7 @@ func (s *Session) PlayAudio(_ context.Context, file string) error {
 	defer s.mu.Unlock()
 	s.answered = true
 	s.Played = append(s.Played, file)
+	s.record("played", file)
 	return nil
 }
 
@@ -102,6 +158,7 @@ func (s *Session) PlayTTS(_ context.Context, text, _ string) error {
 	defer s.mu.Unlock()
 	s.answered = true
 	s.Spoken = append(s.Spoken, text)
+	s.record("spoken", text)
 	return nil
 }
 
@@ -112,6 +169,7 @@ func (s *Session) CollectDigits(_ context.Context, req agent.CollectRequest) (ag
 	defer s.mu.Unlock()
 	s.answered = true
 	s.Collects = append(s.Collects, req)
+	s.record("collect", req.Prompt.Text)
 
 	if len(s.collectScript) == 0 {
 		// Nothing scripted: the caller pressed nothing.
@@ -141,6 +199,7 @@ func (s *Session) Forward(_ context.Context, target string, _ time.Duration) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Relayed = append(s.Relayed, out.ExitName())
+	s.record("relayed", out.ExitName())
 	return out.Error()
 }
 
@@ -148,6 +207,7 @@ func (s *Session) ForwardOutcome(_ context.Context, target string, _ time.Durati
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Dialed = append(s.Dialed, target)
+	s.record("dialed", target)
 
 	if len(s.dialScript) == 0 {
 		return agent.DialOutcome{Result: agent.DialAnswered, Target: target}, nil
@@ -171,6 +231,9 @@ func (s *Session) ForwardGroupOutcome(_ context.Context, rounds [][]string, _ ti
 	defer s.mu.Unlock()
 	for _, round := range rounds {
 		s.Dialed = append(s.Dialed, round...)
+		for _, member := range round {
+			s.record("dialed", member)
+		}
 	}
 
 	if len(s.groupScript) == 0 {
@@ -188,6 +251,7 @@ func (s *Session) Dial(_ context.Context, target string, _ time.Duration) error 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Dialed = append(s.Dialed, target)
+	s.record("dialed", target)
 
 	if len(s.dialScript) == 0 {
 		return nil
@@ -222,6 +286,7 @@ func (s *Session) Hangup(reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.Hangups = append(s.Hangups, reason)
+	s.record("hangup", reason)
 	s.terminated = true
 	return nil
 }
