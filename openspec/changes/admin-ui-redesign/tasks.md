@@ -55,12 +55,12 @@ that makes it verifiable.
 
 ## 6. Specificity in the dialplan
 
-- [ ] 6.1 Add `internal/signaling/dialplan/specificity.go` with `(*Pattern).Specificity() []int` returning the per-position cardinality vector.
-- [ ] 6.2 Add `RankPatterns(raws []string) ([]Rank, error)`, ordering by cardinality vector lexicographically ascending and tie-breaking on the raw string for stability.
-- [ ] 6.3 Add `Conflicts(raws []string) ([]Conflict, error)` reporting every pair that overlaps with neither dominating.
-- [ ] 6.4 Refactor `CompileDigitMap` to use `Conflicts` and return `*AmbiguousPatternsError` from the first result, so "ambiguous" has one definition.
-- [ ] 6.5 Comment why no scalar score is exported, citing the package's own argument that a weighted scalar collapses unlike patterns onto the same number.
-- [ ] 6.6 Add tests: ranking agrees with `Dominates` for every comparable pair; all conflicts are reported, not just the first; existing digitmap tests pass unmodified.
+- [x] 6.1 Add `internal/signaling/dialplan/specificity.go` with `(*Pattern).Specificity() []int` returning the per-position cardinality vector.
+- [x] 6.2 Add `RankPatterns(raws []string) ([]Rank, error)`, ordering by cardinality vector lexicographically ascending and tie-breaking on the raw string for stability.
+- [x] 6.3 Add `Conflicts(raws []string) ([]Conflict, error)` reporting every pair that overlaps with neither dominating.
+- [x] 6.4 Refactor `CompileDigitMap` to use `Conflicts` and return `*AmbiguousPatternsError` from the first result, so "ambiguous" has one definition.
+- [x] 6.5 Comment why no scalar score is exported, citing the package's own argument that a weighted scalar collapses unlike patterns onto the same number.
+- [x] 6.6 Add tests: ranking agrees with `Dominates` for every comparable pair; all conflicts are reported, not just the first; existing digitmap tests pass unmodified.
 
 ## 7. The routing document editor
 
