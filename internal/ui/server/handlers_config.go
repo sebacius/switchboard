@@ -57,6 +57,7 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := ConfigPageData{
+		Layout:         s.layoutFor(r, navForTab(activeTab), "Switchboard Configuration", "Configuration Editor"),
 		Title:          "Switchboard Configuration",
 		ActiveTab:      activeTab,
 		TabQuery:       tabQuery(r),

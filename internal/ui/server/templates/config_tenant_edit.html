@@ -40,55 +40,7 @@
     </div>
     {{end}}
 
-    {{if .Success}}
-    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm">
-        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-        </svg>
-        {{.Success}}
-    </div>
-    {{end}}
-
-    {{if .Error}}
-    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm">
-        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-        </svg>
-        {{.Error}}
-    </div>
-    {{end}}
-
-    {{if .Problems}}
-    <div class="mb-4 rounded-lg bg-red-500/10 border border-red-500/30 overflow-hidden">
-        <div class="px-4 py-2 bg-red-500/20 text-red-200 text-sm font-medium">
-            Nothing was saved. Fix these and try again:
-        </div>
-        <ul class="divide-y divide-red-500/20">
-            {{range .Problems}}
-            <li class="px-4 py-2.5">
-                <code class="text-xs text-red-300/80 font-mono">{{.Path}}</code>
-                <p class="text-sm text-red-200 mt-0.5">{{.Message}}</p>
-            </li>
-            {{end}}
-        </ul>
-    </div>
-    {{end}}
-
-    {{if .Warnings}}
-    <div class="mb-4 rounded-lg bg-amber-500/10 border border-amber-500/30 overflow-hidden">
-        <div class="px-4 py-2 bg-amber-500/20 text-amber-200 text-sm font-medium">
-            Saved, but worth a look:
-        </div>
-        <ul class="divide-y divide-amber-500/20">
-            {{range .Warnings}}
-            <li class="px-4 py-2.5">
-                <code class="text-xs text-amber-300/80 font-mono">{{.Path}}</code>
-                <p class="text-sm text-amber-200 mt-0.5">{{.Message}}</p>
-            </li>
-            {{end}}
-        </ul>
-    </div>
-    {{end}}
+    {{template "config-flash" .}}
 
     <form hx-post="{{if .IsNew}}/admin/config/tenants/create?server={{.Server}}{{else}}/admin/config/tenants/save?server={{.Server}}{{end}}"
           hx-target="#config-content"

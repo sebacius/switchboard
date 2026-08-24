@@ -24,15 +24,16 @@ that makes it verifiable.
 
 ## 3. One layout
 
-- [ ] 3.1 Add `internal/ui/server/templates/layout.html` with head, header, sidebar and `<main>`, calling `{{template "content" .}}` and offering `{{block "head_extra" .}}` and `{{block "scripts" .}}`.
-- [ ] 3.2 Add `LayoutData` (title, active nav item, server, backends, forwarded query) and attach it to view models as a **named field**, not embedded — `Server` already collides in several of them.
-- [ ] 3.3 Add `LayoutData.Link(path)`, which appends the selected backend and the allowlisted params, and make it the only way a template builds an internal URL.
-- [ ] 3.4 Replace the 19 standalone parses with per-page sets: `template.New("layout.html").ParseFS(fs, layout, page, partials...)`, plus `pages`/`partials` maps and `renderPage`/`renderPartial`.
-- [ ] 3.5 Wrap each shared partial file's body in a single `{{define "<name>"}}`, and switch its render wrapper to `ExecuteTemplate` — a body that is only a `define` renders empty under `Execute`.
-- [ ] 3.6 Delete the seven `{{define "…-content"}}` copies in `dashboard.html` and render the partial definitions instead. Confirm `gap-6 p-6 w-12` now appears once.
-- [ ] 3.7 Collapse the success / error / problems markup duplicated across four config templates into one shared definition.
-- [ ] 3.8 Convert `dashboard.html` and `config.html` to `{{define "content"}}` pages over the layout; move the drain modal script into the rtpmanagers page's `scripts` block, keeping `pauseRtpManagersPolling`, `resumeRtpManagersPolling`, the container id and the `htmx.process()` call verbatim.
-- [ ] 3.9 Add a test asserting the header and sidebar markup is identical between the dashboard and a config page.
+- [x] 3.1 Add `internal/ui/server/templates/layout.html` with head, header, sidebar and `<main>`, calling `{{template "content" .}}` and offering `{{block "head_extra" .}}` and `{{block "scripts" .}}`.
+- [x] 3.2 Add `LayoutData` (title, active nav item, server, backends, forwarded query) and attach it to view models as a **named field**, not embedded — `Server` already collides in several of them.
+- [x] 3.3 Add `LayoutData.Link(path)`, which appends the selected backend and the allowlisted params, and make it the only way a template builds an internal URL.
+- [x] 3.4 Replace the 19 standalone parses with per-page sets: `template.New("layout.html").ParseFS(fs, layout, page, partials...)`, plus `pages`/`partials` maps and `renderPage`/`renderPartial`.
+- [x] 3.5 Wrap each shared partial file's body in a single `{{define "<name>"}}`, and switch its render wrapper to `ExecuteTemplate` — a body that is only a `define` renders empty under `Execute`.
+- [x] 3.6 Delete the seven `{{define "…-content"}}` copies in `dashboard.html` and render the partial definitions instead. Confirm `gap-6 p-6 w-12` now appears once.
+- [x] 3.7 Collapse the success / error / problems markup duplicated across four config templates into one shared definition.
+- [x] 3.8 Convert `dashboard.html` and `config.html` to `{{define "content"}}` pages over the layout; move the drain modal script into the rtpmanagers page's `scripts` block, keeping `pauseRtpManagersPolling`, `resumeRtpManagersPolling`, the container id and the `htmx.process()` call verbatim.
+- [x] 3.9 Add a test asserting the header and sidebar markup is identical between the dashboard and a config page. **As built:** identical *modulo the active marker*, which is the one thing that legitimately varies by page — asserting them byte-equal would assert the opposite of what is wanted. Plus a test that every page marks exactly one entry, which caught a real bug: the config tab is named `globals` and the sidebar key `deployment`, so that page marked nothing active. Fixed with `navForTab`.
+- [x] 3.10 Keep the Flows sidebar entry for now. Flows belong to a tenant and the entry leaves in group 9, but dropping it before the tenant workspace exists would make the canvas unreachable by clicking.
 
 ## 4. Real routes
 

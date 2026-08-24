@@ -128,6 +128,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := s.buildTemplateData(r.Context())
+	data.Layout = s.layoutFor(r, "overview", "Switchboard Admin", "SIP IVR Dashboard")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderDashboard(w, data); err != nil {
 		slog.Error("[UI] Failed to render dashboard", "error", err)
