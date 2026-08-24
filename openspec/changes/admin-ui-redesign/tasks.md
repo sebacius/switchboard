@@ -14,13 +14,13 @@ that makes it verifiable.
 
 ## 2. Shared JSON document primitives
 
-- [ ] 2.1 Create `internal/ui/server/jsondoc.go` and move `span`, `edit`, `objectKeys`, `objectSpans`, `skipToValue`, `encodeKey`, `indentBefore`, `applyEdits`, `detectIndent`, `renderValue`, `compact` and `quote` out of `flowdoc.go` unchanged.
-- [ ] 2.2 Carry over the reasoning: comment the file with why a value that is never decoded is a value that cannot be reformatted, and why byte spans beat an ordered map.
-- [ ] 2.3 Add `removeKey`, handling all four separator cases in one place — not-first swallows the preceding comma, first-with-successor runs to the next key's indent, only-key leaves `{}`.
-- [ ] 2.4 Add `insertKey`, which **appends after the last key and never prepends**, with a comment explaining that a comment key precedes the key it describes, so prepending can separate them.
-- [ ] 2.5 Add a key-token guard used by rename: assert the bytes at a key's recorded start really are that key and return an error rather than splicing blindly.
-- [ ] 2.6 Add `jsondoc_test.go` covering the three new primitives, including insert into an empty object and delete of first/middle/last/only.
-- [ ] 2.7 Confirm `flowdoc_test.go` compiles and passes **with no modification** — that is this group's proof.
+- [x] 2.1 Create `internal/ui/server/jsondoc.go` and move `span`, `edit`, `objectKeys`, `objectSpans`, `skipToValue`, `encodeKey`, `indentBefore`, `applyEdits`, `detectIndent`, `renderValue`, `compact` and `quote` out of `flowdoc.go` unchanged.
+- [x] 2.2 Carry over the reasoning: comment the file with why a value that is never decoded is a value that cannot be reformatted, and why byte spans beat an ordered map.
+- [x] 2.3 Add `removeKey`, handling all four separator cases in one place — not-first swallows the preceding comma, first-with-successor runs to the next key's indent, only-key leaves `{}`. **Also added** `objectBraces`: both structural edits originally assumed the closing brace was a span's last byte, which is true for a span from `objectSpans` and false for a whole-document span carrying the file's trailing newline. Caught by the only-key test; pinned by `TestStructuralEditsFindTheBraceRatherThanAssumingTheLastByte`.
+- [x] 2.4 Add `insertKey`, which **appends after the last key and never prepends**, with a comment explaining that a comment key precedes the key it describes, so prepending can separate them.
+- [x] 2.5 Add a key-token guard used by rename: assert the bytes at a key's recorded start really are that key and return an error rather than splicing blindly. **As built:** shipped as `renameKey`, which carries the guard, rather than as a bare guard both editors would have to remember to call.
+- [x] 2.6 Add `jsondoc_test.go` covering the three new primitives, including insert into an empty object and delete of first/middle/last/only.
+- [x] 2.7 Confirm `flowdoc_test.go` compiles and passes **with no modification** — that is this group's proof.
 
 ## 3. One layout
 
