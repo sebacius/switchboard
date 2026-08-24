@@ -30,12 +30,16 @@ var livePages = map[string]struct {
 	nav      string
 	title    string
 	subtitle string
+	// needs is what this page actually renders. Naming it per page is what stops
+	// a monitor refresh from fetching the other six resources and discarding
+	// them, which is what every partial poll did before.
+	needs want
 }{
-	"registrations": {"live_registrations", "registrations", "Registrations", "SIP registrations"},
-	"dialogs":       {"live_dialogs", "dialogs", "Dialogs", "Active SIP dialogs"},
-	"sessions":      {"live_sessions", "sessions", "Sessions", "Active RTP sessions"},
-	"parked":        {"live_parked", "parked", "Parked Calls", "Calls on hold in parking slots"},
-	"rtpmanagers":   {"live_rtpmanagers", "rtpmanagers", "RTP Managers", "Media nodes and drain state"},
+	"registrations": {"live_registrations", "registrations", "Registrations", "SIP registrations", want{registrations: true}},
+	"dialogs":       {"live_dialogs", "dialogs", "Dialogs", "Active SIP dialogs", want{dialogs: true}},
+	"sessions":      {"live_sessions", "sessions", "Sessions", "Active RTP sessions", want{sessions: true}},
+	"parked":        {"live_parked", "parked", "Parked Calls", "Calls on hold in parking slots", want{parkedCalls: true}},
+	"rtpmanagers":   {"live_rtpmanagers", "rtpmanagers", "RTP Managers", "Media nodes and drain state", want{rtpManagers: true}},
 }
 
 // handleLivePage renders one of the read-only monitors as its own page.
@@ -54,7 +58,7 @@ func (s *Server) handleLivePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), spec.needs)
 	data.Layout = s.layoutFor(r, spec.nav, "Switchboard — "+spec.title, spec.subtitle)
 	s.renderPageOr500(w, spec.page, data)
 }

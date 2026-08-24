@@ -48,10 +48,10 @@ that makes it verifiable.
 
 ## 5. Fetch only what the page renders
 
-- [ ] 5.1 Split `fetchBackendData` into independent per-resource fetchers, with health always fetched because it gates the rest.
-- [ ] 5.2 Add a `want` struct to `buildTemplateData` so each page and partial requests only its own slice.
-- [ ] 5.3 Run the wanted fetchers concurrently within each backend; they are independent GETs and the current sequencing buys nothing.
-- [ ] 5.4 Add a call-counting test against a fake backend asserting the dialogs poll makes two calls per backend, not seven.
+- [x] 5.1 Split `fetchBackendData` into independent per-resource fetchers, with health always fetched because it gates the rest.
+- [x] 5.2 Add a `want` struct to `buildTemplateData` so each page and partial requests only its own slice.
+- [x] 5.3 Run the wanted fetchers concurrently within each backend; they are independent GETs and the current sequencing buys nothing.
+- [x] 5.4 Add a call-counting test against a fake backend asserting the dialogs poll makes two calls per backend, not seven.
 
 ## 6. Specificity in the dialplan
 
