@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	types "github.com/sebas/switchboard/api/types/v1"
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/ui/client"
 )
@@ -29,55 +31,66 @@ import (
 // instead, because the palette would otherwise offer a node type the server
 // does not know.
 
+// errNoBackend is the one failure that is the request's problem rather than the
+// page's. Everything a tenant's own configuration can get wrong belongs in the
+// view model's Error field, because saying so IS what the page is for.
+var errNoBackend = errors.New("No backend configured")
+
 // handleConfigFlowsPartial renders the editor for one tenant's flow.
 func (s *Server) handleConfigFlowsPartial(w http.ResponseWriter, r *http.Request) {
+	data, err := s.flowsVM(r.Context(), r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	s.renderFlows(w, data)
+}
+
+// flowsVM builds the flow editor's view model for a read.
+//
+// Separated from rendering so a test can assert on what the page was told
+// rather than on the markup that told it. Those are different properties: which
+// tenants are offered and which flow is selected is a decision this code makes,
+// while the id a canvas div carries is a choice the template makes, and a test
+// that conflates them fails when a class name changes.
+func (s *Server) flowsVM(ctx context.Context, r *http.Request) (ConfigFlowsData, error) {
 	c := s.findClient(r.URL.Query().Get("server"))
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
-		return
+		return ConfigFlowsData{}, errNoBackend
 	}
 
 	q := r.URL.Query()
 	data := ConfigFlowsData{Server: c.Name(), Tenant: q.Get("tenant"), Flow: q.Get("flow")}
 	data.Schema = schemaJSON()
 
-	tenants, err := c.ListTenants(r.Context())
+	tenants, err := c.ListTenants(ctx)
 	if err != nil {
 		data.Error = fmt.Sprintf("Failed to load tenants: %v", err)
-		s.renderFlows(w, data)
-		return
+		return data, nil
 	}
 
 	// Only tenants that HAVE flows. A tenant routing entirely by direct mapping
 	// has no graph to draw, and offering it would promise something the canvas
 	// cannot deliver.
-	for _, t := range tenants {
-		if t.HasFlows {
-			data.Tenants = append(data.Tenants, TenantFileData{
-				Name: t.Name, Size: t.Size, Modified: t.Modified, HasFlows: t.HasFlows,
-			})
-		}
-	}
+	data.Tenants = tenantsWithFlows(tenants)
 	if len(data.Tenants) == 0 {
-		s.renderFlows(w, data)
-		return
+		return data, nil
 	}
 	if data.Tenant == "" || !hasTenant(data.Tenants, data.Tenant) {
 		data.Tenant = data.Tenants[0].Name
 	}
 
-	content, err := c.GetTenantFile(r.Context(), data.Tenant, "flows")
+	content, err := c.GetTenantFile(ctx, data.Tenant, "flows")
 	if err != nil {
 		data.Error = fmt.Sprintf("Failed to load %s.flows.json: %v", data.Tenant, err)
-		s.renderFlows(w, data)
-		return
+		return data, nil
 	}
 	data.Content = content
 
 	if err := loadGraph(&data); err != nil {
 		data.Error = err.Error()
 	}
-	s.renderFlows(w, data)
+	return data, nil
 }
 
 // handleConfigFlowsSave splices the edited flow back into the tenant's file and
@@ -114,13 +127,7 @@ func (s *Server) handleConfigFlowsSave(w http.ResponseWriter, r *http.Request) {
 	// refusal — an operator whose save was rejected should not also lose the
 	// ability to switch flows.
 	if tenants, err := c.ListTenants(r.Context()); err == nil {
-		for _, t := range tenants {
-			if t.HasFlows {
-				data.Tenants = append(data.Tenants, TenantFileData{
-					Name: t.Name, Size: t.Size, Modified: t.Modified, HasFlows: t.HasFlows,
-				})
-			}
-		}
+		data.Tenants = tenantsWithFlows(tenants)
 	}
 
 	var graph flowGraph
@@ -159,7 +166,7 @@ func (s *Server) handleConfigFlowsSave(w http.ResponseWriter, r *http.Request) {
 	// The write landed: the saved document becomes the one a further edit
 	// splices into, so a second save does not splice into a stale file.
 	data.Content = spliced
-	data.Success = fmt.Sprintf("Saved %s.flows.json", data.Tenant)
+	data.Success = savedFileMsg(data.Tenant, "flows")
 	data.Warnings = problemData(warnings)
 	if err := loadGraph(&data); err != nil {
 		data.Error = err.Error()
@@ -214,6 +221,22 @@ func schemaJSON() template.JS {
 	return template.JS(out)
 }
 
+// tenantsWithFlows keeps only the tenants that have a graph to draw. Both the
+// read and the save path need the same list, and the save path needs it so the
+// pickers survive a refusal.
+func tenantsWithFlows(tenants []types.TenantFile) []TenantFileData {
+	var out []TenantFileData
+	for _, t := range tenants {
+		if !t.HasFlows {
+			continue
+		}
+		out = append(out, TenantFileData{
+			Name: t.Name, Size: t.Size, Modified: t.Modified, HasFlows: t.HasFlows,
+		})
+	}
+	return out
+}
+
 // hasTenant reports whether a name is in the list, so a stale bookmark falls
 // back to a tenant that exists rather than rendering an empty editor.
 func hasTenant(tenants []TenantFileData, name string) bool {
@@ -231,7 +254,7 @@ func hasTenant(tenants []TenantFileData, name string) bool {
 func applyFlowsWriteError(data *ConfigFlowsData, err error, prefix string) {
 	var rejected *client.ConfigRejectedError
 	if errors.As(err, &rejected) {
-		data.Error = "Not saved: the configuration would not load."
+		data.Error = msgNotSaved
 		data.Problems = problemData(rejected.Problems())
 		return
 	}

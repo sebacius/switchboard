@@ -385,7 +385,7 @@ func (s *Server) handleConfigReload(w http.ResponseWriter, r *http.Request) {
 func applyWriteError(data *ConfigTenantEditData, err error, prefix string) {
 	var rejected *client.ConfigRejectedError
 	if errors.As(err, &rejected) {
-		data.Error = "Not saved: the configuration would not load."
+		data.Error = msgNotSaved
 		data.Problems = problemData(rejected.Problems())
 		return
 	}
@@ -398,7 +398,7 @@ func applyWriteError(data *ConfigTenantEditData, err error, prefix string) {
 func applyGlobalWriteError(data *ConfigGlobalEditData, err error, prefix string) {
 	var rejected *client.ConfigRejectedError
 	if errors.As(err, &rejected) {
-		data.Error = "Not saved: the configuration would not load."
+		data.Error = msgNotSaved
 		data.Problems = problemData(rejected.Problems())
 		return
 	}
