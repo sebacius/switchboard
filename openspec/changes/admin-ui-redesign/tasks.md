@@ -37,13 +37,14 @@ that makes it verifiable.
 
 ## 4. Real routes
 
-- [ ] 4.1 Add page routes for `/admin/tenants`, `/admin/deployment`, `/admin/audio` and `/admin/live/{registrations,dialogs,sessions,parked,rtpmanagers}`, each rendering the layout around the same partial definition its poll returns.
-- [ ] 4.2 Keep every existing `/admin/partials/*` and `/admin/config/partials/*` handler, and build both the page and the fragment from one view-model function per view.
-- [ ] 4.3 Rebuild the sidebar as plain `<a href>` links through `Layout.Link`. Do not use `hx-boost`; cross-page navigation is a browser navigation.
-- [ ] 4.4 Redirect old `/admin/config?tab=…` URLs to their new equivalents rather than 404ing them — `tabQuery`'s existence is evidence people deep-link them.
-- [ ] 4.5 Collapse the three duplicated inline client-lookup loops (`server.go:473`, `:523`, `:582`) into `findClientStrict`, keeping their 404-on-unknown behaviour; leave `findClient`'s documented fallback for reads.
-- [ ] 4.6 Add a table-driven test asserting every route answers 200 on a hard GET, with and without `?server=`.
-- [ ] 4.7 Add a test that scans every rendered page for internal URLs and fails if any omits the backend parameter.
+- [x] 4.1 Add page routes for `/admin/tenants`, `/admin/deployment`, `/admin/audio` and `/admin/live/{registrations,dialogs,sessions,parked,rtpmanagers}`, each rendering the layout around the same partial definition its poll returns. **As built:** the five monitors also LEFT the dashboard in this commit rather than in group 10. Keeping them on both would have re-created the duplicated-markup problem group 3 just removed. The dashboard keeps Overview and Backends; group 10 adds the drift panel, tenants-at-a-glance and recent calls.
+- [x] 4.8 Fix the page parse sets to pull in each embedded partial's own includes. A page embedding `config_tenants` was missing `config-flash`, so the page failed at execute time while the fragment rendered fine — found by the route test.
+- [x] 4.2 Keep every existing `/admin/partials/*` and `/admin/config/partials/*` handler, and build both the page and the fragment from one view-model function per view.
+- [x] 4.3 Rebuild the sidebar as plain `<a href>` links through `Layout.Link`. Do not use `hx-boost`; cross-page navigation is a browser navigation.
+- [x] 4.4 Redirect old `/admin/config?tab=…` URLs to their new equivalents rather than 404ing them — `tabQuery`'s existence is evidence people deep-link them.
+- [x] 4.5 Collapse the three duplicated inline client-lookup loops (`server.go:473`, `:523`, `:582`) into `findClientStrict`, keeping their 404-on-unknown behaviour; leave `findClient`'s documented fallback for reads.
+- [x] 4.6 Add a table-driven test asserting every route answers 200 on a hard GET, with and without `?server=`.
+- [x] 4.7 Add a test that scans every rendered page for internal URLs and fails if any omits the backend parameter.
 
 ## 5. Fetch only what the page renders
 

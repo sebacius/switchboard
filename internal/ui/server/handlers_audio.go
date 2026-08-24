@@ -1,12 +1,27 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
 
 	types "github.com/sebas/switchboard/api/types/v1"
+	"github.com/sebas/switchboard/internal/ui/client"
 )
+
+// audioVM builds the audio inventory, for the page and the fragment.
+func (s *Server) audioVM(ctx context.Context, c *client.Client) ConfigAudioData {
+	data := ConfigAudioData{Server: c.Name()}
+	listing, err := c.ListAudio(ctx)
+	if err != nil {
+		data.Error = fmt.Sprintf("Failed to load audio inventory: %v", err)
+		return data
+	}
+	data.Listing = listing
+	data.Unavailable = listing.Source == "unavailable"
+	return data
+}
 
 // handleConfigAudioPartial renders the audio inventory: what the flows ask for,
 // and what the player actually has. Browse only — nothing here writes.
@@ -17,14 +32,7 @@ func (s *Server) handleConfigAudioPartial(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	data := ConfigAudioData{Server: c.Name()}
-	listing, err := c.ListAudio(r.Context())
-	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load audio inventory: %v", err)
-	} else {
-		data.Listing = listing
-		data.Unavailable = listing.Source == "unavailable"
-	}
+	data := s.audioVM(r.Context(), c)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderConfigAudio(w, data); err != nil {
@@ -34,6 +42,7 @@ func (s *Server) handleConfigAudioPartial(w http.ResponseWriter, r *http.Request
 
 // ConfigAudioData holds the audio inventory.
 type ConfigAudioData struct {
+	Layout  LayoutData
 	Server  string
 	Listing types.AudioListing
 	// Unavailable means the RTP manager could not be asked. Every reference is

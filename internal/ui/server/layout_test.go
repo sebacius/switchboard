@@ -64,17 +64,51 @@ func TestEveryPageMarksExactlyOneNavEntry(t *testing.T) {
 	ui := newTestServer(t, &fakeSignaling{flows: referenceFlows(t)})
 	for _, path := range []string{
 		"/",
-		"/admin/config",
-		"/admin/config?tab=tenants",
-		"/admin/config?tab=globals",
-		"/admin/config?tab=audio",
-		"/admin/config?tab=flowtest",
+		"/admin/tenants",
+		"/admin/deployment",
+		"/admin/audio",
+		"/admin/live/registrations",
+		"/admin/live/dialogs",
+		"/admin/live/sessions",
+		"/admin/live/parked",
+		"/admin/live/rtpmanagers",
 		"/admin/config?tab=flows",
+		"/admin/config?tab=flowtest",
 	} {
 		body := ui.get(t, path).Body.String()
 		if got := strings.Count(body, "nav-item active"); got != 1 {
 			t.Errorf("%s marks %d nav entries active, want 1", path, got)
 		}
+	}
+}
+
+// The tabs that became routes redirect rather than 404. tabQuery exists because
+// these URLs get deep-linked, so someone has them bookmarked.
+func TestOldTabURLsRedirectRatherThan404(t *testing.T) {
+	ui := newTestServer(t, &fakeSignaling{})
+	for tab, want := range map[string]string{
+		"tenants": "/admin/tenants",
+		"globals": "/admin/deployment",
+		"audio":   "/admin/audio",
+	} {
+		rec := ui.get(t, "/admin/config?tab="+tab)
+		if rec.Code != http.StatusFound {
+			t.Errorf("?tab=%s status = %d, want 302", tab, rec.Code)
+			continue
+		}
+		if got := rec.Header().Get("Location"); got != want {
+			t.Errorf("?tab=%s redirected to %q, want %q", tab, got, want)
+		}
+	}
+}
+
+// The selected backend must survive the redirect, or following a bookmark
+// silently switches which server you are editing.
+func TestARedirectKeepsTheSelectedBackend(t *testing.T) {
+	ui := newTestServer(t, &fakeSignaling{})
+	rec := ui.get(t, "/admin/config?tab=tenants&server=test")
+	if got := rec.Header().Get("Location"); !strings.Contains(got, "server=test") {
+		t.Errorf("Location = %q, which drops the selected backend", got)
 	}
 }
 
@@ -127,7 +161,8 @@ func TestEveryLivePartialStillRenders(t *testing.T) {
 // depends on names the extraction moved.
 func TestTheDrainPauseContractSurvives(t *testing.T) {
 	ui := newTestServer(t, &fakeSignaling{})
-	dash := ui.get(t, "/").Body.String()
+	// It lives with the table it freezes, which is now its own page.
+	dash := ui.get(t, "/admin/live/rtpmanagers").Body.String()
 	for _, want := range []string{
 		`id="rtpmanagers-container"`, `id="drain-modal-container"`,
 		"pauseRtpManagersPolling", "resumeRtpManagersPolling", "htmx.process",

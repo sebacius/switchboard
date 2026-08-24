@@ -112,30 +112,25 @@ const (
 )
 
 // sidebar is the navigation, in order. One list, used by every page.
-//
-// The Live group's targets are still fragments of the dashboard; they become
-// their own routes in the commit that splits the monitors onto pages. Naming
-// them here now is what makes that a change of Href rather than a change of
-// shape.
 func sidebar() []NavItem {
 	return []NavItem{
 		{Key: "overview", Label: "Overview", Href: "/", Accent: "emerald", Icon: []string{iconGrid}},
 
-		{Key: "tenants", Label: "Tenants", Href: "/admin/config?tab=tenants", Section: "Configuration", Accent: "blue", Icon: []string{iconTenants}},
-		{Key: "deployment", Label: "Deployment", Href: "/admin/config?tab=globals", Accent: "amber", Icon: []string{iconGearA, iconGearB}},
-		{Key: "audio", Label: "Audio", Href: "/admin/config?tab=audio", Accent: "purple", Icon: []string{iconSpeaker}},
-		{Key: "flowtest", Label: "Test a Call", Href: "/admin/config?tab=flowtest", Accent: "emerald", Icon: []string{iconBeaker}},
-		// Flows are not a deployment-wide concept and this entry is temporary:
-		// it belongs to a tenant, and moves into the tenant workspace. It stays
-		// here until that workspace exists, because dropping it now would make
-		// the canvas unreachable by clicking.
+		{Key: "tenants", Label: "Tenants", Href: "/admin/tenants", Section: "Configuration", Accent: "blue", Icon: []string{iconTenants}},
+		{Key: "deployment", Label: "Deployment", Href: "/admin/deployment", Accent: "amber", Icon: []string{iconGearA, iconGearB}},
+		{Key: "audio", Label: "Audio", Href: "/admin/audio", Accent: "purple", Icon: []string{iconSpeaker}},
+		// Flows and Test a Call belong to a TENANT, not to the deployment, and
+		// both leave this list when the tenant workspace exists. They stay for
+		// now because dropping them first would make the canvas and the
+		// simulator unreachable by clicking.
 		{Key: "flows", Label: "Flows", Href: "/admin/config?tab=flows", Accent: "purple", Icon: []string{iconFlow}},
+		{Key: "flowtest", Label: "Test a Call", Href: "/admin/config?tab=flowtest", Accent: "emerald", Icon: []string{iconBeaker}},
 
-		{Key: "registrations", Label: "Registrations", Href: "/#registrations", Section: "Live", Accent: "blue", Icon: []string{iconUsers}},
-		{Key: "dialogs", Label: "Dialogs", Href: "/#dialogs", Accent: "amber", Icon: []string{iconChat}},
-		{Key: "sessions", Label: "Sessions", Href: "/#sessions", Accent: "emerald", Icon: []string{iconVideo}},
-		{Key: "parked", Label: "Parked Calls", Href: "/#parkedcalls", Accent: "violet", Icon: []string{iconPark}},
-		{Key: "rtpmanagers", Label: "RTP Managers", Href: "/#rtpmanagers", Accent: "cyan", Icon: []string{iconStack}},
+		{Key: "registrations", Label: "Registrations", Href: "/admin/live/registrations", Section: "Live", Accent: "blue", Icon: []string{iconUsers}},
+		{Key: "dialogs", Label: "Dialogs", Href: "/admin/live/dialogs", Accent: "amber", Icon: []string{iconChat}},
+		{Key: "sessions", Label: "Sessions", Href: "/admin/live/sessions", Accent: "emerald", Icon: []string{iconVideo}},
+		{Key: "parked", Label: "Parked Calls", Href: "/admin/live/parked", Accent: "violet", Icon: []string{iconPark}},
+		{Key: "rtpmanagers", Label: "RTP Managers", Href: "/admin/live/rtpmanagers", Accent: "cyan", Icon: []string{iconStack}},
 	}
 }
 

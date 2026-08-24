@@ -65,6 +65,13 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Parked calls control endpoints
 	mux.HandleFunc("/admin/park/unpark", s.handleForceUnpark)
 
+	// Pages. Every sidebar entry is one of these: a real URL that renders a
+	// complete page on a hard GET and survives a refresh.
+	mux.HandleFunc("/admin/tenants", s.handleTenantsPage)
+	mux.HandleFunc("/admin/deployment", s.handleDeploymentPage)
+	mux.HandleFunc("/admin/audio", s.handleAudioPage)
+	mux.HandleFunc("/admin/live/{which}", s.handleLivePage)
+
 	// Configuration management
 	mux.HandleFunc("/admin/config", s.handleConfigPage)
 	mux.HandleFunc("/admin/config/partials/tenants", s.handleConfigTenantsPartial)
@@ -470,15 +477,7 @@ func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the client for the specified server
-	var targetClient *client.Client
-	for _, c := range s.clients {
-		if c.Name() == server {
-			targetClient = c
-			break
-		}
-	}
-
+	targetClient := s.findClientStrict(server)
 	if targetClient == nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return
@@ -520,15 +519,7 @@ func (s *Server) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the client for the specified server
-	var targetClient *client.Client
-	for _, c := range s.clients {
-		if c.Name() == server {
-			targetClient = c
-			break
-		}
-	}
-
+	targetClient := s.findClientStrict(server)
 	if targetClient == nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return
@@ -579,15 +570,7 @@ func (s *Server) handleForceUnpark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the client for the specified server
-	var targetClient *client.Client
-	for _, c := range s.clients {
-		if c.Name() == server {
-			targetClient = c
-			break
-		}
-	}
-
+	targetClient := s.findClientStrict(server)
 	if targetClient == nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return

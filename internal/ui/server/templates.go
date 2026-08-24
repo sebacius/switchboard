@@ -43,8 +43,21 @@ type pageSpec struct {
 }
 
 var pageSpecs = map[string]pageSpec{
-	"dashboard": {file: "dashboard.html", partials: livePartials},
-	"config":    {file: "config.html"},
+	"dashboard": {file: "dashboard.html", partials: []string{"stats", "backends"}},
+	// The config editor page, still serving the two tabs that have no route of
+	// their own yet: the flow canvas and the call simulator. Both belong to a
+	// tenant and move into the tenant workspace.
+	"config": {file: "config.html"},
+
+	"tenants":    {file: "page_tenants.html", partials: []string{"config_tenants"}},
+	"deployment": {file: "page_deployment.html", partials: []string{"config_globals"}},
+	"audio":      {file: "page_audio.html", partials: []string{"config_audio"}},
+
+	"live_registrations": {file: "live_registrations.html", partials: []string{"registrations"}},
+	"live_dialogs":       {file: "live_dialogs.html", partials: []string{"dialogs"}},
+	"live_sessions":      {file: "live_sessions.html", partials: []string{"sessions"}},
+	"live_parked":        {file: "live_parked.html", partials: []string{"parkedcalls"}},
+	"live_rtpmanagers":   {file: "live_rtpmanagers.html", partials: []string{"rtpmanagers"}},
 }
 
 // partialSpec is a fragment: its file, and any file carrying a shared
@@ -74,12 +87,12 @@ var partialSpecs = map[string]partialSpec{
 
 	// Config fragments, each swapped into #config-content.
 	"drain_modal":            {file: "drain_modal.html"},
-	"config_tenants":         {file: "config_tenants.html", includes: []string{sharedFlash}},
+	"config_tenants":         {file: "config_tenants.html", defineName: "config_tenants", includes: []string{sharedFlash}},
 	"config_tenant_edit":     {file: "config_tenant_edit.html", includes: []string{sharedFlash}},
-	"config_globals":         {file: "config_globals.html"},
+	"config_globals":         {file: "config_globals.html", defineName: "config_globals"},
 	"config_global_edit":     {file: "config_global_edit.html", includes: []string{sharedFlash}},
 	"config_reload_banner":   {file: "config_reload_banner.html"},
-	"config_audio":           {file: "config_audio.html"},
+	"config_audio":           {file: "config_audio.html", defineName: "config_audio"},
 	"config_flowtest":        {file: "config_flowtest.html"},
 	"config_flowtest_result": {file: "config_flowtest_result.html"},
 	"config_flows":           {file: "config_flows.html", includes: []string{sharedFlash}},
@@ -223,8 +236,19 @@ func NewTemplates() (*Templates, error) {
 
 	for name, spec := range pageSpecs {
 		files := []string{"templates/layout.html", "templates/" + spec.file}
+		// A page needs each embedded partial's own includes too, or a shared
+		// {{define}} the partial calls is missing from the page's set and the
+		// page fails at execute time while the fragment renders fine.
+		seen := map[string]bool{}
 		for _, p := range spec.partials {
-			files = append(files, "templates/"+partialSpecs[p].file)
+			ps := partialSpecs[p]
+			for _, f := range append([]string{ps.file}, ps.includes...) {
+				if seen[f] {
+					continue
+				}
+				seen[f] = true
+				files = append(files, "templates/"+f)
+			}
 		}
 		parsed, err := template.New("layout.html").Funcs(templateFuncs).ParseFS(templatesFS, files...)
 		if err != nil {
@@ -353,6 +377,7 @@ type TenantFileData struct {
 
 // ConfigTenantsData holds data for the tenant list
 type ConfigTenantsData struct {
+	Layout  LayoutData
 	Server  string
 	Tenants []TenantFileData
 	Success string
@@ -410,6 +435,7 @@ func (d GlobalFileData) NeedsRestart() bool { return d.Activation == "restart" }
 
 // ConfigGlobalsData holds the deployment-wide file list.
 type ConfigGlobalsData struct {
+	Layout LayoutData
 	Server string
 	Files  []GlobalFileData
 	Error  string

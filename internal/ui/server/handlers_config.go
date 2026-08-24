@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"html"
@@ -35,6 +36,21 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Three of these tabs are routes of their own now. Redirect rather than 404:
+	// tabQuery exists precisely because these URLs get deep-linked, so someone
+	// has them bookmarked, and answering 404 would punish them for having used
+	// the feature as designed.
+	if to, moved := tabRedirects[r.URL.Query().Get("tab")]; moved {
+		q := r.URL.Query()
+		q.Del("tab")
+		target := to
+		if rest := q.Encode(); rest != "" {
+			target += "?" + rest
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+		return
+	}
+
 	c := s.findClient(r.URL.Query().Get("server"))
 	if c == nil {
 		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
@@ -44,16 +60,12 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 	// The tab name becomes a partial's URL, so it comes from an allowlist rather
 	// than from the query string. An unknown name is a typo in a bookmark, not a
 	// reason to render a page that immediately 404s.
-	activeTab := "tenants"
-	switch r.URL.Query().Get("tab") {
-	case "globals":
-		activeTab = "globals"
-	case "audio":
-		activeTab = "audio"
-	case "flowtest":
+	// What is left are the two tabs that belong to a TENANT and so have no
+	// deployment-wide route: the flow canvas and the call simulator. Both move
+	// into the tenant workspace.
+	activeTab := "flows"
+	if r.URL.Query().Get("tab") == "flowtest" {
 		activeTab = "flowtest"
-	case "flows":
-		activeTab = "flows"
 	}
 
 	data := ConfigPageData{
@@ -76,6 +88,25 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 		slog.Error("[UI] Failed to render config page", "error", err)
 		http.Error(w, "Failed to render template", http.StatusInternalServerError)
 	}
+}
+
+// findClientStrict resolves a backend by name and does NOT fall back.
+//
+// The distinction from findClient is the request, not the lookup. A READ with an
+// unrecognized backend name is a stale bookmark, and rendering the default
+// backend's data is more useful than a 404. A WRITE — draining an RTP manager,
+// force-unparking a call — must never land on a backend the caller did not
+// name, because the operator would have no way to tell it went somewhere else.
+//
+// This existed three times as an inline loop before, once per action endpoint,
+// and a fourth copy was inevitable.
+func (s *Server) findClientStrict(name string) *client.Client {
+	for _, c := range s.clients {
+		if c.Name() == name {
+			return c
+		}
+	}
+	return nil
 }
 
 // tabQuery forwards the parameters a tab's partial understands.
@@ -106,6 +137,31 @@ func fileParam(r *http.Request) string {
 	return "routing"
 }
 
+// tenantsVM builds the tenant list, for the page and for the fragment.
+//
+// One builder, two entry points. The page renders it inside the layout; the
+// fragment renders it alone after an edit or a delete. Both must agree about
+// what the list contains, and the only way to guarantee that is for there to be
+// one place that decides.
+func (s *Server) tenantsVM(ctx context.Context, c *client.Client) ConfigTenantsData {
+	data := ConfigTenantsData{Server: c.Name()}
+	tenants, err := c.ListTenants(ctx)
+	if err != nil {
+		data.Error = fmt.Sprintf("Failed to load tenants: %v", err)
+		return data
+	}
+	data.Tenants = make([]TenantFileData, 0, len(tenants))
+	for _, t := range tenants {
+		data.Tenants = append(data.Tenants, TenantFileData{
+			Name:     t.Name,
+			Size:     t.Size,
+			Modified: t.Modified,
+			HasFlows: t.HasFlows,
+		})
+	}
+	return data
+}
+
 // handleConfigTenantsPartial renders the tenant list partial
 func (s *Server) handleConfigTenantsPartial(w http.ResponseWriter, r *http.Request) {
 	c := s.findClient(r.URL.Query().Get("server"))
@@ -114,21 +170,7 @@ func (s *Server) handleConfigTenantsPartial(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	tenants, err := c.ListTenants(r.Context())
-	data := ConfigTenantsData{Server: c.Name()}
-	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load tenants: %v", err)
-	} else {
-		data.Tenants = make([]TenantFileData, 0, len(tenants))
-		for _, t := range tenants {
-			data.Tenants = append(data.Tenants, TenantFileData{
-				Name:     t.Name,
-				Size:     t.Size,
-				Modified: t.Modified,
-				HasFlows: t.HasFlows,
-			})
-		}
-	}
+	data := s.tenantsVM(r.Context(), c)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderConfigTenants(w, data); err != nil {
