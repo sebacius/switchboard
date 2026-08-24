@@ -64,16 +64,17 @@ that makes it verifiable.
 
 ## 7. The routing document editor
 
-- [ ] 7.1 Add `internal/ui/server/routingdoc.go` with `parseRoutingDoc` over the shared primitives, and a header comment explaining that `RoutingTable` has no field for `_comment*` and decodes without `DisallowUnknownFields`, so a struct round-trip deletes the prose silently.
-- [ ] 7.2 Add readers returning each section in document order — operator, retrieval prefix, extensions, DIDs, groups, symbolic targets — so tables are stable across saves.
-- [ ] 7.3 Add scalar writers for `operator` and `retrieval_prefix`, inserting at the root tail when absent and deleting the key when set empty.
-- [ ] 7.4 Add entry writers for `extensions` and `dids` that re-emit the bare string when there is no transform and the object form otherwise, mirroring `Entry.MarshalJSON`.
-- [ ] 7.5 Add group and symbolic-target writers, plus rename and delete for each section, rename rewriting the key token span alone.
-- [ ] 7.6 Add `ensureSection`, appending a missing section at the root tail; make every mutator `parse → single edit → applyEdits → return`, re-parsing rather than chaining offsets.
-- [ ] 7.7 Add `SectionRaw` and `SpliceSection` as the single implementation behind the per-section raw JSON escape hatch.
-- [ ] 7.8 Add `routingdoc_test.go` against the real `resources/tenants/devtenant.routing.json`: `_comment`, `_comment_extensions` and `_comment_dids` byte-identical after every mutator; key order preserved after a middle edit; a groups edit's line diff entirely inside the groups span; four-space fixture stays four-space.
-- [ ] 7.9 Add the bare-vs-object round-trip test: a written entry must parse to a `dialplan.Entry` whose re-marshalling is byte-identical to the input's.
-- [ ] 7.10 Assert each mutator's output loads through `dialplan.ValidateTable` and `CheckFlows`, and confirm `make validate` still passes.
+- [x] 7.1 Add `internal/ui/server/routingdoc.go` with `parseRoutingDoc` over the shared primitives, and a header comment explaining that `RoutingTable` has no field for `_comment*` and decodes without `DisallowUnknownFields`, so a struct round-trip deletes the prose silently.
+- [x] 7.2 Add readers returning each section in document order — operator, retrieval prefix, extensions, DIDs, groups, symbolic targets — so tables are stable across saves.
+- [x] 7.3 Add scalar writers for `operator` and `retrieval_prefix`, inserting at the root tail when absent and deleting the key when set empty.
+- [x] 7.4 Add entry writers for `extensions` and `dids` that re-emit the bare string when there is no transform and the object form otherwise, mirroring `Entry.MarshalJSON`.
+- [x] 7.5 Add group and symbolic-target writers, plus rename and delete for each section, rename rewriting the key token span alone. **As built:** one generic `setKey`/`RenameKey`/`DeleteKey` over any map section, with thin typed wrappers that only decide how a value renders. Ten near-identical methods would have been ten chances to get separators wrong.
+- [x] 7.11 Add `ReferencesToFlow`, which names every place the routing table points at a flow. Needed by group 9's delete guard, and it belongs here where the document is already parsed.
+- [x] 7.6 Add `ensureSection`, appending a missing section at the root tail; make every mutator `parse → single edit → applyEdits → return`, re-parsing rather than chaining offsets.
+- [x] 7.7 Add `SectionRaw` and `SpliceSection` as the single implementation behind the per-section raw JSON escape hatch.
+- [x] 7.8 Add `routingdoc_test.go` against the real `resources/tenants/devtenant.routing.json`: `_comment`, `_comment_extensions` and `_comment_dids` byte-identical after every mutator; key order preserved after a middle edit; a groups edit's line diff entirely inside the groups span; four-space fixture stays four-space.
+- [x] 7.9 Add the bare-vs-object round-trip test: a written entry must parse to a `dialplan.Entry` whose re-marshalling is byte-identical to the input's.
+- [x] 7.10 Assert each mutator's output loads through `dialplan.ValidateTable` and `CheckFlows`, and confirm `make validate` still passes.
 
 ## 8. The routing tab
 
