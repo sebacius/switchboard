@@ -72,6 +72,12 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	mux.HandleFunc("/admin/audio", s.handleAudioPage)
 	mux.HandleFunc("/admin/live/{which}", s.handleLivePage)
 
+	// The tenant workspace. A tenant's routing table and its flows load and
+	// validate as ONE unit, so they live behind one URL.
+	mux.HandleFunc("/admin/tenants/{tenant}", s.handleTenantWorkspace)
+	mux.HandleFunc("/admin/tenants/{tenant}/routing/section", s.handleRoutingSectionSave)
+	mux.HandleFunc("/admin/tenants/{tenant}/routing/check", s.handleRoutingCheck)
+
 	// Configuration management
 	mux.HandleFunc("/admin/config", s.handleConfigPage)
 	mux.HandleFunc("/admin/config/partials/tenants", s.handleConfigTenantsPartial)

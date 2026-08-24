@@ -145,7 +145,10 @@ func fileParam(r *http.Request) string {
 // one place that decides.
 func (s *Server) tenantsVM(ctx context.Context, c *client.Client) ConfigTenantsData {
 	data := ConfigTenantsData{Server: c.Name()}
-	tenants, err := c.ListTenants(ctx)
+	// The DETAILED listing: the columns need the counts and the search needs the
+	// terms, and asking for both in one request is the whole reason that
+	// endpoint exists. A tenant list is not polled, so its cost is fine here.
+	tenants, err := c.ListTenantsDetailed(ctx)
 	if err != nil {
 		data.Error = fmt.Sprintf("Failed to load tenants: %v", err)
 		return data
@@ -153,13 +156,32 @@ func (s *Server) tenantsVM(ctx context.Context, c *client.Client) ConfigTenantsD
 	data.Tenants = make([]TenantFileData, 0, len(tenants))
 	for _, t := range tenants {
 		data.Tenants = append(data.Tenants, TenantFileData{
-			Name:     t.Name,
-			Size:     t.Size,
-			Modified: t.Modified,
-			HasFlows: t.HasFlows,
+			Name:            t.Name,
+			Size:            t.Size,
+			Modified:        t.Modified,
+			HasFlows:        t.HasFlows,
+			ExtensionsCount: t.ExtensionsCount,
+			DIDsCount:       t.DIDsCount,
+			GroupsCount:     t.GroupsCount,
+			FlowNames:       t.FlowNames,
+			HasWarnings:     t.HasWarnings,
+			Haystack:        haystackFor(t),
 		})
 	}
 	return data
+}
+
+// haystackFor flattens a tenant into the text its row is searched by.
+//
+// Built here rather than in the browser so the row carries one lowercase string
+// to match against. The terms themselves were chosen by the signaling server,
+// which is the only thing that knows a DID is worth searching by and a member
+// timeout is not.
+func haystackFor(t types.TenantFile) string {
+	parts := make([]string, 0, len(t.SearchTerms)+1)
+	parts = append(parts, t.Name)
+	parts = append(parts, t.SearchTerms...)
+	return strings.ToLower(strings.Join(parts, " "))
 }
 
 // handleConfigTenantsPartial renders the tenant list partial

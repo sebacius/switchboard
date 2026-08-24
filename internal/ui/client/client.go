@@ -372,6 +372,29 @@ func (c *Client) postWithBody(ctx context.Context, path string, body io.Reader) 
 
 // --- Configuration Management ---
 
+// ListTenantsDetailed returns every tenant with what it CONTAINS: how many
+// extensions, DIDs and ring groups it defines, its flow names, and whether its
+// configuration currently produces findings.
+//
+// Separate from ListTenants because it costs a parse and a validation per tenant
+// on the signaling server. Worth that for the tenant list, where it means the
+// page — and its search across extension numbers, DIDs and flow names — renders
+// from ONE request instead of a fetch per tenant. Not worth it anywhere that
+// polls.
+func (c *Client) ListTenantsDetailed(ctx context.Context) ([]types.TenantFile, error) {
+	resp, err := c.get(ctx, "/api/v1/config/tenants?detail=1")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var tenants []types.TenantFile
+	if err := json.NewDecoder(resp.Body).Decode(&tenants); err != nil {
+		return nil, fmt.Errorf("decode tenants: %w", err)
+	}
+	return tenants, nil
+}
+
 func (c *Client) ListTenants(ctx context.Context) ([]types.TenantFile, error) {
 	resp, err := c.get(ctx, "/api/v1/config/tenants")
 	if err != nil {

@@ -1,0 +1,317 @@
+{{define "content"}}
+{{template "tenant-header" .}}
+{{template "config-flash" .}}
+
+{{if .Error}}{{else}}
+
+{{/* Ambiguous patterns are a LOAD error, not a style note: two patterns that can
+     match the same input with neither more specific leave the winner undefined,
+     and the server refuses the file. Shown at the top because it blocks the save. */}}
+{{if .Conflicts}}
+<div class="mb-6 rounded-lg bg-red-500/10 border border-red-500/30 overflow-hidden">
+    <div class="px-4 py-2 bg-red-500/20 text-red-200 text-sm font-medium">
+        These patterns can match the same digits with neither more specific, so which one wins is undefined:
+    </div>
+    <ul class="divide-y divide-red-500/20">
+        {{range .Conflicts}}
+        <li class="px-4 py-2.5 text-sm text-red-200">
+            <code class="font-mono text-red-300">{{.A}}</code>
+            <span class="text-red-400/70 mx-2">and</span>
+            <code class="font-mono text-red-300">{{.B}}</code>
+            <span class="text-red-400/70">— make one of them narrower</span>
+        </li>
+        {{end}}
+    </ul>
+</div>
+{{end}}
+
+<!-- Operator and retrieval prefix -->
+<section class="mb-8 bg-slate-800 rounded-xl border border-slate-700 p-5">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Operator</label>
+            <p class="font-mono text-sm text-slate-200">{{if .Operator}}{{.Operator}}{{else}}<span class="text-slate-600">none — an unmatched call stays alive rather than transferring</span>{{end}}</p>
+        </div>
+        <div>
+            <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Retrieval prefix</label>
+            <p class="font-mono text-sm text-slate-200">{{if .RetrievalPrefix}}{{.RetrievalPrefix}}{{else}}<span class="text-slate-600">default</span>{{end}}</p>
+        </div>
+    </div>
+</section>
+
+<!-- Extensions: the entry mapping, in the order the router tries it -->
+<section class="mb-8 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+    <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+        <div>
+            <h3 class="text-sm font-semibold text-white">Extensions</h3>
+            <p class="text-xs text-slate-500">In match order. Specificity is computed from how narrow each position is — it is never declared in the file.</p>
+        </div>
+        <button type="button" data-json-toggle="extensions"
+                class="text-xs px-2.5 py-1 rounded border border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors">Edit as JSON</button>
+    </div>
+    {{if .Extensions}}
+    <table class="w-full">
+        <thead class="bg-slate-700/30">
+            <tr>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-16">#</th>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Pattern</th>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Destination</th>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Specificity</th>
+                <th class="px-5 py-2 w-24"></th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-700">
+            {{range .Extensions}}
+            <tr class="{{if .Conflicting}}bg-red-500/10{{end}}">
+                <td class="px-5 py-2.5 text-sm font-mono text-slate-500">{{if .Rank}}{{.Rank}}{{else}}<span class="text-red-400" title="this pattern does not compile">!</span>{{end}}</td>
+                <td class="px-5 py-2.5 text-sm font-mono {{if .Conflicting}}text-red-300{{else}}text-slate-200{{end}}">{{.Key}}</td>
+                <td class="px-5 py-2.5 text-sm font-mono text-slate-300">
+                    {{.Destination}}
+                    {{if .Transform}}<span class="ml-2 text-xs text-slate-500">({{.Transform}})</span>{{end}}
+                    {{if .Unresolved}}<span class="ml-2 text-xs text-amber-400" title="{{.Unresolved}}">⚠ {{.Unresolved}}</span>{{end}}
+                </td>
+                <td class="px-5 py-2.5 text-xs font-mono text-slate-500" title="accepted digits at each position; smaller is more specific">{{.Specificity}}</td>
+                <td class="px-5 py-2.5 text-right">
+                    <a href="{{$.Layout.Link (printf "/admin/tenants/%s/test?dialed=%s" $.Tenant .Key)}}"
+                       class="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:text-emerald-300 hover:border-emerald-500/50 transition-colors">Try it</a>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="px-5 py-6 text-sm text-slate-500">This tenant maps no extensions.</p>
+    {{end}}
+    {{template "json-editor" dict "Section" "extensions" "Raw" (index .Raw "extensions") "Tenant" .Tenant "Layout" .Layout}}
+</section>
+
+<!-- DIDs: what happens to a call, and whether one ever arrives -->
+<section class="mb-8 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+    <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+        <div>
+            <h3 class="text-sm font-semibold text-white">DIDs</h3>
+            <p class="text-xs text-slate-500">What happens to a call on this number. Whose number it is was decided earlier, in routes.json.</p>
+        </div>
+        <button type="button" data-json-toggle="dids"
+                class="text-xs px-2.5 py-1 rounded border border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors">Edit as JSON</button>
+    </div>
+    {{if .DIDs}}
+    <table class="w-full">
+        <thead class="bg-slate-700/30">
+            <tr>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Number</th>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Destination</th>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Routed here?</th>
+                <th class="px-5 py-2 w-24"></th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-700">
+            {{range .DIDs}}
+            <tr>
+                <td class="px-5 py-2.5 text-sm font-mono text-slate-200">{{.Key}}</td>
+                <td class="px-5 py-2.5 text-sm font-mono text-slate-300">
+                    {{.Destination}}
+                    {{if .Unresolved}}<span class="ml-2 text-xs text-amber-400">⚠ {{.Unresolved}}</span>{{end}}
+                </td>
+                <td class="px-5 py-2.5">
+                    {{if eq .Ownership "routed"}}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-emerald-500/20 text-emerald-300">routed here</span>
+                    {{else if eq .Ownership "unrouted"}}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-amber-500/20 text-amber-300"
+                          title="routes.json does not send this number to this tenant, so no call will ever arrive on it">not routed here</span>
+                    {{else if eq .Ownership "pattern"}}
+                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-slate-700 text-slate-400"
+                          title="deciding whether one pattern contains another is harder than this check is worth, so it abstains rather than guessing">not cross-checked</span>
+                    {{else}}
+                    <span class="text-xs text-slate-600" title="routes.json could not be read">unknown</span>
+                    {{end}}
+                </td>
+                <td class="px-5 py-2.5 text-right">
+                    <a href="{{$.Layout.Link (printf "/admin/tenants/%s/test?dialed=%s&direction=inbound" $.Tenant .Key)}}"
+                       class="text-xs px-2 py-1 rounded border border-slate-600 text-slate-400 hover:text-emerald-300 hover:border-emerald-500/50 transition-colors">Try it</a>
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{if .RoutesUnavailable}}
+    <p class="px-5 py-3 text-xs text-slate-500 border-t border-slate-700">routes.json could not be read, so no row could be checked against it.</p>
+    {{end}}
+    {{else}}
+    <p class="px-5 py-6 text-sm text-slate-500">This tenant handles no DIDs directly.</p>
+    {{end}}
+    {{template "json-editor" dict "Section" "dids" "Raw" (index .Raw "dids") "Tenant" .Tenant "Layout" .Layout}}
+</section>
+
+<!-- Ring groups -->
+<section class="mb-8 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+    <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+        <div>
+            <h3 class="text-sm font-semibold text-white">Ring groups</h3>
+            <p class="text-xs text-slate-500">What happens when nobody picks up belongs to whatever rang the group, not to the group.</p>
+        </div>
+        <button type="button" data-json-toggle="groups"
+                class="text-xs px-2.5 py-1 rounded border border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors">Edit as JSON</button>
+    </div>
+    {{if .Groups}}
+    <table class="w-full">
+        <thead class="bg-slate-700/30">
+            <tr>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Group</th>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Strategy</th>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Members</th>
+                <th class="px-5 py-2 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">Per member</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-700">
+            {{range .Groups}}
+            <tr class="{{if .Unreached}}opacity-50{{end}}">
+                <td class="px-5 py-2.5 text-sm font-mono text-slate-200">
+                    {{.Name}}
+                    {{if .Unreached}}<span class="ml-2 text-xs text-slate-500" title="nothing in this tenant rings this group">unreached</span>{{end}}
+                </td>
+                <td class="px-5 py-2.5 text-sm text-slate-300">{{.Strategy}}</td>
+                <td class="px-5 py-2.5">
+                    {{range .Members}}
+                    <span class="inline-block px-2 py-0.5 mr-1 mb-1 rounded bg-slate-700 text-xs font-mono text-slate-300">{{.}}</span>
+                    {{end}}
+                    {{range .Unresolved}}
+                    <span class="inline-block px-2 py-0.5 mr-1 mb-1 rounded bg-amber-500/20 text-xs font-mono text-amber-300" title="this tenant defines no such destination">{{.}} ⚠</span>
+                    {{end}}
+                </td>
+                <td class="px-5 py-2.5 text-right text-sm font-mono text-slate-400">{{if .MemberTimeoutMs}}{{.MemberTimeoutMs}} ms{{else}}default{{end}}</td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="px-5 py-6 text-sm text-slate-500">This tenant rings nobody as a group.</p>
+    {{end}}
+    {{template "json-editor" dict "Section" "groups" "Raw" (index .Raw "groups") "Tenant" .Tenant "Layout" .Layout}}
+</section>
+
+<!-- Symbolic targets -->
+<section class="mb-8 bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+    <div class="px-5 py-3 border-b border-slate-700 flex items-center justify-between">
+        <div>
+            <h3 class="text-sm font-semibold text-white">Symbolic targets</h3>
+            <p class="text-xs text-slate-500">The only externally dialable names. Nothing here referencing them from inside the table is normal.</p>
+        </div>
+        <button type="button" data-json-toggle="symbolic_targets"
+                class="text-xs px-2.5 py-1 rounded border border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-500 transition-colors">Edit as JSON</button>
+    </div>
+    {{if .Symbolic}}
+    <table class="w-full">
+        <thead class="bg-slate-700/30">
+            <tr>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Name</th>
+                <th class="px-5 py-2 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider">Resolves to</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-700">
+            {{range .Symbolic}}
+            <tr>
+                <td class="px-5 py-2.5 text-sm font-mono text-slate-200">{{.Name}}</td>
+                <td class="px-5 py-2.5 text-sm font-mono text-slate-300">
+                    {{.Target}}
+                    {{if .Unresolved}}<span class="ml-2 text-xs text-amber-400">⚠ {{.Unresolved}}</span>{{end}}
+                </td>
+            </tr>
+            {{end}}
+        </tbody>
+    </table>
+    {{else}}
+    <p class="px-5 py-6 text-sm text-slate-500">This tenant declares no symbolic targets.</p>
+    {{end}}
+    {{template "json-editor" dict "Section" "symbolic_targets" "Raw" (index .Raw "symbolic_targets") "Tenant" .Tenant "Layout" .Layout}}
+</section>
+
+{{end}}
+{{end}}
+
+{{/* The escape hatch, on every section.
+
+     A configuration UI that removes the way out gets resented, and this one has
+     a specific reason to keep it: the structured editors above show what the
+     file MEANS, and there will always be something an operator wants to say that
+     they do not yet express. The diff is shown before the write because a splice
+     is only trustworthy if you can see it is a splice. */}}
+{{define "json-editor"}}
+<div data-json-panel="{{.Section}}" class="hidden border-t border-slate-700 bg-slate-900/60 p-4">
+    <form hx-put="{{.Layout.Link (printf "/admin/tenants/%s/routing/section" .Tenant)}}"
+          hx-target="#config-content"
+          hx-swap="innerHTML">
+        <input type="hidden" name="section" value="{{.Section}}">
+        <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">{{.Section}} as JSON</label>
+        <textarea name="content" rows="10" spellcheck="false"
+                  class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 font-mono text-xs text-slate-200 focus:border-emerald-500 focus:outline-none">{{.Raw}}</textarea>
+        <div id="routing-diagnostics-{{.Section}}" class="mt-2"></div>
+        <div class="flex items-center justify-between mt-2">
+            <p class="text-xs text-slate-500">Only this section is written. Every other key, and every comment, keeps its exact bytes.</p>
+            <button type="submit" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm">Save section</button>
+        </div>
+    </form>
+</div>
+{{end}}
+
+<script>
+var CHECK_URL = "{{.Layout.Link (printf "/admin/tenants/%s/routing/check" .Tenant)}}";
+(function () {
+    // The escape hatch, one panel per section.
+    document.querySelectorAll('[data-json-toggle]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            var panel = document.querySelector('[data-json-panel="' + button.dataset.jsonToggle + '"]');
+            if (!panel) { return; }
+            var opening = panel.classList.contains('hidden');
+            panel.classList.toggle('hidden', !opening);
+            button.textContent = opening ? 'Close JSON' : 'Edit as JSON';
+        });
+    });
+
+    // Live pattern checking, for the two sections whose keys are digit maps.
+    //
+    // The check runs on the SERVER, against the router's own comparison. That is
+    // a round trip, hence the debounce — but restating "more specific" in
+    // JavaScript would be a second opinion about which extension a caller
+    // reaches, and the failure mode is a page that confidently shows the wrong
+    // winner. A 300ms wait is the cheaper mistake.
+    var CHECKABLE = ['extensions', 'dids'];
+    CHECKABLE.forEach(function (section) {
+        var panel = document.querySelector('[data-json-panel="' + section + '"]');
+        if (!panel) { return; }
+        var box = panel.querySelector('textarea');
+        var out = document.getElementById('routing-diagnostics-' + section);
+        if (!box || !out) { return; }
+
+        var timer = null;
+        box.addEventListener('input', function () {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(function () { check(box, out); }, 300);
+        });
+    });
+
+    function check(box, out) {
+        var keys;
+        try {
+            keys = Object.keys(JSON.parse(box.value));
+        } catch (e) {
+            // Mid-edit JSON is not an error worth reporting: the operator is
+            // still typing, and the server will have the last word regardless.
+            out.innerHTML = '';
+            return;
+        }
+        if (keys.length === 0) { out.innerHTML = ''; return; }
+
+        var body = new URLSearchParams();
+        keys.forEach(function (k) { body.append('pattern', k); });
+
+        fetch(CHECK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        }).then(function (r) { return r.text(); })
+          .then(function (html) { out.innerHTML = html; })
+          .catch(function () { out.innerHTML = ''; });
+    }
+})();
+</script>

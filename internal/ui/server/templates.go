@@ -40,6 +40,8 @@ var livePartials = []string{
 type pageSpec struct {
 	file     string
 	partials []string
+	// includes are files carrying shared {{define}}s this page calls.
+	includes []string
 }
 
 var pageSpecs = map[string]pageSpec{
@@ -58,6 +60,10 @@ var pageSpecs = map[string]pageSpec{
 	"live_sessions":      {file: "live_sessions.html", partials: []string{"sessions"}},
 	"live_parked":        {file: "live_parked.html", partials: []string{"parkedcalls"}},
 	"live_rtpmanagers":   {file: "live_rtpmanagers.html", partials: []string{"rtpmanagers"}},
+
+	// The tenant workspace. Every sub-page shares the header and tab strip, so
+	// they are one file included by each.
+	"tenant_routing": {file: "tenant_routing.html", includes: []string{"tenant_workspace.html", sharedFlash}},
 }
 
 // partialSpec is a fragment: its file, and any file carrying a shared
@@ -96,6 +102,7 @@ var partialSpecs = map[string]partialSpec{
 	"config_flowtest":        {file: "config_flowtest.html"},
 	"config_flowtest_result": {file: "config_flowtest_result.html"},
 	"config_flows":           {file: "config_flows.html", includes: []string{sharedFlash}},
+	"routing_check":          {file: "routing_check.html"},
 }
 
 // templateFuncs are the helpers templates may call. Kept small on purpose: a
@@ -103,6 +110,24 @@ var partialSpecs = map[string]partialSpec{
 var templateFuncs = template.FuncMap{
 	// add exists for 1-based hop numbering in a flow trace.
 	"add": func(a, b int) int { return a + b },
+	// dict passes several values to a shared {{define}}. html/template has no
+	// way to call a definition with more than one argument, and the alternative
+	// — writing the same section shell out five times — is five things that
+	// drift.
+	"dict": func(pairs ...any) (map[string]any, error) {
+		if len(pairs)%2 != 0 {
+			return nil, fmt.Errorf("dict needs an even number of arguments")
+		}
+		out := make(map[string]any, len(pairs)/2)
+		for i := 0; i < len(pairs); i += 2 {
+			key, ok := pairs[i].(string)
+			if !ok {
+				return nil, fmt.Errorf("dict keys must be strings")
+			}
+			out[key] = pairs[i+1]
+		}
+		return out, nil
+	},
 }
 
 // TemplateData holds data for rendering templates
@@ -236,6 +261,9 @@ func NewTemplates() (*Templates, error) {
 
 	for name, spec := range pageSpecs {
 		files := []string{"templates/layout.html", "templates/" + spec.file}
+		for _, inc := range spec.includes {
+			files = append(files, "templates/"+inc)
+		}
 		// A page needs each embedded partial's own includes too, or a shared
 		// {{define}} the partial calls is missing from the page's set and the
 		// page fails at execute time while the fragment renders fine.
@@ -367,6 +395,18 @@ type ConfigPageData struct {
 
 // TenantFileData holds tenant file info for display
 type TenantFileData struct {
+	// The detailed listing fills these in. Search is client-side over Haystack,
+	// which is built server-side so the browser never has to know what a DID or
+	// a flow name is — it just matches text.
+	ExtensionsCount int
+	DIDsCount       int
+	GroupsCount     int
+	FlowNames       []string
+	HasWarnings     bool
+	// Haystack is the tenant's name and everything it contains, lowercased and
+	// space separated, for the search box to match against as plain text.
+	Haystack string
+
 	Name     string
 	Size     int64
 	Modified string

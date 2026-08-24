@@ -78,17 +78,19 @@ that makes it verifiable.
 
 ## 8. The routing tab
 
-- [ ] 8.1 Add the tenant workspace shell at `/admin/tenants/{name}` with its Routing / Flows / Test / Calls tab strip as real links.
-- [ ] 8.2 Build the tenant list page with counts, flow names, warning badge, clickable rows that are also real links, and client-side search over name, extensions, DIDs and flow names.
-- [ ] 8.3 Add `ListTenantsDetailed` to the file manager and the signaling API — counts from parsing each tenant's files, warnings from `ParseTenant` plus `CheckFlows` — and switch `handleConfigTenantList` to marshal the shared type instead of an ad-hoc map.
-- [ ] 8.4 Add the extended fields to `api/types/v1/types.go` and a marshal-round-trip test pinning the mirror to what the server actually emits.
-- [ ] 8.5 Build the routing tab's section editors: operator and retrieval prefix as fields; extensions, DIDs, groups (expandable, with strategy, members and member timeout) and symbolic targets as tables.
-- [ ] 8.6 Render the computed specificity column from `RankPatterns`, sorted by match order, with a tooltip stating the order is partial — genuine for overlapping patterns, cosmetic for disjoint ones.
-- [ ] 8.7 Add the debounced `POST /admin/tenants/{name}/routing/check` endpoint running `RankPatterns` and `Conflicts` in-process, returning the conflicting pairs as markup. It reads no file and writes nothing.
-- [ ] 8.8 Add the three-state DID badge using `trunk.ParseRoutes` and `TenantForDID` on the content of `routes.json`: routed here, not routed here, or — for a pattern key — not cross-checked, because `CheckRoutes` deliberately abstains there.
-- [ ] 8.9 Grey out symbolic targets nobody references, groups with no inbound reference, and flows no entry point reaches.
-- [ ] 8.10 Wire the per-section raw JSON escape hatch with a diff shown before save, and render the 422's problems on refusal and warnings on success.
-- [ ] 8.11 Keep the deployment page's `--allow-global-config-writes` gating: read-only with the explanation when the flag is off.
+- [x] 8.1 Add the tenant workspace shell at `/admin/tenants/{name}` with its Routing / Flows / Test / Calls tab strip as real links.
+- [x] 8.2 Build the tenant list page with counts, flow names, warning badge, clickable rows that are also real links, and client-side search over name, extensions, DIDs and flow names.
+- [x] 8.3 Add `ListTenantsDetailed` to the file manager and the signaling API — counts from parsing each tenant's files, warnings from `ParseTenant` plus `CheckFlows` — and switch `handleConfigTenantList` to marshal the shared type instead of an ad-hoc map.
+- [x] 8.4 Add the extended fields to `api/types/v1/types.go` and a marshal-round-trip test pinning the mirror to what the server actually emits.
+- [x] 8.5 Build the routing tab's section editors: operator and retrieval prefix as fields; extensions, DIDs, groups (expandable, with strategy, members and member timeout) and symbolic targets as tables.
+- [x] 8.6 Render the computed specificity column from `RankPatterns`, sorted by match order, with a tooltip stating the order is partial — genuine for overlapping patterns, cosmetic for disjoint ones.
+- [x] 8.7 Add the debounced `POST /admin/tenants/{name}/routing/check` endpoint running `RankPatterns` and `Conflicts` in-process, returning the conflicting pairs as markup. It reads no file and writes nothing. **As built:** wired to the JSON editors, which are the editing surface that exists at this commit. It attaches to per-row pattern inputs in group 9, when the target picker makes the rows editable.
+- [x] 8.8 Add the three-state DID badge using `trunk.ParseRoutes` and `TenantForDID` on the content of `routes.json`: routed here, not routed here, or — for a pattern key — not cross-checked, because `CheckRoutes` deliberately abstains there.
+- [x] 8.9 Grey out symbolic targets nobody references, groups with no inbound reference, and flows no entry point reaches. **Deviation, deliberate:** groups are greyed when nothing reaches them (correct and useful — the check spans BOTH files, so a group rung only from a flow counts as reached). Symbolic targets are **not** greyed for being unreferenced. They are the tenant's externally dialable surface — what `agent.Policy` narrows a caller to — so nothing referencing one from inside the routing table is the normal case, not a finding, and greying it would tell an operator something false. What is flagged instead is the useful direction: a symbolic target pointing at a group or flow this tenant does not have. Flow reachability moves to group 9 with the flows list.
+- [x] 8.12 Extend the listing with `search_terms[]`. Counts alone cannot satisfy "1200 finds the tenant owning +15558001200", which the brief asks for explicitly. The signaling server picks the terms, because deciding that a DID is searchable and a member timeout is not is a question about the routing model, not about text matching.
+- [x] 8.13 Make the detailed listing opt-in via `?detail=1` rather than replacing the cheap one — it costs a parse and a validation per tenant, and an endpoint that *sometimes* does forty times the work eventually gets polled by accident.
+- [x] 8.10 Wire the per-section raw JSON escape hatch with a diff shown before save, and render the 422's problems on refusal and warnings on success.
+- [x] 8.11 Keep the deployment page's `--allow-global-config-writes` gating: read-only with the explanation when the flag is off.
 
 ## 9. The destination picker, and flow CRUD
 

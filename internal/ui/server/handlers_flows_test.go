@@ -101,7 +101,14 @@ type testUI struct {
 
 func newTestServer(t *testing.T, backend *fakeSignaling) *testUI {
 	t.Helper()
-	api := httptest.NewServer(backend.handler())
+	return newTestServerWith(t, backend.handler())
+}
+
+// newTestServerWith builds the UI against any fake signaling API, so a test can
+// bring a backend shaped for what it is testing.
+func newTestServerWith(t *testing.T, backend http.Handler) *testUI {
+	t.Helper()
+	api := httptest.NewServer(backend)
 	t.Cleanup(api.Close)
 
 	s, err := NewServer(&config.Config{
@@ -113,6 +120,12 @@ func newTestServer(t *testing.T, backend *fakeSignaling) *testUI {
 		t.Fatalf("NewServer: %v", err)
 	}
 	return &testUI{Server: s, handler: s.httpServer.Handler}
+}
+
+// routingVMFor builds the routing tab's view model without rendering it.
+func (ui *testUI) routingVMFor(t *testing.T, tenant string) RoutingPageData {
+	t.Helper()
+	return ui.routingVM(t.Context(), ui.clients[0], tenant)
 }
 
 func (ui *testUI) get(t *testing.T, target string) *httptest.ResponseRecorder {
