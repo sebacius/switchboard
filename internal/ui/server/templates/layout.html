@@ -94,6 +94,10 @@
         </aside>
 
         <main class="flex-1 ml-56 p-6">
+            {{/* The dashboard and the live monitors never short-circuit on a
+                 missing backend — they aggregate an empty client list and render
+                 empty tables. Without this they are silent about why. */}}
+            {{if not .Layout.Backends}}{{template "no-backend" .}}{{end}}
             {{template "content" .}}
         </main>
     </div>

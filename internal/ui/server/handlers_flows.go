@@ -39,6 +39,10 @@ var errNoBackend = errors.New("No backend configured")
 // handleConfigFlowsPartial renders the editor for one tenant's flow.
 func (s *Server) handleConfigFlowsPartial(w http.ResponseWriter, r *http.Request) {
 	data, err := s.flowsVM(r.Context(), r)
+	if errors.Is(err, errNoBackend) {
+		s.requireBackendPartial(w)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -65,7 +69,7 @@ func (s *Server) flowsVM(ctx context.Context, r *http.Request) (ConfigFlowsData,
 
 	tenants, err := c.ListTenants(ctx)
 	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load tenants: %v", err)
+		data.Failure = loadFailed(c, "the tenant list", err)
 		return data, nil
 	}
 
@@ -82,7 +86,7 @@ func (s *Server) flowsVM(ctx context.Context, r *http.Request) (ConfigFlowsData,
 
 	content, err := c.GetTenantFile(ctx, data.Tenant, "flows")
 	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load %s.flows.json: %v", data.Tenant, err)
+		data.Failure = loadFailed(c, data.Tenant+".flows.json", err)
 		return data, nil
 	}
 	data.Content = content
@@ -106,7 +110,9 @@ func (s *Server) flowsVMScoped(ctx context.Context, c *client.Client, tenant, fl
 
 	content, err := c.GetTenantFile(ctx, tenant, "flows")
 	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load %s.flows.json: %v", tenant, err)
+		// A tenant with no flows file is the ordinary case, and loadFailed
+		// distinguishes that 404 from an unreachable backend.
+		data.Failure = loadFailed(c, tenant+".flows.json", err)
 		return data
 	}
 	data.Content = content

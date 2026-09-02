@@ -26,6 +26,7 @@
     </div>
 
     {{template "config-flash" .}}
+    {{if .Failure}}{{template "load-failure" .Failure}}{{end}}
 
     {{if .Tenants}}
     <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
@@ -96,7 +97,7 @@
             No tenant matches that.
         </p>
     </div>
-    {{else}}
+    {{else if not .Failure}}
     <div class="bg-slate-800 rounded-xl border border-slate-700 px-6 py-12 text-center">
         <p class="text-sm text-slate-400">No tenants are configured yet.</p>
         <p class="text-xs text-slate-500 mt-1">A tenant is a routing table, and optionally a set of flows.</p>

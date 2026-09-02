@@ -9,8 +9,11 @@
 
 {{define "routing-body"}}
 {{template "config-flash" .}}
+{{if .Failure}}{{template "load-failure" .Failure}}{{end}}
 
-{{if .Error}}{{else}}
+{{/* Suppressed on a failed read as well as on a bad parse: the tables below
+     describe a file, and neither case has one to describe. */}}
+{{if or .Error .Failure}}{{else}}
 
 {{/* Ambiguous patterns are a LOAD error, not a style note: two patterns that can
      match the same input with neither more specific leave the winner undefined,

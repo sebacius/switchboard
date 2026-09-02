@@ -17,7 +17,7 @@ func (s *Server) globalsVM(ctx context.Context, c *client.Client) ConfigGlobalsD
 	data := ConfigGlobalsData{Server: c.Name()}
 	files, err := c.ListGlobalFiles(ctx)
 	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load configuration files: %v", err)
+		data.Failure = loadFailed(c, "the deployment file list", err)
 		return data
 	}
 	for _, f := range files {
@@ -28,9 +28,8 @@ func (s *Server) globalsVM(ctx context.Context, c *client.Client) ConfigGlobalsD
 
 // handleConfigGlobalsPartial lists the deployment-wide configuration files.
 func (s *Server) handleConfigGlobalsPartial(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPartial(w)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -44,9 +43,8 @@ func (s *Server) handleConfigGlobalsPartial(w http.ResponseWriter, r *http.Reque
 
 // handleConfigGlobalEdit renders the editor for one deployment-wide file.
 func (s *Server) handleConfigGlobalEdit(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPartial(w)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 

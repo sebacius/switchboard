@@ -5,6 +5,7 @@
         <p class="text-sm text-slate-400 mt-1">Configuration shared by every tenant on this server</p>
     </div>
 
+    {{if .Failure}}{{template "load-failure" .Failure}}{{end}}
     {{if .Error}}
     <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm">
         <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

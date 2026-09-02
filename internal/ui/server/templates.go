@@ -63,6 +63,10 @@ var pageSpecs = map[string]pageSpec{
 
 	// The tenant workspace. Every sub-page shares the header and tab strip, so
 	// they are one file included by each.
+	// The shell, carrying only an explanation, for when no backend is
+	// configured at all.
+	"no_backend": {file: "page_no_backend.html"},
+
 	"tenant_routing": {file: "tenant_routing.html", includes: []string{"tenant_workspace.html", sharedFlash}},
 	"tenant_flows":   {file: "page_tenant_flows.html", partials: []string{"config_flows"}, includes: []string{"tenant_workspace.html"}},
 	"tenant_test":    {file: "page_tenant_test.html", partials: []string{"config_flowtest"}, includes: []string{"tenant_workspace.html"}},
@@ -82,6 +86,12 @@ type partialSpec struct {
 // sharedFlash carries the flash region every configuration editor renders.
 const sharedFlash = "config_flash.html"
 
+// sharedBanners carries the two "nothing to show, and here is why" regions: a
+// read that failed, and no backend at all. Parsed into EVERY page and into the
+// panels that can fail, so the distinction between "could not look" and "looked,
+// and it is empty" is drawn identically everywhere.
+const sharedBanners = "config_banners.html"
+
 // partialSpecs is every fragment the server can render on its own.
 var partialSpecs = map[string]partialSpec{
 	// The live monitors: the same files the dashboard embeds for first paint.
@@ -95,21 +105,22 @@ var partialSpecs = map[string]partialSpec{
 
 	// Config fragments, each swapped into #config-content.
 	"drain_modal":            {file: "drain_modal.html"},
-	"config_tenants":         {file: "config_tenants.html", defineName: "config_tenants", includes: []string{sharedFlash}},
+	"config_tenants":         {file: "config_tenants.html", defineName: "config_tenants", includes: []string{sharedFlash, sharedBanners}},
 	"config_tenant_edit":     {file: "config_tenant_edit.html", includes: []string{sharedFlash}},
-	"config_globals":         {file: "config_globals.html", defineName: "config_globals"},
+	"config_globals":         {file: "config_globals.html", defineName: "config_globals", includes: []string{sharedBanners}},
 	"config_global_edit":     {file: "config_global_edit.html", includes: []string{sharedFlash}},
 	"config_reload_banner":   {file: "config_reload_banner.html"},
-	"config_audio":           {file: "config_audio.html", defineName: "config_audio"},
-	"config_flowtest":        {file: "config_flowtest.html", defineName: "config_flowtest"},
+	"config_audio":           {file: "config_audio.html", defineName: "config_audio", includes: []string{sharedBanners}},
+	"config_flowtest":        {file: "config_flowtest.html", defineName: "config_flowtest", includes: []string{sharedBanners}},
 	"config_flowtest_result": {file: "config_flowtest_result.html"},
-	"config_flows":           {file: "config_flows.html", defineName: "config_flows", includes: []string{sharedFlash}},
+	"config_flows":           {file: "config_flows.html", defineName: "config_flows", includes: []string{sharedFlash, sharedBanners}},
 	"routing_check":          {file: "routing_check.html"},
+	"no_backend":             {file: sharedBanners, defineName: "no-backend"},
 
 	// The routing table's body, so a section save can swap just that region.
 	// Same file as the tenant_routing PAGE, rendered through a different entry
 	// point — the arrangement this type was built to support.
-	"tenant_routing_body": {file: "tenant_routing.html", defineName: "routing-body", includes: []string{sharedFlash}},
+	"tenant_routing_body": {file: "tenant_routing.html", defineName: "routing-body", includes: []string{sharedFlash, sharedBanners}},
 }
 
 // templateFuncs are the helpers templates may call. Kept small on purpose: a
@@ -267,14 +278,17 @@ func NewTemplates() (*Templates, error) {
 	}
 
 	for name, spec := range pageSpecs {
-		files := []string{"templates/layout.html", "templates/" + spec.file}
+		files := []string{"templates/layout.html", "templates/" + sharedBanners, "templates/" + spec.file}
 		for _, inc := range spec.includes {
+			if inc == sharedBanners {
+				continue // already in the base set for every page
+			}
 			files = append(files, "templates/"+inc)
 		}
 		// A page needs each embedded partial's own includes too, or a shared
 		// {{define}} the partial calls is missing from the page's set and the
 		// page fails at execute time while the fragment renders fine.
-		seen := map[string]bool{}
+		seen := map[string]bool{"layout.html": true, sharedBanners: true}
 		for _, p := range spec.partials {
 			ps := partialSpecs[p]
 			for _, f := range append([]string{ps.file}, ps.includes...) {
@@ -424,6 +438,11 @@ type TenantFileData struct {
 
 // ConfigTenantsData holds data for the tenant list
 type ConfigTenantsData struct {
+	// Failure is a read that did not happen, as distinct from a read that came
+	// back empty. Error stays for everything else — a refused write, a file that
+	// parsed badly — because those were read fine, and blaming the backend for
+	// them would be a second lie.
+	Failure *LoadFailure
 	Layout  LayoutData
 	Server  string
 	Tenants []TenantFileData
@@ -482,10 +501,15 @@ func (d GlobalFileData) NeedsRestart() bool { return d.Activation == "restart" }
 
 // ConfigGlobalsData holds the deployment-wide file list.
 type ConfigGlobalsData struct {
-	Layout LayoutData
-	Server string
-	Files  []GlobalFileData
-	Error  string
+	// Failure is a read that did not happen, as distinct from a read that came
+	// back empty. Error stays for everything else — a refused write, a file that
+	// parsed badly — because those were read fine, and blaming the backend for
+	// them would be a second lie.
+	Failure *LoadFailure
+	Layout  LayoutData
+	Server  string
+	Files   []GlobalFileData
+	Error   string
 }
 
 // ConfigGlobalEditData holds the editor for one deployment-wide file.
@@ -514,6 +538,11 @@ type ReloadBannerData struct {
 
 // FlowTestData holds the simulator form.
 type FlowTestData struct {
+	// Failure is a read that did not happen, as distinct from a read that came
+	// back empty. Error stays for everything else — a refused write, a file that
+	// parsed badly — because those were read fine, and blaming the backend for
+	// them would be a second lie.
+	Failure *LoadFailure
 	// Layout, Tabs and Scoped are set only when this renders as a tenant
 	// sub-page rather than as a fragment of the config editor. Scoped means the
 	// tenant is fixed by the URL, which is what suppresses the tenant picker:
@@ -552,6 +581,11 @@ func (d FlowTestResultData) IsNone() bool   { return d.Result.Routed == "none" }
 
 // ConfigFlowsData holds the graphical flow editor.
 type ConfigFlowsData struct {
+	// Failure is a read that did not happen, as distinct from a read that came
+	// back empty. Error stays for everything else — a refused write, a file that
+	// parsed badly — because those were read fine, and blaming the backend for
+	// them would be a second lie.
+	Failure *LoadFailure
 	// Layout, Tabs and Scoped are set only when this renders as a tenant
 	// sub-page rather than as a fragment of the config editor. Scoped means the
 	// tenant is fixed by the URL, which is what suppresses the tenant picker:

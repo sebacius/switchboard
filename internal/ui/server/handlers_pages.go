@@ -3,6 +3,8 @@ package server
 import (
 	"log/slog"
 	"net/http"
+
+	"github.com/sebas/switchboard/internal/ui/client"
 )
 
 // Full pages for the routes the sidebar names.
@@ -65,9 +67,8 @@ func (s *Server) handleLivePage(w http.ResponseWriter, r *http.Request) {
 
 // handleTenantsPage renders the tenant list at its own URL.
 func (s *Server) handleTenantsPage(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPage(w, r, "tenants", "Switchboard — Tenants", "Tenant configuration")
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 	data := s.tenantsVM(r.Context(), c)
@@ -77,9 +78,8 @@ func (s *Server) handleTenantsPage(w http.ResponseWriter, r *http.Request) {
 
 // handleDeploymentPage renders the deployment-wide files at their own URL.
 func (s *Server) handleDeploymentPage(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPage(w, r, "deployment", "Switchboard — Deployment", "Deployment-wide configuration")
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 	data := s.globalsVM(r.Context(), c)
@@ -89,14 +89,50 @@ func (s *Server) handleDeploymentPage(w http.ResponseWriter, r *http.Request) {
 
 // handleAudioPage renders the audio library at its own URL.
 func (s *Server) handleAudioPage(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPage(w, r, "audio", "Switchboard — Audio", "Audio library")
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 	data := s.audioVM(r.Context(), c)
 	data.Layout = s.layoutFor(r, "audio", "Switchboard — Audio", "Audio library")
 	s.renderPageOr500(w, "audio", data)
+}
+
+// requireBackendPage resolves the backend a PAGE needs.
+//
+// When none is configured it renders the ordinary shell carrying an
+// explanation, and returns nil so the caller stops. The alternative — the bare
+// http.Error this replaced — answered six of eleven sidebar entries with a
+// white page of plain text, no navigation, and no mention of the flag that
+// would fix it.
+func (s *Server) requireBackendPage(w http.ResponseWriter, r *http.Request, nav, title, subtitle string) *client.Client {
+	if c := s.findClient(r.URL.Query().Get("server")); c != nil {
+		return c
+	}
+	data := struct{ Layout LayoutData }{Layout: s.layoutFor(r, nav, title, subtitle)}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	if err := s.templates.renderPage(w, "no_backend", data); err != nil {
+		slog.Error("[UI] Failed to render the no-backend page", "error", err)
+	}
+	return nil
+}
+
+// requireBackendPartial does the same for a FRAGMENT, which must never emit a
+// layout: htmx would splice a whole document, sidebar and all, into a div.
+//
+// It answers 200 deliberately. htmx does not swap a 5xx body, so a 503 here
+// would be discarded and the operator would watch a panel that never changes.
+// The fragment rendered successfully; what it rendered is an explanation.
+func (s *Server) requireBackendPartial(w http.ResponseWriter) *client.Client {
+	if len(s.clients) > 0 {
+		return s.clients[0]
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.renderPartial(w, "no_backend", nil); err != nil {
+		slog.Error("[UI] Failed to render the no-backend fragment", "error", err)
+	}
+	return nil
 }
 
 // renderPageOr500 renders a page, or reports that it could not.

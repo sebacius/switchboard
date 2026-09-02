@@ -51,12 +51,6 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := s.findClient(r.URL.Query().Get("server"))
-	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
-		return
-	}
-
 	// The tab name becomes a partial's URL, so it comes from an allowlist rather
 	// than from the query string. An unknown name is a typo in a bookmark, not a
 	// reason to render a page that immediately 404s.
@@ -66,6 +60,11 @@ func (s *Server) handleConfigPage(w http.ResponseWriter, r *http.Request) {
 	activeTab := "flows"
 	if r.URL.Query().Get("tab") == "flowtest" {
 		activeTab = "flowtest"
+	}
+
+	c := s.requireBackendPage(w, r, navForTab(activeTab), "Switchboard Configuration", "Configuration Editor")
+	if c == nil {
+		return
 	}
 
 	data := ConfigPageData{
@@ -150,7 +149,7 @@ func (s *Server) tenantsVM(ctx context.Context, c *client.Client) ConfigTenantsD
 	// endpoint exists. A tenant list is not polled, so its cost is fine here.
 	tenants, err := c.ListTenantsDetailed(ctx)
 	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load tenants: %v", err)
+		data.Failure = loadFailed(c, "the tenant list", err)
 		return data
 	}
 	data.Tenants = make([]TenantFileData, 0, len(tenants))
@@ -186,9 +185,8 @@ func haystackFor(t types.TenantFile) string {
 
 // handleConfigTenantsPartial renders the tenant list partial
 func (s *Server) handleConfigTenantsPartial(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPartial(w)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -202,9 +200,8 @@ func (s *Server) handleConfigTenantsPartial(w http.ResponseWriter, r *http.Reque
 
 // handleConfigTenantEdit renders the tenant edit partial
 func (s *Server) handleConfigTenantEdit(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPartial(w)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -231,9 +228,8 @@ func (s *Server) handleConfigTenantEdit(w http.ResponseWriter, r *http.Request) 
 
 // handleConfigTenantNew renders the new tenant form
 func (s *Server) handleConfigTenantNew(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPartial(w)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 

@@ -19,9 +19,8 @@ import (
 
 // handleFlowTestPartial renders the simulator form.
 func (s *Server) handleFlowTestPartial(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPartial(w)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -55,7 +54,7 @@ func (s *Server) flowTestVM(ctx context.Context, c *client.Client, q url.Values,
 
 	loaded, err := c.LoadedTenants(ctx)
 	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load tenants: %v", err)
+		data.Failure = loadFailed(c, "the loaded tenant list", err)
 		return data
 	}
 	data.Tenants = loaded.Tenants

@@ -45,10 +45,13 @@ type tenantTab struct {
 
 // RoutingPageData is the routing tab.
 type RoutingPageData struct {
-	Layout LayoutData
-	Server string
-	Tenant string
-	Tabs   []tenantTab
+	// Failure is a read that did not happen. Error stays for a file that parsed
+	// badly, which was read fine.
+	Failure *LoadFailure
+	Layout  LayoutData
+	Server  string
+	Tenant  string
+	Tabs    []tenantTab
 
 	Operator        string
 	RetrievalPrefix string
@@ -147,12 +150,11 @@ func (s *Server) tabsFor(l LayoutData, tenant, active string) []tenantTab {
 
 // handleTenantWorkspace renders a tenant's routing table.
 func (s *Server) handleTenantWorkspace(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	tenant := r.PathValue("tenant")
+	c := s.requireBackendPage(w, r, "tenants", "Switchboard — "+tenant, "Tenant "+tenant)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
-	tenant := r.PathValue("tenant")
 
 	data := s.routingVM(r.Context(), c, tenant)
 	data.Layout = s.layoutFor(r, "tenants", "Switchboard — "+tenant, "Tenant "+tenant)
@@ -164,12 +166,11 @@ func (s *Server) handleTenantWorkspace(w http.ResponseWriter, r *http.Request) {
 // handleTenantFlowsPage renders one tenant's flow canvas as a page of the
 // workspace, rather than as a fragment of the config editor.
 func (s *Server) handleTenantFlowsPage(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	tenant := r.PathValue("tenant")
+	c := s.requireBackendPage(w, r, "tenants", "Switchboard — "+tenant, "Tenant "+tenant)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
-	tenant := r.PathValue("tenant")
 
 	data := s.flowsVMScoped(r.Context(), c, tenant, r.URL.Query().Get("flow"))
 	data.Layout = s.layoutFor(r, "tenants", "Switchboard — "+tenant, "Tenant "+tenant)
@@ -182,12 +183,11 @@ func (s *Server) handleTenantFlowsPage(w http.ResponseWriter, r *http.Request) {
 // It reads the parameters the routing table's Try-it links already pass, so
 // /admin/tenants/x/test?dialed=700 comes back as a trace rather than as a form.
 func (s *Server) handleTenantTestPage(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	tenant := r.PathValue("tenant")
+	c := s.requireBackendPage(w, r, "tenants", "Switchboard — "+tenant, "Tenant "+tenant)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
-	tenant := r.PathValue("tenant")
 
 	data := s.flowTestVM(r.Context(), c, r.URL.Query(), tenant)
 	data.Layout = s.layoutFor(r, "tenants", "Switchboard — "+tenant, "Tenant "+tenant)
@@ -202,7 +202,7 @@ func (s *Server) routingVM(ctx context.Context, c *client.Client, tenant string)
 
 	content, err := c.GetTenantFile(ctx, tenant, "routing")
 	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load %s.routing.json: %v", tenant, err)
+		data.Failure = loadFailed(c, tenant+".routing.json", err)
 		return data
 	}
 	doc, err := parseRoutingDoc(content)

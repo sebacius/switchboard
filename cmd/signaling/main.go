@@ -37,7 +37,11 @@ func main() {
 
 	// Print startup banner
 	banner.Print("SIGNALING SERVER", []banner.ConfigLine{
-		{Label: "Listen", Value: fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)},
+		{Label: "SIP", Value: fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)},
+		// The REST API the admin UI reads. Announced here rather than only in a
+		// log line after the banner: this block is where an operator looks to
+		// find out what is listening, and the UI is unusable without this port.
+		{Label: "API", Value: fmt.Sprintf("http://%s:%d", cfg.BindAddr, cfg.APIPort)},
 		{Label: "Advertise", Value: cfg.AdvertiseAddr},
 		{Label: "RTP Manager", Value: strings.Join(cfg.RTPManagerAddrs, ", ")},
 		{Label: "Policy", Value: cfg.PolicyPath},

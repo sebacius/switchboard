@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -15,7 +14,7 @@ func (s *Server) audioVM(ctx context.Context, c *client.Client) ConfigAudioData 
 	data := ConfigAudioData{Server: c.Name()}
 	listing, err := c.ListAudio(ctx)
 	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load audio inventory: %v", err)
+		data.Failure = loadFailed(c, "the audio inventory", err)
 		return data
 	}
 	data.Listing = listing
@@ -26,9 +25,8 @@ func (s *Server) audioVM(ctx context.Context, c *client.Client) ConfigAudioData 
 // handleConfigAudioPartial renders the audio inventory: what the flows ask for,
 // and what the player actually has. Browse only — nothing here writes.
 func (s *Server) handleConfigAudioPartial(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPartial(w)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -42,6 +40,11 @@ func (s *Server) handleConfigAudioPartial(w http.ResponseWriter, r *http.Request
 
 // ConfigAudioData holds the audio inventory.
 type ConfigAudioData struct {
+	// Failure is a read that did not happen, as distinct from a read that came
+	// back empty. Error stays for everything else — a refused write, a file that
+	// parsed badly — because those were read fine, and blaming the backend for
+	// them would be a second lie.
+	Failure *LoadFailure
 	Layout  LayoutData
 	Server  string
 	Listing types.AudioListing

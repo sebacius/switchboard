@@ -9,8 +9,9 @@
     </div>
 
     {{template "config-flash" .}}
+    {{if .Failure}}{{template "load-failure" .Failure}}{{end}}
 
-    {{if and (not .Scoped) (not .Tenants)}}
+    {{if and (not .Failure) (and (not .Scoped) (not .Tenants))}}
     <!-- No tenant has a graph. Say so, and point at the editor that can create
          one, rather than showing an empty canvas that reads like an empty flow.
 
