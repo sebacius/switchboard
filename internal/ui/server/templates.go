@@ -64,6 +64,8 @@ var pageSpecs = map[string]pageSpec{
 	// The tenant workspace. Every sub-page shares the header and tab strip, so
 	// they are one file included by each.
 	"tenant_routing": {file: "tenant_routing.html", includes: []string{"tenant_workspace.html", sharedFlash}},
+	"tenant_flows":   {file: "page_tenant_flows.html", partials: []string{"config_flows"}, includes: []string{"tenant_workspace.html"}},
+	"tenant_test":    {file: "page_tenant_test.html", partials: []string{"config_flowtest"}, includes: []string{"tenant_workspace.html"}},
 }
 
 // partialSpec is a fragment: its file, and any file carrying a shared
@@ -99,10 +101,15 @@ var partialSpecs = map[string]partialSpec{
 	"config_global_edit":     {file: "config_global_edit.html", includes: []string{sharedFlash}},
 	"config_reload_banner":   {file: "config_reload_banner.html"},
 	"config_audio":           {file: "config_audio.html", defineName: "config_audio"},
-	"config_flowtest":        {file: "config_flowtest.html"},
+	"config_flowtest":        {file: "config_flowtest.html", defineName: "config_flowtest"},
 	"config_flowtest_result": {file: "config_flowtest_result.html"},
-	"config_flows":           {file: "config_flows.html", includes: []string{sharedFlash}},
+	"config_flows":           {file: "config_flows.html", defineName: "config_flows", includes: []string{sharedFlash}},
 	"routing_check":          {file: "routing_check.html"},
+
+	// The routing table's body, so a section save can swap just that region.
+	// Same file as the tenant_routing PAGE, rendered through a different entry
+	// point — the arrangement this type was built to support.
+	"tenant_routing_body": {file: "tenant_routing.html", defineName: "routing-body", includes: []string{sharedFlash}},
 }
 
 // templateFuncs are the helpers templates may call. Kept small on purpose: a
@@ -507,6 +514,15 @@ type ReloadBannerData struct {
 
 // FlowTestData holds the simulator form.
 type FlowTestData struct {
+	// Layout, Tabs and Scoped are set only when this renders as a tenant
+	// sub-page rather than as a fragment of the config editor. Scoped means the
+	// tenant is fixed by the URL, which is what suppresses the tenant picker:
+	// letting the operator switch tenants underneath a breadcrumb and tab strip
+	// that still name the previous one is worse than not offering the choice.
+	Layout LayoutData
+	Tabs   []tenantTab
+	Scoped bool
+
 	Server    string
 	Tenants   []types.LoadedTenant
 	Tenant    string
@@ -536,6 +552,15 @@ func (d FlowTestResultData) IsNone() bool   { return d.Result.Routed == "none" }
 
 // ConfigFlowsData holds the graphical flow editor.
 type ConfigFlowsData struct {
+	// Layout, Tabs and Scoped are set only when this renders as a tenant
+	// sub-page rather than as a fragment of the config editor. Scoped means the
+	// tenant is fixed by the URL, which is what suppresses the tenant picker:
+	// letting the operator switch tenants underneath a breadcrumb and tab strip
+	// that still name the previous one is worse than not offering the choice.
+	Layout LayoutData
+	Tabs   []tenantTab
+	Scoped bool
+
 	Server string
 	// Tenants are only those that HAVE flows: the canvas edits a graph, and
 	// offering a tenant with no graph would promise something the tab cannot do.

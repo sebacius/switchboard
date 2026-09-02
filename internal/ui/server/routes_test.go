@@ -21,6 +21,14 @@ var adminPages = []string{
 	"/admin/live/rtpmanagers",
 	"/admin/config?tab=flows",
 	"/admin/config?tab=flowtest",
+
+	// The tenant workspace, all three tabs. Their absence from this list is
+	// exactly how two of them shipped as 404s: the strip in tabsFor linked
+	// URLs nothing had registered, and no test ever followed a link.
+	"/admin/tenants/devtenant",
+	"/admin/tenants/devtenant/flows",
+	"/admin/tenants/devtenant/test",
+	"/admin/tenants/devtenant/test?dialed=700",
 }
 
 // adminFragments is every URL HTMX fetches on its own.
@@ -145,3 +153,76 @@ func TestNoRenderedLinkDropsTheSelectedBackend(t *testing.T) {
 // ignore it — the selection has to survive navigation regardless of whether the
 // handler at the other end happens to read it yet.
 func exemptFromServerParam(link string) bool { return false }
+
+// Every link a page renders has to go somewhere.
+//
+// The specific regression: the tenant workspace's tab strip linked
+// /admin/tenants/{t}/flows and /test, which nothing had registered, so two of
+// three tabs and all nine "Try it" links answered 404 on a perfectly healthy
+// backend. Enumerating URLs by hand is what let that ship — this follows what
+// the pages actually render, so the next unregistered link fails here without
+// anyone remembering to add it to a list.
+func TestNoRenderedLinkIs404(t *testing.T) {
+	b := &routingBackend{routing: referenceRouting(t), flows: referenceFlows(t), routes: referenceRoutes(t)}
+	ui := routingUI(t, b)
+
+	checked := map[string]bool{}
+	for _, path := range adminPages {
+		sep := "?"
+		if strings.Contains(path, "?") {
+			sep = "&"
+		}
+		body := ui.get(t, path+sep+"server=test").Body.String()
+
+		for _, m := range internalURL.FindAllStringSubmatch(body, -1) {
+			link := strings.ReplaceAll(m[1], "&amp;", "&")
+			if checked[link] {
+				continue
+			}
+			checked[link] = true
+
+			// A link is a GET target. Anything the page only ever POSTs, PUTs or
+			// DELETEs to answers 405 by design, which is not a broken link.
+			rec := ui.get(t, link)
+			if rec.Code == http.StatusNotFound {
+				t.Errorf("%s links to %s, which 404s", path, link)
+			}
+		}
+	}
+	if len(checked) == 0 {
+		t.Fatal("no links were extracted, so this asserts nothing")
+	}
+}
+
+// hxTarget finds the element an HTMX control swaps its response into.
+var hxTarget = regexp.MustCompile(`hx-target="#([^"]+)"`)
+
+// A control that swaps into an id the page does not contain is silently inert:
+// the request succeeds, the response is discarded, and nothing moves on screen.
+//
+// That is the second half of the JSON-editor bug — its form targeted
+// #config-content, an id that exists on four other pages but not on the one
+// carrying the form.
+func TestEveryHXTargetExistsOnItsPage(t *testing.T) {
+	b := &routingBackend{routing: referenceRouting(t), flows: referenceFlows(t), routes: referenceRoutes(t)}
+	ui := routingUI(t, b)
+
+	found := 0
+	for _, path := range adminPages {
+		sep := "?"
+		if strings.Contains(path, "?") {
+			sep = "&"
+		}
+		body := ui.get(t, path+sep+"server=test").Body.String()
+
+		for _, m := range hxTarget.FindAllStringSubmatch(body, -1) {
+			found++
+			if !strings.Contains(body, `id="`+m[1]+`"`) {
+				t.Errorf("%s swaps into #%s, which the page does not contain", path, m[1])
+			}
+		}
+	}
+	if found == 0 {
+		t.Fatal("no hx-targets were extracted, so this asserts nothing")
+	}
+}

@@ -1,5 +1,13 @@
 {{define "content"}}
 {{template "tenant-header" .}}
+{{/* The body is its own definition so a section save can swap just this region
+     rather than the whole document. The flash belongs INSIDE it: a save's
+     confirmation has to land in the part of the page that gets replaced, or it
+     is written into a div that was discarded on the way in. */}}
+<div id="routing-body">{{template "routing-body" .}}</div>
+{{end}}
+
+{{define "routing-body"}}
 {{template "config-flash" .}}
 
 {{if .Error}}{{else}}
@@ -239,7 +247,7 @@
 {{define "json-editor"}}
 <div data-json-panel="{{.Section}}" class="hidden border-t border-slate-700 bg-slate-900/60 p-4">
     <form hx-put="{{.Layout.Link (printf "/admin/tenants/%s/routing/section" .Tenant)}}"
-          hx-target="#config-content"
+          hx-target="#routing-body"
           hx-swap="innerHTML">
         <input type="hidden" name="section" value="{{.Section}}">
         <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">{{.Section}} as JSON</label>
@@ -254,18 +262,27 @@
 </div>
 {{end}}
 
+{{/* Rendered through layout.html's {{block "scripts"}}. This lived at the file
+     root until now, which meant it was never emitted at all: a page executes
+     "layout.html", so only its {{define}}s are reachable and a root body is
+     dead markup. The controls below have therefore never worked.
+
+     The handlers are delegated from document because this script sits OUTSIDE
+     #routing-body. Binding directly would attach to elements that a section
+     save replaces, and the escape hatch would work exactly once. */}}
+{{define "scripts"}}
 <script>
 var CHECK_URL = "{{.Layout.Link (printf "/admin/tenants/%s/routing/check" .Tenant)}}";
 (function () {
     // The escape hatch, one panel per section.
-    document.querySelectorAll('[data-json-toggle]').forEach(function (button) {
-        button.addEventListener('click', function () {
-            var panel = document.querySelector('[data-json-panel="' + button.dataset.jsonToggle + '"]');
-            if (!panel) { return; }
-            var opening = panel.classList.contains('hidden');
-            panel.classList.toggle('hidden', !opening);
-            button.textContent = opening ? 'Close JSON' : 'Edit as JSON';
-        });
+    document.addEventListener('click', function (e) {
+        var button = e.target.closest('[data-json-toggle]');
+        if (!button) { return; }
+        var panel = document.querySelector('[data-json-panel="' + button.dataset.jsonToggle + '"]');
+        if (!panel) { return; }
+        var opening = panel.classList.contains('hidden');
+        panel.classList.toggle('hidden', !opening);
+        button.textContent = opening ? 'Close JSON' : 'Edit as JSON';
     });
 
     // Live pattern checking, for the two sections whose keys are digit maps.
@@ -276,18 +293,22 @@ var CHECK_URL = "{{.Layout.Link (printf "/admin/tenants/%s/routing/check" .Tenan
     // reaches, and the failure mode is a page that confidently shows the wrong
     // winner. A 300ms wait is the cheaper mistake.
     var CHECKABLE = ['extensions', 'dids'];
-    CHECKABLE.forEach(function (section) {
-        var panel = document.querySelector('[data-json-panel="' + section + '"]');
+    var timers = {};
+    document.addEventListener('input', function (e) {
+        if (e.target.tagName !== 'TEXTAREA') { return; }
+        var panel = e.target.closest('[data-json-panel]');
         if (!panel) { return; }
-        var box = panel.querySelector('textarea');
-        var out = document.getElementById('routing-diagnostics-' + section);
-        if (!box || !out) { return; }
+        var section = panel.getAttribute('data-json-panel');
+        if (CHECKABLE.indexOf(section) === -1) { return; }
 
-        var timer = null;
-        box.addEventListener('input', function () {
-            window.clearTimeout(timer);
-            timer = window.setTimeout(function () { check(box, out); }, 300);
-        });
+        window.clearTimeout(timers[section]);
+        timers[section] = window.setTimeout(function () {
+            // Re-resolved rather than captured: a save may have swapped this
+            // region out from under the pending timer.
+            var box = document.querySelector('[data-json-panel="' + section + '"] textarea');
+            var out = document.getElementById('routing-diagnostics-' + section);
+            if (box && out) { check(box, out); }
+        }, 300);
     });
 
     function check(box, out) {
@@ -315,3 +336,4 @@ var CHECK_URL = "{{.Layout.Link (printf "/admin/tenants/%s/routing/check" .Tenan
     }
 })();
 </script>
+{{end}}

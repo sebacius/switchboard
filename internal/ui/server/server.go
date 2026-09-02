@@ -77,6 +77,8 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	mux.HandleFunc("/admin/tenants/{tenant}", s.handleTenantWorkspace)
 	mux.HandleFunc("/admin/tenants/{tenant}/routing/section", s.handleRoutingSectionSave)
 	mux.HandleFunc("/admin/tenants/{tenant}/routing/check", s.handleRoutingCheck)
+	mux.HandleFunc("/admin/tenants/{tenant}/flows", s.handleTenantFlowsPage)
+	mux.HandleFunc("/admin/tenants/{tenant}/test", s.handleTenantTestPage)
 
 	// Configuration management
 	mux.HandleFunc("/admin/config", s.handleConfigPage)

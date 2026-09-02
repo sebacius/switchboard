@@ -426,3 +426,53 @@ func TestTheDeploymentPageRespectsTheWriteFlag(t *testing.T) {
 		t.Error("the page does not say these files need a restart to take effect")
 	}
 }
+
+// The JSON escape hatch is driven entirely by a script block, and that script
+// spent its life at the file's root — outside every {{define}} — where a page
+// render never reaches it. Both controls were therefore inert: the toggle
+// installed no handler, and /routing/check had no caller anywhere in the UI.
+//
+// Asserted structurally, on the same grounds as the canvas test: there is no
+// data-level proxy for "the script reached the page", and the bug it guards is
+// a control that silently does nothing.
+func TestTheJSONEditorIsWiredIntoThePage(t *testing.T) {
+	b := &routingBackend{routing: referenceRouting(t), flows: referenceFlows(t), routes: referenceRoutes(t)}
+	ui := routingUI(t, b)
+
+	body := ui.get(t, "/admin/tenants/devtenant?server=test").Body.String()
+
+	mustSay(t, body, "data-json-toggle", "nothing opens the JSON panel without it")
+	mustSay(t, body, "CHECK_URL", "the live pattern check has no endpoint without it")
+
+	// html/template escapes "/" as "\/" inside a JS string, which is correct and
+	// which JavaScript reads back as "/". Unescape before matching so the
+	// assertion is about the URL rather than about the escaping.
+	unescaped := strings.ReplaceAll(body, `\/`, "/")
+	mustSay(t, unescaped, "/admin/tenants/devtenant/routing/check",
+		"the check URL has to name this tenant")
+}
+
+// The save targets #routing-body, so it must answer with that region and not a
+// whole document — htmx would otherwise splice a second layout, sidebar and
+// all, inside a div on the page that submitted it.
+func TestASectionSaveComesBackAsAFragmentTheFormCanSwap(t *testing.T) {
+	b := &routingBackend{routing: referenceRouting(t), flows: referenceFlows(t), routes: referenceRoutes(t)}
+	ui := routingUI(t, b)
+
+	page := ui.get(t, "/admin/tenants/devtenant?server=test").Body.String()
+	mustSay(t, page, `id="routing-body"`, "the save has nowhere to land without it")
+	mustSay(t, page, `hx-target="#routing-body"`, "the form has to name the region it replaces")
+
+	rec := ui.postForm(t, "/admin/tenants/devtenant/routing/section?server=test", url.Values{
+		"section": {"groups"},
+		"content": {`{"engineering": {"strategy": "sequential", "members": ["user/101"]}}`},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	saved := rec.Body.String()
+	mustNotSay(t, saved, "<!DOCTYPE html>", "a fragment must not carry a whole document")
+	mustNotSay(t, saved, "</aside>", "a fragment must not carry the sidebar")
+	mustSay(t, saved, savedFileMsg("devtenant", "routing"),
+		"the confirmation has to be inside the region that gets swapped in")
+}

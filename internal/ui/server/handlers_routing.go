@@ -161,6 +161,40 @@ func (s *Server) handleTenantWorkspace(w http.ResponseWriter, r *http.Request) {
 	s.renderPageOr500(w, "tenant_routing", data)
 }
 
+// handleTenantFlowsPage renders one tenant's flow canvas as a page of the
+// workspace, rather than as a fragment of the config editor.
+func (s *Server) handleTenantFlowsPage(w http.ResponseWriter, r *http.Request) {
+	c := s.findClient(r.URL.Query().Get("server"))
+	if c == nil {
+		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
+		return
+	}
+	tenant := r.PathValue("tenant")
+
+	data := s.flowsVMScoped(r.Context(), c, tenant, r.URL.Query().Get("flow"))
+	data.Layout = s.layoutFor(r, "tenants", "Switchboard — "+tenant, "Tenant "+tenant)
+	data.Tabs = s.tabsFor(data.Layout, tenant, "flows")
+	s.renderPageOr500(w, "tenant_flows", data)
+}
+
+// handleTenantTestPage runs the simulator against one tenant, named by the path.
+//
+// It reads the parameters the routing table's Try-it links already pass, so
+// /admin/tenants/x/test?dialed=700 comes back as a trace rather than as a form.
+func (s *Server) handleTenantTestPage(w http.ResponseWriter, r *http.Request) {
+	c := s.findClient(r.URL.Query().Get("server"))
+	if c == nil {
+		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
+		return
+	}
+	tenant := r.PathValue("tenant")
+
+	data := s.flowTestVM(r.Context(), c, r.URL.Query(), tenant)
+	data.Layout = s.layoutFor(r, "tenants", "Switchboard — "+tenant, "Tenant "+tenant)
+	data.Tabs = s.tabsFor(data.Layout, tenant, "test")
+	s.renderPageOr500(w, "tenant_test", data)
+}
+
 // routingVM reads a tenant's routing table and works out everything the file
 // cannot say about itself.
 func (s *Server) routingVM(ctx context.Context, c *client.Client, tenant string) RoutingPageData {
@@ -536,20 +570,20 @@ func (s *Server) handleRoutingSectionSave(w http.ResponseWriter, r *http.Request
 	current, err := c.GetTenantFile(r.Context(), tenant, "routing")
 	if err != nil {
 		data.Error = fmt.Sprintf("Failed to load %s.routing.json: %v", tenant, err)
-		s.renderPageOr500(w, "tenant_routing", data)
+		s.renderRoutingBody(w, data)
 		return
 	}
 	doc, err := parseRoutingDoc(current)
 	if err != nil {
 		data.Error = fmt.Sprintf("Failed to read %s.routing.json: %v", tenant, err)
-		s.renderPageOr500(w, "tenant_routing", data)
+		s.renderRoutingBody(w, data)
 		return
 	}
 
 	spliced, err := doc.SpliceSection(section, normalizeContent(r.FormValue("content")))
 	if err != nil {
 		data.Error = err.Error()
-		s.renderPageOr500(w, "tenant_routing", data)
+		s.renderRoutingBody(w, data)
 		return
 	}
 
@@ -562,7 +596,7 @@ func (s *Server) handleRoutingSectionSave(w http.ResponseWriter, r *http.Request
 		} else {
 			data.Error = fmt.Sprintf("Failed to save %s: %v", section, err)
 		}
-		s.renderPageOr500(w, "tenant_routing", data)
+		s.renderRoutingBody(w, data)
 		return
 	}
 
@@ -576,7 +610,18 @@ func (s *Server) handleRoutingSectionSave(w http.ResponseWriter, r *http.Request
 	saved.Success = savedFileMsg(tenant, "routing")
 	saved.Warnings = problemData(warnings)
 	configSaved(w)
-	s.renderPageOr500(w, "tenant_routing", saved)
+	s.renderRoutingBody(w, saved)
+}
+
+// renderRoutingBody answers a section save with just the routing table's body.
+//
+// The form targets #routing-body, so a whole page here would splice a second
+// layout — sidebar, nav and all — inside a div on the page that submitted it.
+func (s *Server) renderRoutingBody(w http.ResponseWriter, data RoutingPageData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.renderPartial(w, "tenant_routing_body", data); err != nil {
+		slog.Error("[UI] Failed to render routing body", "error", err, "tenant", data.Tenant)
+	}
 }
 
 // handleRoutingCheck answers "would these patterns load", as they are typed.

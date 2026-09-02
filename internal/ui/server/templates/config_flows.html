@@ -1,3 +1,4 @@
+{{define "config_flows"}}
 <div>
     <div class="mb-6">
         <h2 class="text-xl font-bold text-white">Flows</h2>
@@ -9,9 +10,13 @@
 
     {{template "config-flash" .}}
 
-    {{if not .Tenants}}
+    {{if and (not .Scoped) (not .Tenants)}}
     <!-- No tenant has a graph. Say so, and point at the editor that can create
-         one, rather than showing an empty canvas that reads like an empty flow. -->
+         one, rather than showing an empty canvas that reads like an empty flow.
+
+         Only when unscoped: a page opened at one tenant's URL never lists the
+         others, so "no tenant has a graph" would be a claim it cannot make. Its
+         correct empty state is the per-tenant one further down. -->
     <div class="bg-slate-800/50 rounded-xl border border-dashed border-slate-700 p-10 text-center">
         <p class="text-sm text-slate-400">No tenant has a flow graph yet.</p>
         <p class="text-xs text-slate-500 mt-2">
@@ -28,11 +33,16 @@
 
     <!-- Pickers -->
     <div class="flex flex-wrap items-end gap-3 mb-4">
+        {{if not .Scoped}}
         <div>
             <label class="block text-xs font-medium text-slate-400 mb-1.5">Tenant</label>
             <!-- A textbox that narrows the list as you type. A select is fine for
                  one tenant and useless for thirty; the name is the fastest thing
-                 an operator knows about the tenant they want. -->
+                 an operator knows about the tenant they want.
+
+                 Hidden when the URL names the tenant: switching here swaps only
+                 #config-content, which would leave the breadcrumb and tab strip
+                 naming the tenant we just left. -->
             <div class="relative" id="tenant-picker">
                 <input id="tenant-input" type="text" value="{{.Tenant}}"
                        autocomplete="off" spellcheck="false" placeholder="Type to filter…"
@@ -41,6 +51,7 @@
                     class="hidden absolute left-0 right-0 mt-1 z-30 max-h-56 overflow-y-auto rounded-lg bg-slate-900 border border-slate-600 shadow-2xl py-1"></ul>
             </div>
         </div>
+        {{end}}
         <div>
             <label class="block text-xs font-medium text-slate-400 mb-1.5">Flow</label>
             <select name="flow"
@@ -789,3 +800,4 @@
     {{end}}
     {{end}}
 </div>
+{{end}}

@@ -62,19 +62,9 @@ func TestTheShellIsIdenticalBetweenPages(t *testing.T) {
 // — "globals" is a handler name, "Deployment" is what an operator calls it.
 func TestEveryPageMarksExactlyOneNavEntry(t *testing.T) {
 	ui := newTestServer(t, &fakeSignaling{flows: referenceFlows(t)})
-	for _, path := range []string{
-		"/",
-		"/admin/tenants",
-		"/admin/deployment",
-		"/admin/audio",
-		"/admin/live/registrations",
-		"/admin/live/dialogs",
-		"/admin/live/sessions",
-		"/admin/live/parked",
-		"/admin/live/rtpmanagers",
-		"/admin/config?tab=flows",
-		"/admin/config?tab=flowtest",
-	} {
+	// adminPages rather than a second copy of it: the duplicate drifted, and a
+	// page missing from both lists is a page no test ever visits.
+	for _, path := range adminPages {
 		body := ui.get(t, path).Body.String()
 		if got := strings.Count(body, "nav-item active"); got != 1 {
 			t.Errorf("%s marks %d nav entries active, want 1", path, got)

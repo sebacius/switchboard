@@ -93,6 +93,30 @@ func (s *Server) flowsVM(ctx context.Context, r *http.Request) (ConfigFlowsData,
 	return data, nil
 }
 
+// flowsVMScoped builds the flow editor for ONE tenant, named by the URL.
+//
+// It deliberately does not call ListTenants and never elects a fallback tenant.
+// The unscoped editor picks the first tenant that has flows, which is right when
+// the tenant is a picker value and wrong when it is the path: a tenant with no
+// flows file must say so, not quietly draw somebody else's graph under its own
+// breadcrumb.
+func (s *Server) flowsVMScoped(ctx context.Context, c *client.Client, tenant, flow string) ConfigFlowsData {
+	data := ConfigFlowsData{Server: c.Name(), Tenant: tenant, Flow: flow, Scoped: true}
+	data.Schema = schemaJSON()
+
+	content, err := c.GetTenantFile(ctx, tenant, "flows")
+	if err != nil {
+		data.Error = fmt.Sprintf("Failed to load %s.flows.json: %v", tenant, err)
+		return data
+	}
+	data.Content = content
+
+	if err := loadGraph(&data); err != nil {
+		data.Error = err.Error()
+	}
+	return data
+}
+
 // handleConfigFlowsSave splices the edited flow back into the tenant's file and
 // puts it through the validated write path.
 func (s *Server) handleConfigFlowsSave(w http.ResponseWriter, r *http.Request) {
