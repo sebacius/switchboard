@@ -7,6 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/pion/rtp v1.8.6
 	github.com/pion/sdp/v3 v3.0.9
+	github.com/rs/zerolog v1.32.0
 	github.com/zaf/g711 v1.4.0
 	golang.org/x/sync v0.19.0
 	google.golang.org/grpc v1.78.0
@@ -22,7 +23,6 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
-	github.com/rs/zerolog v1.32.0 // indirect
 	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect

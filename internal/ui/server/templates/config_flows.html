@@ -1,3 +1,4 @@
+{{define "config_flows"}}
 <div>
     <div class="mb-6">
         <h2 class="text-xl font-bold text-white">Flows</h2>
@@ -7,59 +8,16 @@
         </p>
     </div>
 
-    {{if .Success}}
-    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-sm">
-        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-        </svg>
-        {{.Success}}
-    </div>
-    {{end}}
+    {{template "config-flash" .}}
+    {{if .Failure}}{{template "load-failure" .Failure}}{{end}}
 
-    {{if .Error}}
-    <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm">
-        <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-        </svg>
-        {{.Error}}
-    </div>
-    {{end}}
-
-    {{if .Problems}}
-    <div class="mb-4 rounded-lg bg-red-500/10 border border-red-500/30 overflow-hidden">
-        <div class="px-4 py-2 bg-red-500/20 text-red-200 text-sm font-medium">
-            Nothing was saved. Fix these and try again:
-        </div>
-        <ul class="divide-y divide-red-500/20">
-            {{range .Problems}}
-            <li class="px-4 py-2.5">
-                <code class="text-xs text-red-300/80 font-mono">{{.Path}}</code>
-                <p class="text-sm text-red-200 mt-0.5">{{.Message}}</p>
-            </li>
-            {{end}}
-        </ul>
-    </div>
-    {{end}}
-
-    {{if .Warnings}}
-    <div class="mb-4 rounded-lg bg-amber-500/10 border border-amber-500/30 overflow-hidden">
-        <div class="px-4 py-2 bg-amber-500/20 text-amber-200 text-sm font-medium">
-            Saved, but worth a look:
-        </div>
-        <ul class="divide-y divide-amber-500/20">
-            {{range .Warnings}}
-            <li class="px-4 py-2.5">
-                <code class="text-xs text-amber-300/80 font-mono">{{.Path}}</code>
-                <p class="text-sm text-amber-200 mt-0.5">{{.Message}}</p>
-            </li>
-            {{end}}
-        </ul>
-    </div>
-    {{end}}
-
-    {{if not .Tenants}}
+    {{if and (not .Failure) (and (not .Scoped) (not .Tenants))}}
     <!-- No tenant has a graph. Say so, and point at the editor that can create
-         one, rather than showing an empty canvas that reads like an empty flow. -->
+         one, rather than showing an empty canvas that reads like an empty flow.
+
+         Only when unscoped: a page opened at one tenant's URL never lists the
+         others, so "no tenant has a graph" would be a claim it cannot make. Its
+         correct empty state is the per-tenant one further down. -->
     <div class="bg-slate-800/50 rounded-xl border border-dashed border-slate-700 p-10 text-center">
         <p class="text-sm text-slate-400">No tenant has a flow graph yet.</p>
         <p class="text-xs text-slate-500 mt-2">
@@ -76,11 +34,16 @@
 
     <!-- Pickers -->
     <div class="flex flex-wrap items-end gap-3 mb-4">
+        {{if not .Scoped}}
         <div>
             <label class="block text-xs font-medium text-slate-400 mb-1.5">Tenant</label>
             <!-- A textbox that narrows the list as you type. A select is fine for
                  one tenant and useless for thirty; the name is the fastest thing
-                 an operator knows about the tenant they want. -->
+                 an operator knows about the tenant they want.
+
+                 Hidden when the URL names the tenant: switching here swaps only
+                 #config-content, which would leave the breadcrumb and tab strip
+                 naming the tenant we just left. -->
             <div class="relative" id="tenant-picker">
                 <input id="tenant-input" type="text" value="{{.Tenant}}"
                        autocomplete="off" spellcheck="false" placeholder="Type to filter…"
@@ -89,6 +52,7 @@
                     class="hidden absolute left-0 right-0 mt-1 z-30 max-h-56 overflow-y-auto rounded-lg bg-slate-900 border border-slate-600 shadow-2xl py-1"></ul>
             </div>
         </div>
+        {{end}}
         <div>
             <label class="block text-xs font-medium text-slate-400 mb-1.5">Flow</label>
             <select name="flow"
@@ -837,3 +801,4 @@
     {{end}}
     {{end}}
 </div>
+{{end}}

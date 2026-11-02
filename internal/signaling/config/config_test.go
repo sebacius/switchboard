@@ -21,7 +21,10 @@ func loadWith(t *testing.T, env map[string]string, args ...string) (*Config, err
 	os.Args = append([]string{"signaling"}, args...)
 
 	// Ambient environment must not decide the outcome of a config test.
-	for _, k := range []string{"TTS_VOICE", "TENANTS_PATH", "ROUTING_PATH", "POLICY_CONFIG"} {
+	for _, k := range []string{
+		"TTS_VOICE", "TENANTS_PATH", "ROUTING_PATH", "POLICY_CONFIG",
+		"LOGLEVEL", "SIP_LOGLEVEL", "SIP_TRACE", "LOG_FORMAT",
+	} {
 		t.Setenv(k, "")
 	}
 	for k, v := range env {
@@ -103,5 +106,84 @@ func TestNoSupervisorConfigurationSurvives(t *testing.T) {
 	// The voice survives on purpose — flow prompts use it.
 	if f := flag.CommandLine.Lookup("tts-voice"); f == nil {
 		t.Error("--tts-voice should still be registered for flow prompts")
+	}
+}
+
+// The SIP stack logs per-packet, so it defaults quieter than the application
+// and is tuned separately.
+func TestSIPLogLevelDefaultsToWarnAndIsOverridable(t *testing.T) {
+	cfg, err := load(t)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SIPLogLevel != "warn" {
+		t.Errorf("default SIPLogLevel = %q, want warn", cfg.SIPLogLevel)
+	}
+	if cfg.LogFormat != "text" {
+		t.Errorf("default LogFormat = %q, want text", cfg.LogFormat)
+	}
+
+	cfg, err = load(t, "--sip-loglevel", "debug")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SIPLogLevel != "debug" {
+		t.Errorf("flag SIPLogLevel = %q, want debug", cfg.SIPLogLevel)
+	}
+
+	cfg, err = loadWith(t, map[string]string{"SIP_LOGLEVEL": "error"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SIPLogLevel != "error" {
+		t.Errorf("env SIPLogLevel = %q, want error", cfg.SIPLogLevel)
+	}
+}
+
+// SIP_TRACE is a shorthand for the loudest SIP level, and wins over a level set
+// alongside it — the two would otherwise contradict each other.
+func TestSIPTraceIsShorthandForTrace(t *testing.T) {
+	for _, v := range []string{"1", "true", "yes", "on"} {
+		cfg, err := loadWith(t, map[string]string{"SIP_TRACE": v})
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SIPLogLevel != "trace" {
+			t.Errorf("SIP_TRACE=%s gave %q, want trace", v, cfg.SIPLogLevel)
+		}
+	}
+	for _, v := range []string{"", "0", "false", "off"} {
+		cfg, err := loadWith(t, map[string]string{"SIP_TRACE": v})
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.SIPLogLevel == "trace" {
+			t.Errorf("SIP_TRACE=%q should not enable trace", v)
+		}
+	}
+	cfg, err := loadWith(t, map[string]string{"SIP_TRACE": "1", "SIP_LOGLEVEL": "warn"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.SIPLogLevel != "trace" {
+		t.Errorf("SIP_TRACE alongside a level gave %q, want trace", cfg.SIPLogLevel)
+	}
+}
+
+func TestLogFormatIsOverridable(t *testing.T) {
+	cfg, err := load(t, "--log-format", "json")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LogFormat != "json" {
+		t.Errorf("flag LogFormat = %q, want json", cfg.LogFormat)
+	}
+
+	cfg, err = loadWith(t, map[string]string{"LOG_FORMAT": "json"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LogFormat != "json" {
+		t.Errorf("env LogFormat = %q, want json", cfg.LogFormat)
 	}
 }

@@ -1,3 +1,4 @@
+{{define "config_flowtest"}}
 <div>
     <div class="mb-6">
         <h2 class="text-xl font-bold text-white">Test a Call</h2>
@@ -7,6 +8,7 @@
         </p>
     </div>
 
+    {{if .Failure}}{{template "load-failure" .Failure}}{{end}}
     {{if .Error}}
     <div class="mb-4 flex items-center px-4 py-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-sm">
         <svg class="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -27,6 +29,14 @@
 
                 <div>
                     <label class="block text-sm font-medium text-slate-300 mb-1.5">Tenant</label>
+                    {{if .Scoped}}
+                    {{/* The URL names the tenant, so it is stated rather than
+                         chosen: simulating a different tenant under this
+                         tenant's breadcrumb would answer a question nobody
+                         asked. The hidden field is what pins the run. */}}
+                    <input type="hidden" name="tenant" value="{{.Tenant}}">
+                    <p class="px-3 py-2 text-sm text-slate-200 font-medium">{{.Tenant}}</p>
+                    {{else}}
                     <select name="tenant"
                             class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none">
                         {{range .Tenants}}
@@ -37,6 +47,7 @@
                         <option value="">no tenants loaded</option>
                         {{end}}
                     </select>
+                    {{end}}
                 </div>
 
                 <div>
@@ -95,3 +106,4 @@
         </div>
     </div>
 </div>
+{{end}}

@@ -1,12 +1,15 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	types "github.com/sebas/switchboard/api/types/v1"
+	"github.com/sebas/switchboard/internal/ui/client"
 )
 
 // The Test Call tab: walk a call through the loaded flow graph without placing
@@ -16,13 +19,25 @@ import (
 
 // handleFlowTestPartial renders the simulator form.
 func (s *Server) handleFlowTestPartial(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPartial(w)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	q := r.URL.Query()
+	data := s.flowTestVM(r.Context(), c, r.URL.Query(), "")
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.RenderFlowTest(w, data); err != nil {
+		slog.Error("[UI] Failed to render flow test", "error", err)
+	}
+}
+
+// flowTestVM builds the simulator's view model for a read.
+//
+// One builder, two entry points: the config editor's fragment and the tenant
+// workspace's tab. A non-empty scoped names the tenant from the URL path, which
+// pins the simulation and suppresses the tenant picker.
+func (s *Server) flowTestVM(ctx context.Context, c *client.Client, q url.Values, scoped string) FlowTestData {
 	data := FlowTestData{
 		Server:    c.Name(),
 		Dialed:    q.Get("dialed"),
@@ -33,21 +48,22 @@ func (s *Server) handleFlowTestPartial(w http.ResponseWriter, r *http.Request) {
 		// ticket comes back as a trace rather than as a form to fill in again.
 		AutoRun: q.Get("dialed") != "",
 	}
+	if scoped != "" {
+		data.Tenant, data.Scoped = scoped, true
+	}
 
-	loaded, err := c.LoadedTenants(r.Context())
+	loaded, err := c.LoadedTenants(ctx)
 	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load tenants: %v", err)
-	} else {
-		data.Tenants = loaded.Tenants
-		if data.Tenant == "" && len(loaded.Tenants) > 0 {
-			data.Tenant = loaded.Tenants[0].Name
-		}
+		data.Failure = loadFailed(c, "the loaded tenant list", err)
+		return data
 	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.templates.RenderFlowTest(w, data); err != nil {
-		slog.Error("[UI] Failed to render flow test", "error", err)
+	data.Tenants = loaded.Tenants
+	// Only the unscoped form elects a default. When the path named the tenant,
+	// substituting a different one would simulate a call nobody asked about.
+	if !data.Scoped && data.Tenant == "" && len(loaded.Tenants) > 0 {
+		data.Tenant = loaded.Tenants[0].Name
 	}
+	return data
 }
 
 // handleFlowTestRun runs one simulation and renders the result panel.

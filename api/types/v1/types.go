@@ -102,6 +102,26 @@ type TenantFile struct {
 	// HasFlows reports whether the tenant has a flow graph as well as a routing
 	// table. Flows are optional, so the list has to say.
 	HasFlows bool `json:"has_flows,omitempty"`
+
+	// The fields below describe what a tenant CONTAINS, and are filled in only
+	// by the detailed listing. They exist so a tenant list can be searched by
+	// extension number, DID or flow name from one request rather than by
+	// fetching every tenant's files.
+	//
+	// No omitempty: a tenant with no DIDs must report zero rather than omitting
+	// the key, or a client cannot tell "none" from "not asked for".
+	ExtensionsCount int      `json:"extensions_count"`
+	DIDsCount       int      `json:"dids_count"`
+	GroupsCount     int      `json:"groups_count"`
+	FlowNames       []string `json:"flow_names"`
+	// SearchTerms is everything worth finding this tenant by — extension
+	// patterns, DIDs, ring group and symbolic names, flow names — so a search
+	// box can match "1200" against the tenant owning +15558001200 without the
+	// browser knowing what any of those things are.
+	SearchTerms []string `json:"search_terms"`
+	// HasWarnings reports whether the tenant's configuration currently produces
+	// findings, so the list can mark it without validating in the browser.
+	HasWarnings bool `json:"has_warnings"`
 }
 
 // ConfigProblem is one finding about a configuration file. Path locates it —

@@ -10,18 +10,15 @@ import (
 	"syscall"
 
 	"github.com/sebas/switchboard/internal/banner"
+	"github.com/sebas/switchboard/internal/logger"
 	"github.com/sebas/switchboard/internal/ui/config"
 	"github.com/sebas/switchboard/internal/ui/server"
 )
 
 func main() {
-	// Set up structured logging
-	logLevel := slog.LevelInfo
-	if os.Getenv("UI_LOGLEVEL") == "debug" {
-		logLevel = slog.LevelDebug
-	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
-	slog.SetDefault(logger)
+	// Bring logging up before config so anything Load reports is formatted like
+	// the rest of the process. The level it parses is applied just below.
+	logger.InitLogger(os.Stdout)
 
 	// Load configuration
 	cfg := config.Load()
@@ -39,19 +36,15 @@ func main() {
 		{Label: "Log Level", Value: cfg.LogLevel},
 	})
 
-	// Apply log level from config
-	switch cfg.LogLevel {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
+	// Apply log level and format from config
+	format, formatErr := logger.ParseFormat(cfg.LogFormat)
+	logger.SetFormat(format)
+	levelErr := logger.SetLevel(cfg.LogLevel)
+	for _, err := range []error{formatErr, levelErr} {
+		if err != nil {
+			slog.Warn("[CONFIG] " + err.Error())
+		}
 	}
-	logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
-	slog.SetDefault(logger)
 
 	// Create and start server
 	srv, err := server.NewServer(cfg)

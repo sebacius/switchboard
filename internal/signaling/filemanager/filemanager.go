@@ -53,6 +53,26 @@ type TenantInfo struct {
 	// table. Flows are optional — a tenant may route entirely by direct mapping
 	// — so the list has to say which kind of tenant this is.
 	HasFlows bool `json:"has_flows"`
+
+	// The fields below are filled in only by ListTenantsDetailed. They cost a
+	// parse of both files per tenant, and validation on top, so the cheap
+	// listing leaves them zero rather than making every caller pay.
+	ExtensionsCount int      `json:"extensions_count"`
+	DIDsCount       int      `json:"dids_count"`
+	GroupsCount     int      `json:"groups_count"`
+	FlowNames       []string `json:"flow_names"`
+	// SearchTerms is everything about this tenant worth finding it by: its
+	// extension patterns, its DIDs, its ring group names, its flow names.
+	//
+	// Assembled HERE rather than left to the browser, because deciding what is
+	// searchable about a tenant is a question about the routing model — a DID is
+	// searchable, a member timeout is not — and the browser has no business
+	// knowing the answer. It matches text; this decides what text.
+	SearchTerms []string `json:"search_terms"`
+	// HasWarnings reports whether this tenant's configuration currently
+	// produces findings. Errors count too: a tenant whose files do not parse is
+	// exactly the one an operator needs pointed at.
+	HasWarnings bool `json:"has_warnings"`
 }
 
 // FileKind names which of a tenant's files an operation addresses.
@@ -230,6 +250,75 @@ func (fm *FileManager) ListTenants() ([]TenantInfo, error) {
 		tenants = append(tenants, *seen[name])
 	}
 	return tenants, nil
+}
+
+// ListTenantsDetailed returns every tenant with what it contains.
+//
+// A SEPARATE method rather than a flag on ListTenants, which only stats
+// directory entries. This parses both of a tenant's files and validates them, so
+// it costs roughly forty times what the cheap listing does. An endpoint that
+// *sometimes* does forty times the work is one that eventually gets called from
+// a three-second poll by accident, and nothing about its name would warn you.
+//
+// A tenant whose files do not parse is reported with zero counts and
+// HasWarnings set, not dropped. It is precisely the tenant an operator needs to
+// be able to click on.
+func (fm *FileManager) ListTenantsDetailed() ([]TenantInfo, error) {
+	tenants, err := fm.ListTenants()
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range tenants {
+		fm.describe(&tenants[i])
+	}
+	return tenants, nil
+}
+
+// describe fills in one tenant's counts and warning state.
+func (fm *FileManager) describe(info *TenantInfo) {
+	table, set, err := dialplan.ParseTenant(fm.tenantsDir, info.Name)
+	if err != nil || table == nil {
+		info.HasWarnings = true
+		return
+	}
+
+	info.ExtensionsCount = len(table.Extensions)
+	info.DIDsCount = len(table.DIDs)
+	info.GroupsCount = len(table.Groups)
+
+	terms := map[string]bool{}
+	for pattern := range table.Extensions {
+		terms[pattern] = true
+	}
+	for did := range table.DIDs {
+		terms[did] = true
+	}
+	for name := range table.Groups {
+		terms[name] = true
+	}
+	for name := range table.SymbolicTargets {
+		terms[name] = true
+	}
+
+	if set != nil {
+		info.FlowNames = make([]string, 0, len(set.Flows))
+		for name := range set.Flows {
+			info.FlowNames = append(info.FlowNames, name)
+			terms[name] = true
+		}
+		sort.Strings(info.FlowNames)
+	}
+
+	info.SearchTerms = make([]string, 0, len(terms))
+	for term := range terms {
+		info.SearchTerms = append(info.SearchTerms, term)
+	}
+	sort.Strings(info.SearchTerms)
+
+	// The same cross-file check the config API runs on a write, so the badge and
+	// the refusal agree about what is wrong with a tenant.
+	info.HasWarnings = len(dialplan.CheckFlows(info.Name, table, set)) > 0
 }
 
 // GetTenantFile reads one of a tenant's configuration files.

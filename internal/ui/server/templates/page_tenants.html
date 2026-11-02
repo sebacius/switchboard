@@ -1,0 +1,22 @@
+{{define "content"}}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h2 class="text-xl font-semibold text-white">Tenants</h2>
+        <p class="text-sm text-slate-400">Routing tables and flow graphs, one per tenant</p>
+    </div>
+</div>
+
+<div id="reload-status" class="mb-4"></div>
+
+{{/* Configuration drift: is what is on disk what is serving calls? Asked of the
+     signaling server rather than remembered here, so a second operator, a UI
+     restart and a signaling restart all get the same answer. */}}
+<div id="reload-banner"
+     hx-get="{{.Layout.Link "/admin/config/partials/reload-banner"}}"
+     hx-trigger="load, config-saved from:body, every 30s"
+     hx-swap="innerHTML"></div>
+
+{{/* The fragment's own hx-targets all name #config-content, so keeping that id
+     here means every edit, save and delete inside it works unchanged. */}}
+<div id="config-content">{{template "config_tenants" .}}</div>
+{{end}}

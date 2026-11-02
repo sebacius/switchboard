@@ -1,0 +1,18 @@
+{{/* The live answer to "would these patterns load". Advisory: the server is
+     still what decides, and a save is attempted regardless of what this says. */}}
+<div id="routing-diagnostics">
+    {{if .Error}}
+    <p class="text-xs text-red-300">{{.Error}}</p>
+    {{else if .Conflicts}}
+    <div class="rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2">
+        <p class="text-xs font-medium text-red-200 mb-1">These can match the same digits with neither more specific:</p>
+        {{range .Conflicts}}
+        <p class="text-xs text-red-300 font-mono">{{.A}} &nbsp;&amp;&nbsp; {{.B}}</p>
+        {{end}}
+    </div>
+    {{else}}
+    <p class="text-xs text-emerald-400">No ambiguous pairs. Match order:
+        {{range .Ranked}}<span class="font-mono ml-1">{{.Rank}}.{{.Key}}</span>{{end}}
+    </p>
+    {{end}}
+</div>

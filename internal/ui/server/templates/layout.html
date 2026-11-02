@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Layout.Title}}</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        html { scroll-behavior: smooth; }
+        .nav-item.active {
+            background-color: rgba(16, 185, 129, 0.15);
+            border-left-color: #10b981;
+        }
+        .nav-item.active .nav-text { color: #ffffff; font-weight: 500; }
+        .nav-item.active .nav-icon { color: #10b981; }
+        section[id] { scroll-margin-top: 80px; }
+        textarea { tab-size: 4; }
+    </style>
+    <!-- Anything a single page needs in the head goes here, defined by that
+         page. The flow canvas uses it to load its graph library, which MUST be
+         present before the editor script runs — that is why cross-page
+         navigation is a real browser navigation and not a fragment swap. -->
+    {{block "head_extra" .}}{{end}}
+</head>
+<body class="bg-slate-900 text-slate-200 min-h-screen">
+    <header class="fixed top-0 left-0 right-0 z-50 bg-slate-800 border-b border-slate-700 px-6 py-3">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-9 h-9 bg-emerald-500 rounded-lg flex items-center justify-center">
+                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold text-white">Switchboard</h1>
+                    <p class="text-xs text-slate-400">{{.Layout.Subtitle}}</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-3">
+                {{block "header_actions" .}}{{end}}
+            </div>
+        </div>
+    </header>
+
+    <div class="flex pt-14">
+        <aside class="fixed left-0 top-14 bottom-0 w-56 bg-slate-800/50 border-r border-slate-700 overflow-y-auto">
+            <nav class="py-4">
+                <div class="px-4 mb-4">
+                    <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Navigation</p>
+                </div>
+                <ul class="space-y-1 px-2">
+                    {{range .Layout.Items}}
+                    {{if .Section}}
+                    <li class="pt-4">
+                        <div class="px-3 mb-2">
+                            <p class="text-xs font-semibold text-slate-500 uppercase tracking-wider">{{.Section}}</p>
+                        </div>
+                    </li>
+                    {{end}}
+                    <li>
+                        <a href="{{$.Layout.Link .Href}}"
+                           class="nav-item{{if .Active}} active{{end}} flex items-center px-3 py-2.5 rounded-lg border-l-2 border-transparent hover:bg-slate-700/50 transition-colors group">
+                            <svg class="nav-icon w-5 h-5 text-slate-400 group-hover:text-{{.Accent}}-400 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                {{range .Icon}}<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{.}}"></path>{{end}}
+                            </svg>
+                            <span class="nav-text text-sm text-slate-300 group-hover:text-white">{{.Label}}</span>
+                        </a>
+                    </li>
+                    {{end}}
+                </ul>
+            </nav>
+
+            <div class="absolute bottom-0 left-0 right-0 p-4 border-t border-slate-700 bg-slate-800/80">
+                {{if .Layout.MultiBackend}}
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Server</label>
+                <select onchange="window.location.href=this.value"
+                        class="w-full bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none">
+                    {{/* A relative query resolves against the current path, so
+                         switching backend keeps you on the page you were on
+                         rather than sending you back to the config editor. */}}
+                    {{range .Layout.Backends}}
+                    <option value="?server={{.Name}}" {{if eq .Name $.Layout.Server}}selected{{end}}>{{.Name}}</option>
+                    {{end}}
+                </select>
+                {{else}}
+                <p class="text-xs text-slate-500 text-center">Single Server Mode</p>
+                {{end}}
+            </div>
+        </aside>
+
+        <main class="flex-1 ml-56 p-6">
+            {{/* The dashboard and the live monitors never short-circuit on a
+                 missing backend — they aggregate an empty client list and render
+                 empty tables. Without this they are silent about why. */}}
+            {{if not .Layout.Backends}}{{template "no-backend" .}}{{end}}
+            {{template "content" .}}
+        </main>
+    </div>
+
+    {{block "scripts" .}}{{end}}
+</body>
+</html>

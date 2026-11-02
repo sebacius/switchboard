@@ -17,6 +17,15 @@ type Config struct {
 	AdvertiseAddr string // Address to advertise in SIP headers
 	LogLevel      string
 
+	// SIPLogLevel is the level for sipgo's own logging, independent of
+	// LogLevel. It defaults to warn because the SIP stack's transaction and
+	// transport chatter is per-packet and drowns the application's own log.
+	// "trace" additionally turns on raw SIP message dumps.
+	SIPLogLevel string
+
+	// LogFormat is "text" (the bracketed console format) or "json".
+	LogFormat string
+
 	// API settings
 	APIPort int // HTTP API port (default 8080)
 
@@ -82,7 +91,9 @@ func Load() (*Config, error) {
 	flag.IntVar(&cfg.APIPort, "api-port", 8080, "HTTP API port")
 	flag.StringVar(&cfg.BindAddr, "bind", "0.0.0.0", "Bind address for SIP and API")
 	flag.StringVar(&cfg.AdvertiseAddr, "advertise", "", "Address to advertise in SIP headers (auto-detected if not set)")
-	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error)")
+	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error, off)")
+	flag.StringVar(&cfg.SIPLogLevel, "sip-loglevel", "warn", "SIP stack (sipgo) log level: trace, debug, info, warn, error, off. trace also dumps raw SIP messages")
+	flag.StringVar(&cfg.LogFormat, "log-format", "text", "Log output format (text, json)")
 	flag.StringVar(&cfg.TTSVoice, "tts-voice", "alloy", "Default TTS voice for flow prompts")
 	flag.StringVar(&cfg.CDRPath, "cdr-path", "",
 		"Append-only JSONL call record file; empty disables recording")
@@ -124,6 +135,16 @@ func Load() (*Config, error) {
 	}
 	if loglevel := os.Getenv("LOGLEVEL"); loglevel != "" {
 		cfg.LogLevel = loglevel
+	}
+	if siplevel := os.Getenv("SIP_LOGLEVEL"); siplevel != "" {
+		cfg.SIPLogLevel = siplevel
+	}
+	// SIP_TRACE is a shorthand for the loudest SIP level.
+	if isTruthy(os.Getenv("SIP_TRACE")) {
+		cfg.SIPLogLevel = "trace"
+	}
+	if format := os.Getenv("LOG_FORMAT"); format != "" {
+		cfg.LogFormat = format
 	}
 	if rtpmanager := os.Getenv("RTPMANAGER_ADDRS"); rtpmanager != "" {
 		// Try parsing as node=addr format first
@@ -250,4 +271,14 @@ func getPrimaryInterfaceIP() string {
 	}
 
 	return "127.0.0.1"
+}
+
+// isTruthy reports whether an environment variable is set to an affirmative
+// value. Used for boolean env shorthands like SIP_TRACE.
+func isTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }

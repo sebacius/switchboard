@@ -355,7 +355,26 @@ name is exactly the drift the move was meant to end.
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--loglevel` | `LOGLEVEL` | debug | Log level: debug, info, warn, error |
+| `--loglevel` | `LOGLEVEL` | debug | Application log level: debug, info, warn, error, off |
+| `--sip-loglevel` | `SIP_LOGLEVEL` | warn | SIP stack (sipgo) log level: trace, debug, info, warn, error, off |
+| `--log-format` | `LOG_FORMAT` | text | Output format: text or json |
+
+All services share one log format. Application logs and any library that ships its
+own logger are rendered identically and written to stdout through a single sink, so
+lines cannot interleave mid-write.
+
+`--log-format=json` emits one object per line — `{time, level, src, component, msg,
+fields}` — for shipping to a log aggregator. Attributes live under `fields` rather
+than at the top level, because library output can carry keys that would otherwise
+collide with the envelope.
+
+The SIP stack has its own level because its transaction and transport logging is
+per-packet and drowns everything else. At the default `warn` it appears only when
+something is actually wrong; raise it to `debug` to see transaction and transport
+internals, or to `trace` to dump raw SIP messages (`SIP_TRACE=1` is a shorthand for
+`--sip-loglevel=trace`). It is one ordered dial rather than a level plus a separate
+trace switch, because the packet dumps are themselves emitted at debug — two knobs
+could contradict each other and one would have to silently win.
 
 ### Complete Example
 
@@ -442,7 +461,17 @@ Each RTP session uses 2 ports (RTP + RTCP), so capacity = (max - min) / 2.
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--loglevel` | `LOGLEVEL` | debug | Log level: debug, info, warn, error |
+| `--loglevel` | `LOGLEVEL` | debug | Log level: debug, info, warn, error, off |
+| `--log-format` | `LOG_FORMAT` | text | Output format: text or json |
+
+All services share one log format. Application logs and any library that ships its
+own logger are rendered identically and written to stdout through a single sink, so
+lines cannot interleave mid-write.
+
+`--log-format=json` emits one object per line — `{time, level, src, component, msg,
+fields}` — for shipping to a log aggregator. Attributes live under `fields` rather
+than at the top level, because library output can carry keys that would otherwise
+collide with the envelope.
 
 ### Complete Example
 
@@ -502,7 +531,17 @@ Backend format: `name=url` pairs, comma-separated.
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--loglevel` | `UI_LOGLEVEL` | info | Log level: debug, info, warn, error |
+| `--loglevel` | `UI_LOGLEVEL` | info | Log level: debug, info, warn, error, off |
+| `--log-format` | `UI_LOG_FORMAT` | text | Output format: text or json |
+
+All services share one log format. Application logs and any library that ships its
+own logger are rendered identically and written to stdout through a single sink, so
+lines cannot interleave mid-write.
+
+`--log-format=json` emits one object per line — `{time, level, src, component, msg,
+fields}` — for shipping to a log aggregator. Attributes live under `fields` rather
+than at the top level, because library output can carry keys that would otherwise
+collide with the envelope.
 
 ### Complete Example
 
@@ -640,6 +679,8 @@ BIND=0.0.0.0
 ADVERTISE=192.168.1.10
 RTPMANAGER_ADDRS=localhost:9090
 LOGLEVEL=info
+SIP_LOGLEVEL=warn
+LOG_FORMAT=text
 ```
 
 ```bash
@@ -653,6 +694,7 @@ AUDIO_PATH=/var/lib/switchboard/audio
 TTS_SERVER=http://localhost:8000
 ASR_SERVER=http://localhost:8001
 LOGLEVEL=info
+LOG_FORMAT=text
 ```
 
 ## Related Documents
