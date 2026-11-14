@@ -1,0 +1,11 @@
+# Keep the build context small: `make deploy` ships it over SSH to the homelab.
+.git
+build/
+audio/
+/signaling
+/rtpmanager
+/ui
+*.wav
+*.tar
+openspec/
+docs/

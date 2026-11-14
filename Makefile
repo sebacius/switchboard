@@ -171,6 +171,79 @@ services-logs:
 	@docker compose -f $(COMPOSE_SERVICES) logs -f
 
 # ============================================================================
+# Homelab: the whole stack (signaling, 2x rtpmanager, ui) on a remote Docker host.
+# Images are built ON the homelab from this tree over SSH; nothing is synced.
+#
+#   make homelab-setup     once: data dir + seed config, ufw rules, Caddy site
+#   make deploy            build + (re)start everything changed
+#   make deploy SVC=ui     just one service
+#   make logs              follow all;  make logs SVC=signaling
+#   make logs-signaling | logs-rtp | logs-ui
+#   make ps | restart | down
+#
+# Tunables: LOGLEVEL=debug SIP_LOGLEVEL=trace (raw SIP) on deploy.
+# ============================================================================
+
+HOMELAB ?= homelab
+HOMELAB_IP ?= 192.168.50.55
+HOMELAB_LAN ?= 192.168.50.0/24
+HOMELAB_DATA ?= /srv/switchboard
+HOMELAB_CADDYFILE ?= /srv/edge/Caddyfile
+HOMELAB_HOSTNAME ?= switchboard.homelab.lan
+AUDIO_SRC ?= audio
+SVC ?=
+TAIL ?= 200
+
+HOMELAB_COMPOSE = DOCKER_HOST=ssh://$(HOMELAB) ADVERTISE=$(HOMELAB_IP) DATA_DIR=$(HOMELAB_DATA) \
+	docker compose -f deploy/homelab/compose.yml
+
+.PHONY: deploy homelab-setup logs logs-signaling logs-rtp logs-ui ps restart down
+
+deploy:
+	@$(HOMELAB_COMPOSE) up -d --build --remove-orphans $(SVC)
+	@$(HOMELAB_COMPOSE) ps
+
+logs:
+	@$(HOMELAB_COMPOSE) logs -f --tail $(TAIL) $(SVC)
+
+logs-signaling:
+	@$(HOMELAB_COMPOSE) logs -f --tail $(TAIL) signaling
+
+logs-rtp:
+	@$(HOMELAB_COMPOSE) logs -f --tail $(TAIL) rtpmanager-1 rtpmanager-2
+
+logs-ui:
+	@$(HOMELAB_COMPOSE) logs -f --tail $(TAIL) ui
+
+ps:
+	@$(HOMELAB_COMPOSE) ps
+
+restart:
+	@$(HOMELAB_COMPOSE) restart $(SVC)
+
+down:
+	@$(HOMELAB_COMPOSE) down
+
+# Idempotent. Seeding never overwrites files already on the homelab (the UI edits them).
+homelab-setup:
+	@echo "==> data dir $(HOMELAB_DATA)"
+	@ssh $(HOMELAB) 'sudo mkdir -p $(HOMELAB_DATA)/config $(HOMELAB_DATA)/tenants $(HOMELAB_DATA)/cdr $(HOMELAB_DATA)/audio && sudo chown -R 1000:1000 $(HOMELAB_DATA)'
+	@rsync -a --ignore-existing resources/config/ $(HOMELAB):$(HOMELAB_DATA)/config/
+	@rsync -a --ignore-existing resources/tenants/ $(HOMELAB):$(HOMELAB_DATA)/tenants/
+	@rsync -a --ignore-existing $(AUDIO_SRC)/ $(HOMELAB):$(HOMELAB_DATA)/audio/
+	@echo "==> ufw: SIP + RTP from the LAN, signaling API from Docker bridges (the UI)"
+	@ssh $(HOMELAB) 'sudo ufw allow from $(HOMELAB_LAN) to any port 5060 comment "switchboard SIP" && \
+		sudo ufw allow from $(HOMELAB_LAN) to any port 20000:20019 proto udp comment "switchboard RTP" && \
+		sudo ufw allow from 172.16.0.0/12 to any port 8090 proto tcp comment "switchboard API (ui)"'
+	@echo "==> Caddy site $(HOMELAB_HOSTNAME)"
+	@ssh $(HOMELAB) 'grep -q "^$(HOMELAB_HOSTNAME) " $(HOMELAB_CADDYFILE) || { \
+		sudo cp $(HOMELAB_CADDYFILE) $(HOMELAB_CADDYFILE).bak-switchboard && \
+		printf "\n$(HOMELAB_HOSTNAME) {\n\treverse_proxy switchboard-ui:3000\n}\n" | sudo tee -a $(HOMELAB_CADDYFILE) >/dev/null; } && \
+		docker exec caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null && \
+		docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile'
+	@grep -q "$(HOMELAB_HOSTNAME)" /etc/hosts || echo "NOTE: add $(HOMELAB_HOSTNAME) to the homelab line in /etc/hosts on this laptop"
+
+# ============================================================================
 # Testing targets
 # ============================================================================
 
