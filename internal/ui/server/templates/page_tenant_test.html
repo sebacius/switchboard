@@ -1,0 +1,13 @@
+{{define "content"}}
+{{template "tenant-header" .}}
+
+{{/* The simulator runs against what the signaling server is CURRENTLY routing
+     with, not what is on disk, so the drift banner matters most on this tab. */}}
+<div id="reload-status" class="mb-4"></div>
+<div id="reload-banner"
+     hx-get="{{.Layout.Link "/admin/config/partials/reload-banner"}}"
+     hx-trigger="load, config-saved from:body, every 30s"
+     hx-swap="innerHTML"></div>
+
+{{template "config_flowtest" .}}
+{{end}}

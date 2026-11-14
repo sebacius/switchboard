@@ -1,0 +1,74 @@
+{{define "content"}}
+<section id="rtpmanagers" class="mb-10">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h2 class="text-xl font-semibold text-white">RTP Managers</h2>
+            <p class="text-sm text-slate-400">Media processing servers{{if .MultiBackend}} across all backends{{end}}</p>
+        </div>
+        <div class="w-8 h-8 bg-cyan-500/20 rounded-lg flex items-center justify-center">
+            <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path>
+            </svg>
+        </div>
+    </div>
+    <div id="rtpmanagers-container" hx-get="{{.Layout.Link "/admin/partials/rtpmanagers"}}" hx-trigger="every 5s" hx-swap="innerHTML">
+        {{template "rtpmanagers" .}}
+    </div>
+</section>
+{{end}}
+
+{{define "scripts"}}
+<div id="drain-modal-container"></div>
+<script>
+        // Close modal function (called from modal template)
+        function closeModal() {
+            const container = document.getElementById('drain-modal-container');
+            if (container) {
+                container.innerHTML = '';
+            }
+            // Resume polling when modal closes
+            resumeRtpManagersPolling();
+        }
+
+        // Pause/resume polling functions
+        function pauseRtpManagersPolling() {
+            const container = document.getElementById('rtpmanagers-container');
+            if (container) {
+                container.removeAttribute('hx-trigger');
+                htmx.process(container);
+            }
+        }
+
+        function resumeRtpManagersPolling() {
+            const container = document.getElementById('rtpmanagers-container');
+            if (container) {
+                container.setAttribute('hx-trigger', 'every 5s');
+                htmx.process(container);
+            }
+        }
+
+        // Pause polling when modal opens
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            if (evt.detail.target && evt.detail.target.id === 'drain-modal-container') {
+                // Modal content was loaded, pause polling
+                if (evt.detail.target.innerHTML.trim() !== '') {
+                    pauseRtpManagersPolling();
+                }
+            }
+        });
+
+        // Close modal on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+
+        // Listen for HTMX events to close modal after successful drain
+        document.body.addEventListener('htmx:afterRequest', function(evt) {
+            if (evt.detail.successful && evt.detail.target && evt.detail.target.id === 'rtpmanagers-container') {
+                closeModal();
+            }
+        });
+</script>
+{{end}}

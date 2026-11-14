@@ -39,6 +39,14 @@ func main() {
 
 	// Initialize logger
 	logger.InitLogger(os.Stdout)
+	format, formatErr := logger.ParseFormat(cfg.LogFormat)
+	logger.SetFormat(format)
+	levelErr := logger.SetLevel(cfg.LogLevel)
+	for _, err := range []error{formatErr, levelErr} {
+		if err != nil {
+			slog.Warn("[CONFIG] " + err.Error())
+		}
+	}
 
 	// Create RTP Manager server
 	srvCfg := &server.Config{

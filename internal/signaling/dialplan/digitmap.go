@@ -467,17 +467,16 @@ func CompileDigitMap(raw map[string]Entry) (*DigitMap, error) {
 		})
 	}
 
-	for i := 0; i < len(m.entries); i++ {
-		for j := i + 1; j < len(m.entries); j++ {
-			a, b := m.entries[i].pattern, m.entries[j].pattern
-			if !a.Overlaps(b) {
-				continue
-			}
-			if a.Dominates(b) || b.Dominates(a) {
-				continue
-			}
-			return nil, &AmbiguousPatternsError{A: a.Raw(), B: b.Raw()}
-		}
+	// One definition of "ambiguous", shared with what an editor warns about.
+	// This loader stops at the first pair because it is refusing to start and
+	// one reason is enough; Conflicts reports them all for an editor that wants
+	// to fix the table in a single pass.
+	patterns := make([]*Pattern, 0, len(m.entries))
+	for _, e := range m.entries {
+		patterns = append(patterns, e.pattern)
+	}
+	if found := conflictsAmong(patterns); len(found) > 0 {
+		return nil, &AmbiguousPatternsError{A: found[0].A, B: found[0].B}
 	}
 
 	return m, nil

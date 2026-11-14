@@ -23,6 +23,9 @@ type Config struct {
 
 	// Log level
 	LogLevel string
+
+	// LogFormat is "text" (the bracketed console format) or "json".
+	LogFormat string
 }
 
 // Load loads configuration from command line flags and environment variables
@@ -32,7 +35,8 @@ func Load() *Config {
 	// Define flags
 	flag.IntVar(&cfg.Port, "port", 3000, "UI HTTP server port")
 	flag.StringVar(&cfg.BindAddr, "bind", "0.0.0.0", "UI bind address")
-	flag.StringVar(&cfg.LogLevel, "loglevel", "info", "Log level (debug, info, warn, error)")
+	flag.StringVar(&cfg.LogLevel, "loglevel", "info", "Log level (debug, info, warn, error, off)")
+	flag.StringVar(&cfg.LogFormat, "log-format", "text", "Log output format (text, json)")
 
 	var backends string
 	flag.StringVar(&backends, "backends", "http://localhost:8080", "Comma-separated list of signaling server addresses (name=addr or just addr)")
@@ -53,6 +57,9 @@ func Load() *Config {
 	}
 	if loglevel := os.Getenv("UI_LOGLEVEL"); loglevel != "" {
 		cfg.LogLevel = loglevel
+	}
+	if format := os.Getenv("UI_LOG_FORMAT"); format != "" {
+		cfg.LogFormat = format
 	}
 	if envBackends := os.Getenv("UI_BACKENDS"); envBackends != "" {
 		cfg.Backends = parseBackends(envBackends)

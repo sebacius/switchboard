@@ -1,0 +1,24 @@
+{{define "content"}}
+{{template "tenant-header" .}}
+
+<div id="reload-status" class="mb-4"></div>
+
+{{/* Configuration drift, asked of the signaling server: the canvas edits what is
+     on disk, and a saved graph is not routing calls until a reload. */}}
+<div id="reload-banner"
+     hx-get="{{.Layout.Link "/admin/config/partials/reload-banner"}}"
+     hx-trigger="load, config-saved from:body, every 30s"
+     hx-swap="innerHTML"></div>
+
+{{/* The fragment's own hx-targets all name #config-content, so keeping that id
+     here means the flow picker and the save work unchanged at this URL. */}}
+<div id="config-content">{{template "config_flows" .}}</div>
+{{end}}
+
+{{define "head_extra"}}
+    <!-- The flow canvas. Pinned to an exact version and loaded in the head, so
+         the editor's script can never run before the library it needs has
+         arrived. Same pinning as the config page, for the same reason. -->
+    <link rel="stylesheet" href="https://unpkg.com/drawflow@0.0.60/dist/drawflow.min.css">
+    <script src="https://unpkg.com/drawflow@0.0.60/dist/drawflow.min.js"></script>
+{{end}}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/sebas/switchboard/internal/banner"
 	"github.com/sebas/switchboard/internal/logger"
+	"github.com/sebas/switchboard/internal/logger/siplog"
 	"github.com/sebas/switchboard/internal/signaling/app"
 	"github.com/sebas/switchboard/internal/signaling/config"
 	"github.com/sebas/switchboard/internal/signaling/validate"
@@ -36,17 +37,36 @@ func main() {
 
 	// Print startup banner
 	banner.Print("SIGNALING SERVER", []banner.ConfigLine{
-		{Label: "Listen", Value: fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)},
+		{Label: "SIP", Value: fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)},
+		// The REST API the admin UI reads. Announced here rather than only in a
+		// log line after the banner: this block is where an operator looks to
+		// find out what is listening, and the UI is unusable without this port.
+		{Label: "API", Value: fmt.Sprintf("http://%s:%d", cfg.BindAddr, cfg.APIPort)},
 		{Label: "Advertise", Value: cfg.AdvertiseAddr},
 		{Label: "RTP Manager", Value: strings.Join(cfg.RTPManagerAddrs, ", ")},
 		{Label: "Policy", Value: cfg.PolicyPath},
 		{Label: "Tenants", Value: cfg.TenantsPath},
 		{Label: "Routing", Value: cfg.RoutingPath},
 		{Label: "Log Level", Value: cfg.LogLevel},
+		{Label: "SIP Log Level", Value: cfg.SIPLogLevel},
 	})
 
-	// Initialize logger
+	// Initialize logging before anything that captures slog.Default or the
+	// zerolog global. app.NewServer does both.
 	logger.InitLogger(os.Stdout)
+	format, formatErr := logger.ParseFormat(cfg.LogFormat)
+	logger.SetFormat(format)
+	levelErr := logger.SetLevel(cfg.LogLevel)
+
+	// sipgo's transport and transaction layers copy the zerolog global when the
+	// user agent is built, so this has to happen before app.NewServer.
+	sipErr := siplog.Configure(cfg.SIPLogLevel)
+
+	for _, err := range []error{formatErr, levelErr, sipErr} {
+		if err != nil {
+			slog.Warn("[CONFIG] " + err.Error())
+		}
+	}
 
 	// Create server
 	swboard, err := app.NewServer(cfg)

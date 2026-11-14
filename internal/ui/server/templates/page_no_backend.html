@@ -1,0 +1,6 @@
+{{/* What a page shows when the UI was started with no signaling server to read
+     from. The shell is the point: a bare 503 leaves an operator on a white page
+     with no navigation and nothing naming the setting that would fix it. */}}
+{{define "content"}}
+{{template "no-backend" .}}
+{{end}}

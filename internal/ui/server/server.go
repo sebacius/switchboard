@@ -65,6 +65,21 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	// Parked calls control endpoints
 	mux.HandleFunc("/admin/park/unpark", s.handleForceUnpark)
 
+	// Pages. Every sidebar entry is one of these: a real URL that renders a
+	// complete page on a hard GET and survives a refresh.
+	mux.HandleFunc("/admin/tenants", s.handleTenantsPage)
+	mux.HandleFunc("/admin/deployment", s.handleDeploymentPage)
+	mux.HandleFunc("/admin/audio", s.handleAudioPage)
+	mux.HandleFunc("/admin/live/{which}", s.handleLivePage)
+
+	// The tenant workspace. A tenant's routing table and its flows load and
+	// validate as ONE unit, so they live behind one URL.
+	mux.HandleFunc("/admin/tenants/{tenant}", s.handleTenantWorkspace)
+	mux.HandleFunc("/admin/tenants/{tenant}/routing/section", s.handleRoutingSectionSave)
+	mux.HandleFunc("/admin/tenants/{tenant}/routing/check", s.handleRoutingCheck)
+	mux.HandleFunc("/admin/tenants/{tenant}/flows", s.handleTenantFlowsPage)
+	mux.HandleFunc("/admin/tenants/{tenant}/test", s.handleTenantTestPage)
+
 	// Configuration management
 	mux.HandleFunc("/admin/config", s.handleConfigPage)
 	mux.HandleFunc("/admin/config/partials/tenants", s.handleConfigTenantsPartial)
@@ -127,7 +142,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{stats: true})
+	data.Layout = s.layoutFor(r, "overview", "Switchboard Admin", "SIP IVR Dashboard")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderDashboard(w, data); err != nil {
 		slog.Error("[UI] Failed to render dashboard", "error", err)
@@ -137,7 +153,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 // handleStatsPartial renders the stats cards partial for HTMX
 func (s *Server) handleStatsPartial(w http.ResponseWriter, r *http.Request) {
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{stats: true})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderStats(w, data); err != nil {
 		slog.Error("[UI] Failed to render stats partial", "error", err)
@@ -147,7 +163,7 @@ func (s *Server) handleStatsPartial(w http.ResponseWriter, r *http.Request) {
 
 // handleBackendsPartial renders the backends status partial for HTMX
 func (s *Server) handleBackendsPartial(w http.ResponseWriter, r *http.Request) {
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderBackends(w, data); err != nil {
 		slog.Error("[UI] Failed to render backends partial", "error", err)
@@ -157,7 +173,7 @@ func (s *Server) handleBackendsPartial(w http.ResponseWriter, r *http.Request) {
 
 // handleRegistrationsPartial renders the registrations table partial for HTMX
 func (s *Server) handleRegistrationsPartial(w http.ResponseWriter, r *http.Request) {
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{registrations: true})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderRegistrations(w, data); err != nil {
 		slog.Error("[UI] Failed to render registrations partial", "error", err)
@@ -167,7 +183,7 @@ func (s *Server) handleRegistrationsPartial(w http.ResponseWriter, r *http.Reque
 
 // handleDialogsPartial renders the dialogs table partial for HTMX
 func (s *Server) handleDialogsPartial(w http.ResponseWriter, r *http.Request) {
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{dialogs: true})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderDialogs(w, data); err != nil {
 		slog.Error("[UI] Failed to render dialogs partial", "error", err)
@@ -177,7 +193,7 @@ func (s *Server) handleDialogsPartial(w http.ResponseWriter, r *http.Request) {
 
 // handleSessionsPartial renders the sessions table partial for HTMX
 func (s *Server) handleSessionsPartial(w http.ResponseWriter, r *http.Request) {
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{sessions: true})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderSessions(w, data); err != nil {
 		slog.Error("[UI] Failed to render sessions partial", "error", err)
@@ -187,7 +203,7 @@ func (s *Server) handleSessionsPartial(w http.ResponseWriter, r *http.Request) {
 
 // handleRtpManagersPartial renders the RTP managers section partial for HTMX
 func (s *Server) handleRtpManagersPartial(w http.ResponseWriter, r *http.Request) {
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{rtpManagers: true})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderRtpManagers(w, data); err != nil {
 		slog.Error("[UI] Failed to render rtpmanagers partial", "error", err)
@@ -196,7 +212,7 @@ func (s *Server) handleRtpManagersPartial(w http.ResponseWriter, r *http.Request
 }
 
 // buildTemplateData fetches data from all backends and aggregates it
-func (s *Server) buildTemplateData(ctx context.Context) TemplateData {
+func (s *Server) buildTemplateData(ctx context.Context, w want) TemplateData {
 	uptime := time.Since(s.startTime)
 	uptimeStr := formatUptime(uptime)
 
@@ -224,7 +240,7 @@ func (s *Server) buildTemplateData(ctx context.Context) TemplateData {
 		wg.Add(1)
 		go func(c *client.Client) {
 			defer wg.Done()
-			s.fetchBackendData(ctx, c, &data, &mu)
+			s.fetchBackendData(ctx, c, w, &data, &mu)
 		}(c)
 	}
 
@@ -232,8 +248,38 @@ func (s *Server) buildTemplateData(ctx context.Context) TemplateData {
 	return data
 }
 
-// fetchBackendData fetches all data from a single backend
-func (s *Server) fetchBackendData(ctx context.Context, c *client.Client, data *TemplateData, mu *sync.Mutex) {
+// want says which resources a render actually needs.
+//
+// fetchBackendData used to fetch all seven, sequentially, per backend, on EVERY
+// partial poll — so a dialogs refresh every three seconds paid for
+// registrations, sessions, parked calls and RTP managers as well, and threw them
+// away. Splitting the monitors onto their own pages made that visible rather
+// than making it worse: each page now asks for one thing.
+//
+// Health is always fetched. It gates the rest — an unreachable backend has
+// nothing else to say — and it is what the backend list is built from.
+type want struct {
+	stats         bool
+	registrations bool
+	dialogs       bool
+	sessions      bool
+	rtpManagers   bool
+	parkedCalls   bool
+}
+
+// wantAll is the dashboard's historical appetite, kept for anything that really
+// does show everything.
+func wantAll() want {
+	return want{stats: true, registrations: true, dialogs: true,
+		sessions: true, rtpManagers: true, parkedCalls: true}
+}
+
+// fetchBackendData fetches the wanted data from a single backend.
+//
+// The wanted fetchers run CONCURRENTLY. They are independent GETs against one
+// server and the sequencing they used to have bought nothing — it just made the
+// slowest one additive with the others.
+func (s *Server) fetchBackendData(ctx context.Context, c *client.Client, w want, data *TemplateData, mu *sync.Mutex) {
 	backendName := c.Name()
 	backendData := BackendData{
 		Name:    backendName,
@@ -241,7 +287,6 @@ func (s *Server) fetchBackendData(ctx context.Context, c *client.Client, data *T
 		Status:  "offline",
 	}
 
-	// Fetch health
 	health, err := c.Health(ctx)
 	if err != nil {
 		slog.Debug("[UI] Backend health check failed", "backend", backendName, "error", err)
@@ -254,142 +299,172 @@ func (s *Server) fetchBackendData(ctx context.Context, c *client.Client, data *T
 	backendData.Status = health.Status
 	backendData.Uptime = formatUptime(time.Duration(health.Uptime) * time.Second)
 
-	// Fetch stats
-	stats, err := c.Stats(ctx)
-	if err != nil {
-		slog.Debug("[UI] Backend stats fetch failed", "backend", backendName, "error", err)
-	} else {
-		mu.Lock()
-		data.Stats.ActiveSessions += stats.ActiveSessions
-		data.Stats.TotalRegistrations += stats.TotalRegistrations
-		data.Stats.TotalBindings += stats.TotalBindings
-		data.Stats.ActiveDialogs += stats.ActiveDialogs
-		mu.Unlock()
-	}
-
-	// Fetch registrations
-	regs, err := c.Registrations(ctx)
-	if err != nil {
-		slog.Debug("[UI] Backend registrations fetch failed", "backend", backendName, "error", err)
-	} else {
-		mu.Lock()
-		for _, r := range regs {
-			expiresAt, _ := time.Parse(time.RFC3339, r.ExpiresAt)
-			ttl := time.Until(expiresAt)
-			ttlStr := "expired"
-			if ttl > 0 {
-				ttlStr = formatDuration(int(ttl.Seconds()))
-			}
-			registeredAt, _ := time.Parse(time.RFC3339, r.RegisteredAt)
-
-			data.Registrations = append(data.Registrations, RegistrationData{
-				Server:       backendName,
-				AOR:          r.AOR,
-				ContactURI:   r.ContactURI,
-				Transport:    r.Transport,
-				ReceivedIP:   r.ReceivedIP,
-				ReceivedPort: r.ReceivedPort,
-				Expires:      r.Expires,
-				TTL:          ttlStr,
-				UserAgent:    r.UserAgent,
-				RegisteredAt: registeredAt.Format("15:04:05"),
-			})
+	var wg sync.WaitGroup
+	run := func(wanted bool, fetch func()) {
+		if !wanted {
+			return
 		}
-		mu.Unlock()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fetch()
+		}()
 	}
 
-	// Fetch dialogs
-	dialogs, err := c.Dialogs(ctx)
-	if err != nil {
-		slog.Debug("[UI] Backend dialogs fetch failed", "backend", backendName, "error", err)
-	} else {
-		mu.Lock()
-		for _, d := range dialogs {
-			data.Dialogs = append(data.Dialogs, DialogData{
-				Server:          backendName,
-				CallID:          d.CallID,
-				Direction:       d.Direction,
-				State:           d.State,
-				LocalURI:        d.LocalURI,
-				RemoteURI:       d.RemoteURI,
-				RemoteAddr:      d.RemoteAddr,
-				RemotePort:      d.RemotePort,
-				Duration:        formatDuration(d.Duration),
-				CreatedAt:       d.CreatedAt,
-				TerminateReason: d.TerminateReason,
-			})
-		}
-		mu.Unlock()
-	}
-
-	// Fetch sessions
-	sessions, err := c.Sessions(ctx)
-	if err != nil {
-		slog.Debug("[UI] Backend sessions fetch failed", "backend", backendName, "error", err)
-	} else {
-		mu.Lock()
-		for _, sess := range sessions {
-			data.Sessions = append(data.Sessions, SessionData{
-				Server:     backendName,
-				CallID:     sess.CallID,
-				ClientAddr: sess.ClientAddr,
-				ClientPort: sess.ClientPort,
-				ServerAddr: sess.ServerAddr,
-				ServerPort: sess.ServerPort,
-				Duration:   formatDuration(sess.Duration),
-				Status:     sess.Status,
-			})
-		}
-		mu.Unlock()
-	}
-
-	// Fetch RTP managers
-	rtpManagers, err := c.RtpManagers(ctx)
-	if err != nil {
-		slog.Debug("[UI] Backend rtpmanagers fetch failed", "backend", backendName, "error", err)
-	} else {
-		mu.Lock()
-		for _, m := range rtpManagers.Members {
-			status := "Unhealthy"
-			if m.Healthy {
-				status = "Healthy"
-			}
-			data.RtpManagers = append(data.RtpManagers, RtpManagerData{
-				Server:       backendName,
-				NodeID:       m.NodeID,
-				Address:      m.Address,
-				Healthy:      m.Healthy,
-				Status:       status,
-				DrainState:   m.DrainState,
-				SessionCount: m.SessionCount,
-			})
-		}
-		mu.Unlock()
-	}
-
-	// Fetch parked calls
-	parkedCalls, err := c.ParkedCalls(ctx)
-	if err != nil {
-		slog.Debug("[UI] Backend parked calls fetch failed", "backend", backendName, "error", err)
-	} else {
-		mu.Lock()
-		for _, p := range parkedCalls {
-			parkedAt, _ := time.Parse(time.RFC3339, p.ParkedAt)
-			data.ParkedCalls = append(data.ParkedCalls, ParkedCallData{
-				Server:   backendName,
-				SlotID:   p.ID,
-				CallID:   p.CallID,
-				Duration: formatDuration(p.DurationSeconds),
-				ParkedBy: p.ParkedBy,
-				ParkedAt: parkedAt.Format("15:04:05"),
-			})
-		}
-		mu.Unlock()
-	}
+	run(w.stats, func() { s.fetchStats(ctx, c, data, mu) })
+	run(w.registrations, func() { s.fetchRegistrations(ctx, c, data, mu) })
+	run(w.dialogs, func() { s.fetchDialogs(ctx, c, data, mu) })
+	run(w.sessions, func() { s.fetchSessions(ctx, c, data, mu) })
+	run(w.rtpManagers, func() { s.fetchRtpManagers(ctx, c, data, mu) })
+	run(w.parkedCalls, func() { s.fetchParkedCalls(ctx, c, data, mu) })
+	wg.Wait()
 
 	mu.Lock()
 	data.Backends = append(data.Backends, backendData)
 	mu.Unlock()
+}
+
+// Each fetcher below reads one resource from one backend and merges it. They log
+// at debug and return on failure rather than propagating: one backend being down
+// must not blank the rows the others returned.
+
+func (s *Server) fetchStats(ctx context.Context, c *client.Client, data *TemplateData, mu *sync.Mutex) {
+	stats, err := c.Stats(ctx)
+	if err != nil {
+		slog.Debug("[UI] Backend stats fetch failed", "backend", c.Name(), "error", err)
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	data.Stats.ActiveSessions += stats.ActiveSessions
+	data.Stats.TotalRegistrations += stats.TotalRegistrations
+	data.Stats.TotalBindings += stats.TotalBindings
+	data.Stats.ActiveDialogs += stats.ActiveDialogs
+}
+
+func (s *Server) fetchRegistrations(ctx context.Context, c *client.Client, data *TemplateData, mu *sync.Mutex) {
+	regs, err := c.Registrations(ctx)
+	if err != nil {
+		slog.Debug("[UI] Backend registrations fetch failed", "backend", c.Name(), "error", err)
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, r := range regs {
+		expiresAt, _ := time.Parse(time.RFC3339, r.ExpiresAt)
+		ttl := time.Until(expiresAt)
+		ttlStr := "expired"
+		if ttl > 0 {
+			ttlStr = formatDuration(int(ttl.Seconds()))
+		}
+		registeredAt, _ := time.Parse(time.RFC3339, r.RegisteredAt)
+
+		data.Registrations = append(data.Registrations, RegistrationData{
+			Server:       c.Name(),
+			AOR:          r.AOR,
+			ContactURI:   r.ContactURI,
+			Transport:    r.Transport,
+			ReceivedIP:   r.ReceivedIP,
+			ReceivedPort: r.ReceivedPort,
+			Expires:      r.Expires,
+			TTL:          ttlStr,
+			UserAgent:    r.UserAgent,
+			RegisteredAt: registeredAt.Format("15:04:05"),
+		})
+	}
+}
+
+func (s *Server) fetchDialogs(ctx context.Context, c *client.Client, data *TemplateData, mu *sync.Mutex) {
+	dialogs, err := c.Dialogs(ctx)
+	if err != nil {
+		slog.Debug("[UI] Backend dialogs fetch failed", "backend", c.Name(), "error", err)
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, d := range dialogs {
+		data.Dialogs = append(data.Dialogs, DialogData{
+			Server:          c.Name(),
+			CallID:          d.CallID,
+			Direction:       d.Direction,
+			State:           d.State,
+			LocalURI:        d.LocalURI,
+			RemoteURI:       d.RemoteURI,
+			RemoteAddr:      d.RemoteAddr,
+			RemotePort:      d.RemotePort,
+			Duration:        formatDuration(d.Duration),
+			CreatedAt:       d.CreatedAt,
+			TerminateReason: d.TerminateReason,
+		})
+	}
+}
+
+func (s *Server) fetchSessions(ctx context.Context, c *client.Client, data *TemplateData, mu *sync.Mutex) {
+	sessions, err := c.Sessions(ctx)
+	if err != nil {
+		slog.Debug("[UI] Backend sessions fetch failed", "backend", c.Name(), "error", err)
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, sess := range sessions {
+		data.Sessions = append(data.Sessions, SessionData{
+			Server:     c.Name(),
+			CallID:     sess.CallID,
+			ClientAddr: sess.ClientAddr,
+			ClientPort: sess.ClientPort,
+			ServerAddr: sess.ServerAddr,
+			ServerPort: sess.ServerPort,
+			Duration:   formatDuration(sess.Duration),
+			Status:     sess.Status,
+		})
+	}
+}
+
+func (s *Server) fetchRtpManagers(ctx context.Context, c *client.Client, data *TemplateData, mu *sync.Mutex) {
+	rtpManagers, err := c.RtpManagers(ctx)
+	if err != nil {
+		slog.Debug("[UI] Backend rtpmanagers fetch failed", "backend", c.Name(), "error", err)
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, m := range rtpManagers.Members {
+		status := "Unhealthy"
+		if m.Healthy {
+			status = "Healthy"
+		}
+		data.RtpManagers = append(data.RtpManagers, RtpManagerData{
+			Server:       c.Name(),
+			NodeID:       m.NodeID,
+			Address:      m.Address,
+			Healthy:      m.Healthy,
+			Status:       status,
+			DrainState:   m.DrainState,
+			SessionCount: m.SessionCount,
+		})
+	}
+}
+
+func (s *Server) fetchParkedCalls(ctx context.Context, c *client.Client, data *TemplateData, mu *sync.Mutex) {
+	parkedCalls, err := c.ParkedCalls(ctx)
+	if err != nil {
+		slog.Debug("[UI] Backend parked calls fetch failed", "backend", c.Name(), "error", err)
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, p := range parkedCalls {
+		parkedAt, _ := time.Parse(time.RFC3339, p.ParkedAt)
+		data.ParkedCalls = append(data.ParkedCalls, ParkedCallData{
+			Server:   c.Name(),
+			SlotID:   p.ID,
+			CallID:   p.CallID,
+			Duration: formatDuration(p.DurationSeconds),
+			ParkedBy: p.ParkedBy,
+			ParkedAt: parkedAt.Format("15:04:05"),
+		})
+	}
 }
 
 // formatUptime formats a duration for display
@@ -469,15 +544,7 @@ func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the client for the specified server
-	var targetClient *client.Client
-	for _, c := range s.clients {
-		if c.Name() == server {
-			targetClient = c
-			break
-		}
-	}
-
+	targetClient := s.findClientStrict(server)
 	if targetClient == nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return
@@ -496,7 +563,7 @@ func (s *Server) handleDrain(w http.ResponseWriter, r *http.Request) {
 
 	// Return updated RTP managers partial to refresh the view
 	w.Header().Set("HX-Trigger", "drainStarted")
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{rtpManagers: true})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderRtpManagers(w, data); err != nil {
 		slog.Error("[UI] Failed to render rtpmanagers partial", "error", err)
@@ -519,15 +586,7 @@ func (s *Server) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the client for the specified server
-	var targetClient *client.Client
-	for _, c := range s.clients {
-		if c.Name() == server {
-			targetClient = c
-			break
-		}
-	}
-
+	targetClient := s.findClientStrict(server)
 	if targetClient == nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return
@@ -545,7 +604,7 @@ func (s *Server) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 
 	// Return updated RTP managers partial to refresh the view
 	w.Header().Set("HX-Trigger", "drainCancelled")
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{rtpManagers: true})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderRtpManagers(w, data); err != nil {
 		slog.Error("[UI] Failed to render rtpmanagers partial", "error", err)
@@ -555,7 +614,7 @@ func (s *Server) handleCancelDrain(w http.ResponseWriter, r *http.Request) {
 
 // handleParkedCallsPartial renders the parked calls section partial for HTMX
 func (s *Server) handleParkedCallsPartial(w http.ResponseWriter, r *http.Request) {
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{parkedCalls: true})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderParkedCalls(w, data); err != nil {
 		slog.Error("[UI] Failed to render parkedcalls partial", "error", err)
@@ -578,15 +637,7 @@ func (s *Server) handleForceUnpark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the client for the specified server
-	var targetClient *client.Client
-	for _, c := range s.clients {
-		if c.Name() == server {
-			targetClient = c
-			break
-		}
-	}
-
+	targetClient := s.findClientStrict(server)
 	if targetClient == nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return
@@ -604,7 +655,7 @@ func (s *Server) handleForceUnpark(w http.ResponseWriter, r *http.Request) {
 
 	// Return updated parked calls partial to refresh the view
 	w.Header().Set("HX-Trigger", "callUnparked")
-	data := s.buildTemplateData(r.Context())
+	data := s.buildTemplateData(r.Context(), want{parkedCalls: true})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderParkedCalls(w, data); err != nil {
 		slog.Error("[UI] Failed to render parkedcalls partial", "error", err)

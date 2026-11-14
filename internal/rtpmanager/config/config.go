@@ -18,9 +18,12 @@ type Config struct {
 	RTPPortMax    int
 	AudioBasePath string
 	LogLevel      string
-	TTSServerURL  string // TTS server URL (e.g., "http://localhost:8000")
-	ASRServerURL  string // ASR/Whisper server URL (e.g., "http://localhost:9000")
-	ASRModel      string // Transcription model id; required by the OpenAI /v1/audio/transcriptions contract
+
+	// LogFormat is "text" (the bracketed console format) or "json".
+	LogFormat    string
+	TTSServerURL string // TTS server URL (e.g., "http://localhost:8000")
+	ASRServerURL string // ASR/Whisper server URL (e.g., "http://localhost:9000")
+	ASRModel     string // Transcription model id; required by the OpenAI /v1/audio/transcriptions contract
 }
 
 // Load loads configuration from command line flags and environment variables
@@ -33,7 +36,8 @@ func Load() *Config {
 	flag.IntVar(&cfg.RTPPortMin, "rtp-port-min", 10000, "Minimum RTP port")
 	flag.IntVar(&cfg.RTPPortMax, "rtp-port-max", 20000, "Maximum RTP port")
 	flag.StringVar(&cfg.AudioBasePath, "audio-path", "./audio", "Audio files base path")
-	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level")
+	flag.StringVar(&cfg.LogLevel, "loglevel", "debug", "Log level (debug, info, warn, error, off)")
+	flag.StringVar(&cfg.LogFormat, "log-format", "text", "Log output format (text, json)")
 	flag.StringVar(&cfg.TTSServerURL, "tts-server", "http://localhost:8000", "TTS server URL")
 	flag.StringVar(&cfg.ASRServerURL, "asr-server", "http://localhost:8001", "ASR/Whisper server URL")
 	flag.StringVar(&cfg.ASRModel, "asr-model", asr.DefaultModel, "Transcription model id sent to the ASR server (required by the API; override for a different Whisper build)")
@@ -63,6 +67,9 @@ func Load() *Config {
 	}
 	if v := os.Getenv("LOGLEVEL"); v != "" {
 		cfg.LogLevel = v
+	}
+	if v := os.Getenv("LOG_FORMAT"); v != "" {
+		cfg.LogFormat = v
 	}
 	if v := os.Getenv("TTS_SERVER"); v != "" {
 		cfg.TTSServerURL = v

@@ -1,0 +1,108 @@
+# Switchboard on the homelab: one stack, four containers.
+#
+#   signaling      SIP :5060 (udp+tcp), API :8090        host network
+#   rtpmanager-1   gRPC 127.0.0.1:9101, RTP 20000-20009  host network
+#   rtpmanager-2   gRPC 127.0.0.1:9102, RTP 20010-20019  host network
+#   ui             :3000 on the "proxy" network, served by the edge Caddy
+#                  at https://switchboard.homelab.lan
+#
+# SIP and RTP use the host network so the addresses in SIP headers and SDP are the
+# box's real LAN address and ports, with no Docker NAT in between. That also means
+# ufw applies to them: `make homelab-setup` opens them to the LAN only.
+#
+# Driven from the laptop by the Makefile (`make deploy`, `make logs`), which sets
+# DOCKER_HOST=ssh://homelab: images build on the homelab from the local tree.
+# Config, tenants, CDRs and audio live in ${DATA_DIR} on the homelab, so a deploy
+# never overwrites what the UI edited.
+
+name: switchboard
+
+x-common: &common
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+x-rtpmanager: &rtpmanager
+  <<: *common
+  build: { context: ../.., dockerfile: deploy/docker/Dockerfile.rtpmanager }
+  image: switchboard-rtpmanager:latest
+  network_mode: host
+  volumes:
+    - ${DATA_DIR:?}/audio:/app/audio
+
+x-rtpmanager-env: &rtpmanager-env
+  ADVERTISE: ${ADVERTISE:?}
+  BIND: 127.0.0.1 # gRPC is only for signaling, on the same host
+  LOGLEVEL: ${LOGLEVEL:-debug}
+  TTS_SERVER: ${TTS_SERVER:-http://127.0.0.1:8001}
+  ASR_SERVER: ${ASR_SERVER:-http://127.0.0.1:9000}
+
+services:
+  rtpmanager-1:
+    <<: *rtpmanager
+    environment:
+      <<: *rtpmanager-env
+      GRPC_PORT: "9101"
+      RTP_PORT_MIN: "20000"
+      RTP_PORT_MAX: "20009"
+
+  rtpmanager-2:
+    <<: *rtpmanager
+    environment:
+      <<: *rtpmanager-env
+      GRPC_PORT: "9102"
+      RTP_PORT_MIN: "20010"
+      RTP_PORT_MAX: "20019"
+
+  signaling:
+    <<: *common
+    build: { context: ../.., dockerfile: deploy/docker/Dockerfile.signaling }
+    image: switchboard-signaling:latest
+    network_mode: host
+    depends_on: [rtpmanager-1, rtpmanager-2]
+    volumes:
+      - ${DATA_DIR:?}/config:/data/config
+      - ${DATA_DIR:?}/tenants:/data/tenants
+      - ${DATA_DIR:?}/cdr:/data/cdr
+    environment:
+      PORT: "5060"
+      API_PORT: "8090"
+      BIND: 0.0.0.0
+      ADVERTISE: ${ADVERTISE:?}
+      RTPMANAGER_ADDRS: 127.0.0.1:9101,127.0.0.1:9102
+      POLICY_CONFIG: /data/config/policy.json
+      ROUTES_PATH: /data/config/routes.json
+      TRUNK_CONFIG: /data/config/trunk_peers.json
+      TENANTS_PATH: /data/tenants
+      CDR_PATH: /data/cdr/cdr.jsonl
+      LOGLEVEL: ${LOGLEVEL:-debug}
+      SIP_LOGLEVEL: ${SIP_LOGLEVEL:-warn}
+      ALLOW_GLOBAL_CONFIG_WRITES: ${ALLOW_GLOBAL_CONFIG_WRITES:-false}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/api/v1/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+  ui:
+    <<: *common
+    build: { context: ../.., dockerfile: deploy/docker/Dockerfile.ui }
+    image: switchboard-ui:latest
+    container_name: switchboard-ui # the name the edge Caddyfile proxies to
+    networks: [proxy]
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    environment:
+      UI_PORT: "3000"
+      UI_BACKENDS: homelab=http://host.docker.internal:8090
+      UI_LOGLEVEL: ${UI_LOGLEVEL:-info}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+networks:
+  proxy:
+    external: true # owned by the edge stack (Caddy)

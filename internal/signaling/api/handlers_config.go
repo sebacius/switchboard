@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	types "github.com/sebas/switchboard/api/types/v1"
 	"github.com/sebas/switchboard/internal/signaling/dialplan"
 	"github.com/sebas/switchboard/internal/signaling/filemanager"
 )
@@ -19,6 +20,10 @@ import (
 // FileProvider provides file management operations for the API.
 type FileProvider interface {
 	ListTenants() ([]filemanager.TenantInfo, error)
+	// ListTenantsDetailed adds what each tenant CONTAINS — counts, flow names,
+	// warning state — at the cost of parsing and validating both of its files.
+	// Separate from ListTenants because that cost must be asked for.
+	ListTenantsDetailed() ([]filemanager.TenantInfo, error)
 	GetTenant(name string) (string, error)
 	CreateTenant(name, content string) (dialplan.Problems, error)
 	PutTenant(name, content string) (dialplan.Problems, error)
@@ -117,21 +122,50 @@ func (s *Server) handleConfigTenantList(w http.ResponseWriter, r *http.Request) 
 
 	switch r.Method {
 	case http.MethodGet:
-		tenants, err := s.fileProvider.ListTenants()
+		// ?detail=1 asks what each tenant CONTAINS, which costs a parse and a
+		// validation per tenant. Opt-in, so the cheap listing stays cheap and a
+		// caller that polls this cannot pay for it by accident.
+		detailed := r.URL.Query().Get("detail") == "1"
+
+		list := s.fileProvider.ListTenants
+		if detailed {
+			list = s.fileProvider.ListTenantsDetailed
+		}
+		tenants, err := list()
 		if err != nil {
 			slog.Error("[API] Failed to list tenants", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Convert to API format
-		result := make([]map[string]interface{}, 0, len(tenants))
+
+		// The SHARED type, not an ad-hoc map. api/types/v1 is the declared
+		// contract between this server and the UI, and a handler that hand-rolls
+		// the shape it emits is how the two drift without either one changing.
+		result := make([]types.TenantFile, 0, len(tenants))
 		for _, t := range tenants {
-			result = append(result, map[string]interface{}{
-				"name":      t.Name,
-				"size":      t.Size,
-				"modified":  t.Modified.Format(time.RFC3339),
-				"has_flows": t.HasFlows,
-			})
+			entry := types.TenantFile{
+				Name:     t.Name,
+				Size:     t.Size,
+				Modified: t.Modified.Format(time.RFC3339),
+				HasFlows: t.HasFlows,
+			}
+			if detailed {
+				entry.ExtensionsCount = t.ExtensionsCount
+				entry.DIDsCount = t.DIDsCount
+				entry.GroupsCount = t.GroupsCount
+				entry.FlowNames = t.FlowNames
+				entry.SearchTerms = t.SearchTerms
+				entry.HasWarnings = t.HasWarnings
+			}
+			// [] rather than null: a client ranging over these must not have
+			// to special-case a missing list.
+			if entry.FlowNames == nil {
+				entry.FlowNames = []string{}
+			}
+			if entry.SearchTerms == nil {
+				entry.SearchTerms = []string{}
+			}
+			result = append(result, entry)
 		}
 		s.writeJSON(w, result)
 

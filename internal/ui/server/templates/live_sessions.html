@@ -1,0 +1,20 @@
+{{define "content"}}
+<section id="sessions" class="mb-10">
+    <div class="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-semibold text-white">RTP Sessions</h2>
+                <p class="text-sm text-slate-400">Active media sessions{{if .MultiBackend}} across all servers{{end}}</p>
+            </div>
+            <div class="w-8 h-8 bg-emerald-500/20 rounded-lg flex items-center justify-center">
+                <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                </svg>
+            </div>
+        </div>
+        <div id="sessions-container" hx-get="{{.Layout.Link "/admin/partials/sessions"}}" hx-trigger="every 3s" hx-swap="innerHTML">
+            {{template "sessions" .}}
+        </div>
+    </div>
+</section>
+{{end}}

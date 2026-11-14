@@ -1,31 +1,39 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
+
+	"github.com/sebas/switchboard/internal/ui/client"
 	"time"
 
 	types "github.com/sebas/switchboard/api/types/v1"
 )
 
+// globalsVM builds the deployment-file list, for the page and the fragment.
+func (s *Server) globalsVM(ctx context.Context, c *client.Client) ConfigGlobalsData {
+	data := ConfigGlobalsData{Server: c.Name()}
+	files, err := c.ListGlobalFiles(ctx)
+	if err != nil {
+		data.Failure = loadFailed(c, "the deployment file list", err)
+		return data
+	}
+	for _, f := range files {
+		data.Files = append(data.Files, globalFileData(f))
+	}
+	return data
+}
+
 // handleConfigGlobalsPartial lists the deployment-wide configuration files.
 func (s *Server) handleConfigGlobalsPartial(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPartial(w)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 
-	data := ConfigGlobalsData{Server: c.Name()}
-	files, err := c.ListGlobalFiles(r.Context())
-	if err != nil {
-		data.Error = fmt.Sprintf("Failed to load configuration files: %v", err)
-	} else {
-		for _, f := range files {
-			data.Files = append(data.Files, globalFileData(f))
-		}
-	}
+	data := s.globalsVM(r.Context(), c)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.RenderConfigGlobals(w, data); err != nil {
@@ -35,9 +43,8 @@ func (s *Server) handleConfigGlobalsPartial(w http.ResponseWriter, r *http.Reque
 
 // handleConfigGlobalEdit renders the editor for one deployment-wide file.
 func (s *Server) handleConfigGlobalEdit(w http.ResponseWriter, r *http.Request) {
-	c := s.findClient(r.URL.Query().Get("server"))
+	c := s.requireBackendPartial(w)
 	if c == nil {
-		http.Error(w, "No backend configured", http.StatusServiceUnavailable)
 		return
 	}
 
